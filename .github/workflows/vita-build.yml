@@ -1,1 +1,34 @@
+name: Touhou75Vita Vita Build
 
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-vita:
+    runs-on: ubuntu-latest
+    container:
+      image: vitasdk/vitasdk:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show VitaSDK
+        run: |
+          echo "VITASDK=$VITASDK"
+          arm-vita-eabi-gcc --version
+          vita-make-fself --help >/dev/null
+          vita-pack-vpk --help >/dev/null
+
+      - name: Build
+        working-directory: vita
+        run: make
+
+      - name: Upload VPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Touhou75Vita-vpk
+          path: vita/*.vpk
+          if-no-files-found: error
