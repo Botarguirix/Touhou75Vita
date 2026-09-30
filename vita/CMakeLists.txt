@@ -1,31 +1,22 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
+project(iamp_vita C)
 
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-  if(DEFINED ENV{VITASDK})
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake"
-        CACHE PATH "VitaSDK toolchain")
-  else()
-    message(FATAL_ERROR "Set VITASDK to the VitaSDK installation directory.")
-  endif()
+if(NOT DEFINED ENV{VITASDK})
+  message(FATAL_ERROR "VITASDK is not set. Install VitaSDK and export VITASDK=/path/to/vitasdk before configuring.")
 endif()
 
-project(touhou75_vita C)
-include("${VITASDK}/share/vita.cmake" REQUIRED)
+set(VITASDK "$ENV{VITASDK}")
+set(CMAKE_TOOLCHAIN_FILE "${VITASDK}/share/vita.toolchain.cmake" CACHE FILEPATH "VitaSDK toolchain")
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Diagnostic")
-set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.00")
-
-add_executable(${PROJECT_NAME}
+add_executable(iamp_vita.elf
   src/main.c
+  ../runtime/iamp_semantic_runtime.c
+  ../generated/guest_semantic.c
 )
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
-target_link_libraries(${PROJECT_NAME}
-  SceIofilemgr_stub
-)
+target_include_directories(iamp_vita.elf PRIVATE ../runtime)
+target_link_libraries(iamp_vita.elf m)
 
-vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
-vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
-  VERSION ${VITA_VERSION}
-  NAME "${VITA_APP_NAME}"
-)
+add_custom_command(TARGET iamp_vita.elf POST_BUILD
+  COMMAND ${VITASDK}/bin/vita-make-fself $<TARGET_FILE:iamp_vita.elf> ${CMAKE_CURRENT_BINARY_DIR}/iamp_vita.self
+  COMMAND ${VITASDK}/bin/vita-pack-vpk -s PARAM.SFO -b ${CMAKE_CURRENT_BINARY_DIR}/iamp_vita.self -a ${CMAKE_CURRENT_BINARY_DIR}/iamp_vita.vpk=iamp_vita.self
+  VERBATIM)
