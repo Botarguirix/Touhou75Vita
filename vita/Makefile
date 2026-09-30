@@ -7,26 +7,28 @@ else
 $(error VitaSDK not found. Set VITASDK and install arm-vita-eabi-gcc/vita_rules)
 endif
 
-TARGET = iamp_vita
-OBJS = src/main.o ../runtime/iamp_semantic_runtime.o ../generated/guest_semantic.o
-CFLAGS = -O2 -Wall -Wextra -I../runtime
-LIBS = -lm
+PROJECT = touhou75_vita
+PROJECT_TITLE = Touhou 7.5 Vita - Diagnostic
+PROJECT_TITLEID = T075VITA1
+OBJS = src/main.o
+CFLAGS += -O2 -Wall -Wextra
+LIBS += -lSceIofilemgr_stub
 
-all: $(TARGET).vpk
+all: $(PROJECT).vpk
 
-$(TARGET).velf: $(OBJS)
+$(PROJECT).velf: $(OBJS)
 	$(LINK.o) $^ $(LIBS) -o $@
 
-$(TARGET).self: $(TARGET).velf
+$(PROJECT).self: $(PROJECT).velf
 	vita-make-fself $< $@
 
 PARAM.SFO:
-	vita-mksfoex -s TITLE_ID=IAMP075 -s TITLE="Immaterial and Missing Power" "Immaterial and Missing Power" $@
+	vita-mksfoex -s TITLE_ID=$(PROJECT_TITLEID) "$(PROJECT_TITLE)" $@
 
-$(TARGET).vpk: $(TARGET).self PARAM.SFO
-	vita-pack-vpk -s PARAM.SFO -b $(TARGET).self $@
+$(PROJECT).vpk: $(PROJECT).self PARAM.SFO
+	vita-pack-vpk -s PARAM.SFO -b $(PROJECT).self $@
 
 clean:
-	$(RM) $(OBJS) $(TARGET).velf $(TARGET).self $(TARGET).vpk PARAM.SFO
+	$(RM) $(OBJS) $(PROJECT).velf $(PROJECT).self $(PROJECT).vpk PARAM.SFO
 
 .PHONY: all clean
