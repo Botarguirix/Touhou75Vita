@@ -21,8 +21,9 @@ jobs:
         run: |
           echo "VITASDK=$VITASDK"
           arm-vita-eabi-gcc --version
-          vita-make-fself --help >/dev/null
-          vita-pack-vpk --help >/dev/null
+          command -v vita-make-fself
+          command -v vita-mksfoex
+          command -v vita-pack-vpk
 
       - name: Build
         working-directory: vita
