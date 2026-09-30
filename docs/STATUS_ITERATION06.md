@@ -1,35 +1,28 @@
-# Iteración 06 — diagnóstico del juego base y el parche de traducción
+# Iteración 06 — diagnóstico del juego y del parche de traducción
 
-## Objetivo
+## Resultado en hardware
 
-Inspeccionar por separado el ejecutable japonés del juego y el parche inglés en la Vita, sin ejecutar el código de ninguno.
+**Aprobada como diagnóstico PE; no es una prueba de arranque del juego.** El usuario instaló la VPK en una PS Vita y compartió `ux0:data/TH075Vita/iteration06.log`.
 
-## Cambio preparado en el espacio de trabajo
+- `build_id=iteration06-dual-pe-probe-r1` confirma que corrió la compilación esperada.
+- El juego japonés `TH075.exe` abrió con 2.576.384 bytes y fue reconocido como PE32/I386, cinco secciones, base `0x00400000`, entry VA `0x0064232C`, subsistema 2.
+- El parche `TH075E.exe` abrió con 9.728 bytes y fue reconocido como PE32/I386, seis secciones, base `0x00400000`, entry VA `0x00401240`, subsistema 2.
+- Ambos resultados fueron `recognized_x86_pe32`.
+- `execution=not_attempted` es el resultado previsto: esta VPK no ejecutó ninguno de los dos archivos.
 
-- El diagnóstico ahora busca `ux0:data/TH075Vita/TH075.exe` y `ux0:data/TH075Vita/TH075E.exe`.
-- Escribe resultados separados con prefijos `game_` y `english_patch_` en `ux0:data/TH075Vita/iteration06.log`.
-- Incluye `build_id=iteration06-dual-pe-probe-r1`; el título de LiveArea y el nombre del artefacto también identifican la Iteración 06.
-- Registra tamaño, arquitectura, secciones, entry RVA, base preferida y subsistema.
-- Distingue un archivo ausente (`ENOENT`) de otro error de apertura (`file_open_error` y `open_errno`).
-- Sigue siendo una inspección PE: no mapea las secciones, no resuelve imports y no ejecuta el entry point.
+## Identidad de los archivos
 
-## Huellas proporcionadas
+Los SHA-256 calculados en la copia de Windows coinciden con los hashes que proporcionó el usuario:
 
-- Japonés, `TH075.exe`: `BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98`.
-- Inglés, `TH075E.exe`: `C8313228A98134B5CEB75027D77B302E4271670B17F6B52593A1D41679834D0E`.
+- `TH075.exe`: `BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98`.
+- `TH075E.exe`: `C8313228A98134B5CEB75027D77B302E4271670B17F6B52593A1D41679834D0E`.
 
-La huella japonesa coincide con el ejecutable incluido en el paquete de análisis. Según el usuario, `TH075E.exe` es un parche que requiere el juego japonés; no debe tratarse como un segundo ejecutable completo del juego.
+La VPK no calcula hashes, así que el log de Vita confirma los tamaños y campos PE, pero no la identidad criptográfica de los bytes presentes en la tarjeta.
 
-## Log recibido para la edición inglesa
+## Alcance
 
-El usuario probó el parche renombrándolo temporalmente a `TH075.exe`, el único nombre que reconoce el VPK anterior. El log informa:
+El diagnóstico valida acceso a los dos archivos y sus cabeceras. No carga secciones, resuelve imports, ejecuta instrucciones x86 ni inicia el juego. `TH075E.exe` es el componente ejecutable del parche; el paquete local también incluye `th075e.dll` y `th075e.dat`, que se deben analizar junto con él. Los archivos del juego permanecen fuera de Git.
 
-- Tamaño: 9.728 bytes; máquina I386; formato PE32; seis secciones.
-- Entry RVA `0x00001240`, VA `0x00401240`; base preferida `0x00400000`; subsistema 2.
-- `recognized_x86_pe32`, con `execution=not_attempted`.
+## Siguiente hito
 
-La japonesa analizada mide 2.576.384 bytes y tiene cinco secciones. El usuario confirma que el archivo de 9.728 bytes es un parche para ejecutar la versión traducida. Todavía hay que inspeccionar qué cambia y qué comportamiento requiere. El log no ejecutó el parche ni el juego.
-
-## Validación pendiente
-
-Este cambio local aún no se ha compilado ni empaquetado. Cuando haya un VPK nuevo, colocar el juego japonés como `TH075.exe` y el parche como `TH075E.exe` en `ux0:data/TH075Vita/`, ejecutar el diagnóstico una vez y compartir `iteration06.log`. El VPK de iteraciones anteriores solo inspecciona el archivo llamado `TH075.exe` y genera `iteration01.log`.
+La Iteración 07 debe auditar e integrar el cargador PE32 de WinVita y producir un informe de carga del ejecutable japonés, con secciones e imports resueltos/no resueltos. La prueba debe detenerse antes del entry point y de cualquier ejecución de código invitado. Ver `PORTING_ARCHITECTURE.md` para las condiciones de integración y licencia.
