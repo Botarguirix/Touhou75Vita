@@ -1,4 +1,5 @@
 #include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
 
 #include <limits.h>
 #include <stdint.h>
