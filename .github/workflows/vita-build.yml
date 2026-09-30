@@ -2,6 +2,8 @@ name: Touhou75Vita Vita Build
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
   push:
     branches: [ main ]
 
@@ -19,8 +21,9 @@ jobs:
         run: |
           echo "VITASDK=$VITASDK"
           arm-vita-eabi-gcc --version
-          vita-make-fself --help >/dev/null
-          vita-pack-vpk --help >/dev/null
+          command -v vita-make-fself
+          command -v vita-mksfoex
+          command -v vita-pack-vpk
 
       - name: Build
         working-directory: vita
@@ -30,5 +33,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Touhou75Vita-vpk
-          path: vita/*.vpk
+          path: vita/build/*.vpk
           if-no-files-found: error
