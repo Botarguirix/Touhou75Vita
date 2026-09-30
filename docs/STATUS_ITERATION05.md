@@ -18,8 +18,10 @@ When no executable is supplied, the log reports `game_executable_missing`. With 
 
 ## Verification status
 
-- Source review: pending final toolchain build.
-- VitaSDK build: not run; VitaSDK is not installed in the current environment.
-- VPK install and hardware run: pending a build artifact and console test.
+- GitHub Actions built and published the diagnostic VPK artifact for PR #1.
+- The user installed and launched that VPK on a physical PS Vita.
+- The supplied hardware log reports a 2,576,384-byte I386 PE32 executable, five sections, preferred base `0x00400000`, subsystem 2, and `recognized_x86_pe32`.
+- `execution=not_attempted`: this confirms app startup, file access, and header inspection only. Touhou 7.5 did not boot.
+- The reverse-engineering package's recorded SHA-256 conflicts with the hash computed from its embedded EXE. The Vita log does not yet contain a hash, so exact byte identity remains unverified.
 
-Do not mark this iteration as booting Touhou 7.5. The next milestone is a real PE loader and an import-bridge inventory, followed by an x86 execution engine decision.
+The next milestone is a loader-only WinVita proof: map the supplied PE at its preferred base, enumerate import-resolution outcomes, and stop before calling the entry point. See [PORTING_ARCHITECTURE.md](PORTING_ARCHITECTURE.md).

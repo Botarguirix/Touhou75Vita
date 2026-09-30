@@ -18,9 +18,9 @@ The package is `vita/touhou75_vita.vpk`. The same build runs in the VitaSDK cont
 ## Try it on a Vita
 
 1. Create `ux0:data/TH075Vita/` on the memory card.
-2. Copy your own `TH075.exe` into that folder.
+2. Copy the Japanese game executable there as `TH075.exe`. Keep the optional English translation patch at `TH075E.exe`; it is not the game executable.
 3. Install `touhou75_vita.vpk` with VitaShell and launch **Touhou 7.5 Vita - Diagnostic**.
-4. Open `ux0:data/TH075Vita/iteration01.log` in VitaShell to see the PE probe result.
+4. Open `ux0:data/TH075Vita/iteration06.log` in VitaShell to see the base-game and patch PE probe results.
 
 The app returns to LiveArea after writing the report. That is expected in this diagnostic build.
 
