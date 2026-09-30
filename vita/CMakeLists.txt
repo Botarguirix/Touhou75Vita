@@ -12,9 +12,9 @@ endif()
 project(touhou75_vita C)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Diagnostic")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 06 Diagnostic")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.00")
+set(VITA_VERSION "01.06")
 
 add_executable(${PROJECT_NAME}
   src/main.c

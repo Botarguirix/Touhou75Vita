@@ -8,7 +8,9 @@ Inspeccionar por separado el ejecutable japonés del juego y el parche inglés e
 
 - El diagnóstico ahora busca `ux0:data/TH075Vita/TH075.exe` y `ux0:data/TH075Vita/TH075E.exe`.
 - Escribe resultados separados con prefijos `game_` y `english_patch_` en `ux0:data/TH075Vita/iteration06.log`.
+- Incluye `build_id=iteration06-dual-pe-probe-r1`; el título de LiveArea y el nombre del artefacto también identifican la Iteración 06.
 - Registra tamaño, arquitectura, secciones, entry RVA, base preferida y subsistema.
+- Distingue un archivo ausente (`ENOENT`) de otro error de apertura (`file_open_error` y `open_errno`).
 - Sigue siendo una inspección PE: no mapea las secciones, no resuelve imports y no ejecuta el entry point.
 
 ## Huellas proporcionadas

@@ -11,7 +11,7 @@ This is a decision to run a compatibility proof of concept, not a claim that D2V
 
 ## What the current prototype actually does
 
-The current Vita VPK is a diagnostic. `vita/src/main.c` opens the user-supplied `ux0:data/TH075Vita/TH075.exe`, checks its DOS/PE headers, and writes `iteration01.log`. The hardware log confirms an I386 PE32 with five sections and entry VA `0x0064232C`; this VPK does not map sections, resolve imports, execute x86 instructions, or start the game.
+The last VPK confirmed by the user's hardware log was the Iteration 01 diagnostic: it opened `ux0:data/TH075Vita/TH075.exe`, checked its DOS/PE headers, and wrote `iteration01.log`. The local worktree now contains an Iteration 06 diagnostic that separately probes `TH075.exe` and `TH075E.exe` and writes `iteration06.log`, but that revision has not yet been built or confirmed on hardware. Neither diagnostic maps sections, resolves imports, executes x86 instructions, or starts the game.
 
 The supplied reverse-engineering ZIP already contains an import listing. It shows 157 static imports across DINPUT8, WINMM, d3d8, KERNEL32, USER32, GDI32, ADVAPI32, and ole32. It also imports `LoadLibraryA` and `GetProcAddress`, so the static table may not cover every runtime dependency. The PE has relocations stripped and no base-relocation directory. A source review of WinVita's `Bridge::add_module()` found an explicit path for `IMAGE_FILE_RELOCS_STRIPPED`: it keeps the module at its preferred base. That matches Touhou's `ImageBase=0x00400000` and removes one loader concern, but we still need to prove that WinVita maps this exact image and its sections successfully; this finding alone does not prove imports resolve or the game can run.
 
