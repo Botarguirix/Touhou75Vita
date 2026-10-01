@@ -3,6 +3,7 @@
 #include "runtime/pe_image.h"
 #include <array>
 #include <vector>
+#include <string>
 
 namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
@@ -68,33 +69,50 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         ++version_calls_;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetVersionExA\n");
     } else if (module) {
-        // Named modules are not handled here. The loaded EXE itself is real
-        // guest memory and its DOS/PE headers must be readable before return.
+        // The runtime implements KERNEL32 imports; identify that compatibility
+        // module with an opaque handle. It is not an executable Windows DLL.
         if (arg) {
-            fprintf(log_, "startup_module_variant=named_module_unsupported\n");
-            return StartupServiceResult::Unsupported;
+            char name[64] = {};
+            unsigned n = 0;
+            for (; n < sizeof(name); ++n) {
+                if (uint64_t(arg) + n > 0xFFFFFFFFull || !cpu_.read(arg + n, &name[n], 1))
+                    return StartupServiceResult::ContractFailure;
+                if (!name[n]) break;
+                if (name[n] >= 'A' && name[n] <= 'Z') name[n] += 'a' - 'A';
+            }
+            if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
+            fprintf(log_, "startup_module_requested=%s\n", name);
+            if (std::string(name) != "kernel32.dll") return StartupServiceResult::Unsupported;
+            const uint32_t handle = 0x00AB1000;
+            cpu_.trap_epilogue(handle, 8, ret);
+            expected_eax = handle;
+            ++module_calls_;
+            fprintf(log_, "startup_module_base_returned=0x%08X\n", handle);
+            fprintf(log_, "startup_module_handle_kind=runtime_opaque\n");
+            fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
+        } else {
+            if (version_calls_ != 1 || module_calls_ || import.iat_va != 0x006570A8 || ret != 0x006423A1) {
+                fprintf(log_, "startup_service_error=unsupported_module_call\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            uint16_t mz = 0;
+            uint32_t nt_offset = 0, signature = 0;
+            const uint32_t base = image_.load_base();
+            if (!cpu_.read(base, &mz, 2) || mz != 0x5A4D ||
+                !cpu_.read(base + 0x3C, &nt_offset, 4) ||
+                uint64_t(nt_offset) + 4 > image_.image_size() ||
+                !cpu_.read(base + nt_offset, &signature, 4) || signature != 0x4550) {
+                fprintf(log_, "startup_service_error=module_headers_invalid\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            fprintf(log_, "startup_module_base_returned=0x%08X\n", base);
+            fprintf(log_, "startup_module_headers=passed\n");
+            fprintf(log_, "startup_module_return_va=0x%08X\n", ret);
+            cpu_.trap_epilogue(base, 8, ret); // HMODULE; stdcall ret 4
+            expected_eax = base;
+            ++module_calls_;
+            fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
         }
-        if (version_calls_ != 1 || module_calls_ || import.iat_va != 0x006570A8 || ret != 0x006423A1) {
-            fprintf(log_, "startup_service_error=unsupported_module_call\n");
-            return StartupServiceResult::ContractFailure;
-        }
-        uint16_t mz = 0;
-        uint32_t nt_offset = 0, signature = 0;
-        const uint32_t base = image_.load_base();
-        if (!cpu_.read(base, &mz, 2) || mz != 0x5A4D ||
-            !cpu_.read(base + 0x3C, &nt_offset, 4) ||
-            uint64_t(nt_offset) + 4 > image_.image_size() ||
-            !cpu_.read(base + nt_offset, &signature, 4) || signature != 0x4550) {
-            fprintf(log_, "startup_service_error=module_headers_invalid\n");
-            return StartupServiceResult::ContractFailure;
-        }
-        fprintf(log_, "startup_module_base_returned=0x%08X\n", base);
-        fprintf(log_, "startup_module_headers=passed\n");
-        fprintf(log_, "startup_module_return_va=0x%08X\n", ret);
-        cpu_.trap_epilogue(base, 8, ret); // HMODULE; stdcall ret 4
-        expected_eax = base;
-        ++module_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
     } else if (heap_create) {
         uint32_t initial = 0, maximum = 0;
         if (heap_create_calls_ || import.iat_va != 0x00657160 || ret != 0x0064974C ||

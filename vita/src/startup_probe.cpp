@@ -1,5 +1,6 @@
 #include "startup_probe.h"
 #include "startup_services.h"
+#include "seh_chain.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
@@ -21,7 +22,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration16-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration17-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -48,7 +49,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration16-r1\n");
+        fprintf(report_, "watchdog_revision=iteration17-r1\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -194,8 +195,8 @@ struct RunnerPlacement {
 
 bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                        const std::vector<uint8_t>& exe, FILE* log) {
-    fprintf(log, "startup_scope=original_exe_version_module_until_heap_create\n");
-    fprintf(log, "startup_import_policy=serve_two_known_contracts_stop_before_other_imports\n");
+    fprintf(log, "startup_scope=original_exe_nested_seh_named_kernel32\n");
+    fprintf(log, "startup_import_policy=serve_startup_and_heap_contracts_stop_before_unknown_import\n");
     fprintf(log, "game_bootable=not_yet_established\n");
     // This checkpoint doesn't initialize PE static TLS or call its callbacks.
     // Refuse an executable needing that setup rather than skip it silently.
@@ -262,15 +263,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         uint32_t ret = 0, arg = 0, seh = 0, prev = 0, handler = 0;
         const bool frame_ok = stack_range(esp, 8) && c.read(esp, &ret, 4) &&
             c.read(esp + 4, &arg, 4);
-        const bool seh_ok = c.read(kDiagnosticTeb, &seh, 4) && stack_range(seh, 8) &&
-            c.read(seh, &prev, 4) && c.read(seh + 4, &handler, 4) &&
-            prev == 0xFFFFFFFF && handler == 0x00645468;
+        unsigned seh_depth = 0;
+        const bool seh_ok = c.read(kDiagnosticTeb, &seh, 4) &&
+            validate_seh_chain(seh, kStack, kStackEnd, image.load_base(),
+                image.load_base() + image.image_size(),
+                [&](uint32_t address, uint32_t& value) { return c.read(address, &value, 4); },
+                seh_depth) && c.read(seh, &prev, 4) && c.read(seh + 4, &handler, 4);
         if (first) {
             fprintf(log, "startup_first_import=%s\n", tag.c_str());
             fprintf(log, "startup_first_iat_va=0x%08X\n", imp.iat_va);
             uint32_t size = 0;
             original_call_valid = imp.dll == "KERNEL32.dll" && imp.name == "GetVersionExA" &&
                 imp.iat_va == 0x00657090 && ret == 0x00642352 && frame_ok && seh_ok &&
+                prev == 0xFFFFFFFF && handler == 0x00645468 &&
                 stack_range(arg, 148) && c.read(arg, &size, 4) && size == 148;
             fprintf(log, "startup_entry_checkpoint=%s\n", original_call_valid ? "passed" : "failed");
         }
@@ -283,6 +288,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         fprintf(log, "startup_seh_previous=0x%08X\n", prev);
         fprintf(log, "startup_seh_handler=0x%08X\n", handler);
         fprintf(log, "startup_seh_registration=%s\n", seh_ok ? "passed" : "failed");
+        fprintf(log, "startup_seh_chain_depth=%u\n", seh_depth);
         fprintf(log, "startup_exception_dispatch=not_implemented\n");
         const char* registers[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
         for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r)
