@@ -21,7 +21,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration14-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration15-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -48,7 +48,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration14-r1\n");
+        fprintf(report_, "watchdog_revision=iteration15-r1\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -356,6 +356,13 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_elapsed_us=%llu\n",
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
     fprintf(log, "startup_final_eip=0x%08X\n", cpu.reg(d2rt::R_EIP));
+    fprintf(log, "startup_final_esp=0x%08X\n", cpu.reg(d2rt::R_ESP));
+    fprintf(log, "startup_final_ebp=0x%08X\n", cpu.reg(d2rt::R_EBP));
+    if (limit && cpu.reg(d2rt::R_EIP) < 0x00400000u) {
+        fprintf(log, "startup_control_flow_result=low_guest_eip\n");
+    } else if (limit) {
+        fprintf(log, "startup_control_flow_result=budget_in_image\n");
+    }
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
