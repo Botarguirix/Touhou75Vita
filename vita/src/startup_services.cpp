@@ -24,7 +24,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool version = import.name == "GetVersionExA";
     const bool module = import.name == "GetModuleHandleA";
     const bool proc_address = import.name == "GetProcAddress";
-    const bool critical_init = import.name == "InitializeCriticalSectionAndSpinCount";
+    const bool critical_plain = import.name == "InitializeCriticalSection";
+    const bool critical_init = critical_plain || import.name == "InitializeCriticalSectionAndSpinCount";
+    const bool critical_enter = import.name == "EnterCriticalSection";
+    const bool critical_try = import.name == "TryEnterCriticalSection";
+    const bool critical_leave = import.name == "LeaveCriticalSection";
+    const bool critical_delete = import.name == "DeleteCriticalSection";
+    const bool critical_op = critical_enter || critical_try || critical_leave || critical_delete;
     const bool tls_alloc = import.name == "TlsAlloc";
     const bool tls_get = import.name == "TlsGetValue";
     const bool tls_set = import.name == "TlsSetValue";
@@ -49,7 +55,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
-    if (!version && !module && !proc_address && !critical_init && !tls &&
+    if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
@@ -61,7 +67,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free) ? 1u :
+        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
         ((proc_address || critical_init || tls_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -181,14 +187,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     } else if (critical_init) {
         uint32_t spin = 0;
         uint32_t previous[6] = {};
-        if (!in_stack(esp, 12) || !cpu_.read(esp + 8, &spin, 4) || !arg || (arg & 3u) ||
+        if ((!critical_plain && !cpu_.read(esp + 8, &spin, 4)) || !arg || (arg & 3u) ||
             critical_sections_.count(arg) || !cpu_.read(arg, previous, sizeof(previous))) {
             fprintf(log_, "startup_service_error=invalid_critical_section_frame\n");
             return StartupServiceResult::ContractFailure;
         }
         // x86 RTL_CRITICAL_SECTION: DebugInfo, LockCount, RecursionCount,
-        // OwningThread, LockSemaphore, SpinCount. Only initialization is served;
-        // lock acquisition remains an explicit boundary until implemented.
+        // OwningThread, LockSemaphore, SpinCount. Current scope: one guest thread.
         const uint32_t state[6] = {0, 0xFFFFFFFFu, 0, 0, 0, spin};
         uint32_t copy[6] = {};
         if (!cpu_.write(arg, state, sizeof(state)) || !cpu_.read(arg, copy, sizeof(copy)) ||
@@ -198,12 +203,64 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         critical_sections_.insert(arg);
         ++critical_init_calls_;
-        cpu_.trap_epilogue(1, 12, ret);
-        expected_eax = 1;
+        expected_eax = critical_plain ? 0 : 1;
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_critical_section_va=0x%08X\n", arg);
         fprintf(log_, "startup_critical_section_spin=%u\n", spin);
         fprintf(log_, "startup_critical_section_readback=passed\n");
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!InitializeCriticalSectionAndSpinCount\n");
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (critical_op) {
+        uint32_t state[6] = {}, tid = 0;
+        if (!critical_sections_.count(arg) || !cpu_.read(arg, state, sizeof(state)) ||
+            !wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x24, &tid, 4) || !tid) {
+            fprintf(log_, "startup_service_error=uninitialized_critical_section\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        if (state[1] != state[2] - 1u || (state[2] == 0) != (state[3] == 0)) {
+            fprintf(log_, "startup_service_error=critical_section_state_mismatch\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        bool changed = true;
+        if (critical_enter || critical_try) {
+            if (state[3] && state[3] != tid) {
+                if (!critical_try) {
+                    fprintf(log_, "startup_sync_scope=other_thread_wait_not_implemented\n");
+                    return StartupServiceResult::Unsupported;
+                }
+                changed = false; // TryEnter returns FALSE without acquiring.
+            } else {
+                if (state[2] >= 0x7FFFFFFFu) return StartupServiceResult::ContractFailure;
+                ++state[1]; ++state[2]; state[3] = tid;
+                expected_eax = critical_try ? 1 : 0;
+            }
+        } else if (critical_leave) {
+            if (!state[2] || state[3] != tid) {
+                fprintf(log_, "startup_service_error=critical_section_not_owned\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            --state[1]; --state[2];
+            if (!state[2]) state[3] = 0;
+        } else {
+            if (state[2]) {
+                fprintf(log_, "startup_service_error=delete_owned_critical_section\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            for (auto& word : state) word = 0;
+        }
+        if (changed) {
+            uint32_t copy[6] = {};
+            if (!cpu_.write(arg, state, sizeof(state)) || !cpu_.read(arg, copy, sizeof(copy)) ||
+                !std::equal(std::begin(state), std::end(state), std::begin(copy)))
+                return StartupServiceResult::ContractFailure;
+            if (critical_delete) critical_sections_.erase(arg);
+        }
+        ++sync_calls_;
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_sync_section_va=0x%08X\n", arg);
+        fprintf(log_, "startup_sync_recursion=%u\n", state[2]);
+        fprintf(log_, "startup_sync_owner=%u\n", state[3]);
+        fprintf(log_, "startup_sync_state_readback=passed\n");
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (tls) {
         const uint32_t slots = wx86_cur_tib() + 0xE10;
         if (!wx86_cur_tib()) return StartupServiceResult::ContractFailure;
