@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <set>
 #include <array>
+#include <map>
+#include <vector>
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure };
 // Narrow contracts for the two imports observed at the beginning of TH075.
@@ -20,6 +22,7 @@ public:
     unsigned tls_calls() const { return tls_calls_; }
     unsigned unavailable_export_calls() const { return unavailable_export_calls_; }
     unsigned process_calls() const { return process_calls_; }
+    unsigned environment_calls() const { return environment_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
@@ -34,6 +37,9 @@ private:
     std::array<bool,64> tls_allocated_{};
     unsigned tls_calls_ = 0, unavailable_export_calls_ = 0;
     unsigned process_calls_ = 0;
+    unsigned environment_calls_ = 0;
+    std::map<uint32_t, bool> environment_blocks_; // address -> Unicode variant
+    std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
 };

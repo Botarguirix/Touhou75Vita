@@ -16,7 +16,9 @@ int main() {
     FILE* log = tmpfile(); assert(log);
     StartupServices services(cpu, image, log);
     auto call = [&](const char* name, std::initializer_list<uint32_t> args) {
-        const uint32_t sp = 0x009FE000, ret = 0x00650000, canary = 0x12345678;
+        const uint32_t sp = 0x009FE000, canary = 0x12345678;
+        const bool heap_create = std::strcmp(name, "HeapCreate") == 0;
+        const uint32_t ret = heap_create ? 0x0064974C : 0x00650000;
         cpu.registers[d2rt::R_ESP] = sp;
         cpu.registers[d2rt::R_EBX] = 0x1357;
         assert(cpu.write(sp, &ret, 4));
@@ -24,6 +26,7 @@ int main() {
         for (uint32_t value : args) { assert(cpu.write(p, &value, 4)); p += 4; }
         assert(cpu.write(p, &canary, 4));
         d2rt::ImportRef imp{"KERNEL32.dll", name};
+        if (heap_create) imp.iat_va = 0x00657160;
         const auto result = services.call(imp);
         if (result == StartupServiceResult::Serviced) {
             assert(cpu.reg(d2rt::R_ESP) == p && cpu.reg(d2rt::R_EIP) == ret);
@@ -75,5 +78,22 @@ int main() {
     assert(cpu.reg(d2rt::R_EAX) == 0x00732000);
     char stored[sizeof(command)]; cpu.read(cpu.reg(d2rt::R_EAX), stored, sizeof(stored));
     assert(std::strcmp(stored, command) == 0);
+    for (uint32_t count : {0u, 32u, 1024u}) {
+        assert(call("SetHandleCount", {count}) == StartupServiceResult::Serviced);
+        assert(cpu.reg(d2rt::R_EAX) == count);
+    }
+    assert(call("GetEnvironmentStringsW", {}) == StartupServiceResult::ContractFailure);
+    assert(call("HeapCreate", {0, 4096, 0}) == StartupServiceResult::Serviced);
+    assert(call("GetEnvironmentStringsW", {}) == StartupServiceResult::Serviced);
+    const uint32_t wide = cpu.reg(d2rt::R_EAX);
+    uint32_t terminators = 1; assert(cpu.read(wide, &terminators, 4) && terminators == 0);
+    call("GetEnvironmentStringsA", {});
+    const uint32_t ansi = cpu.reg(d2rt::R_EAX); assert(ansi != wide && ansi);
+    call("FreeEnvironmentStringsA", {wide}); assert(cpu.reg(d2rt::R_EAX) == 0);
+    call("FreeEnvironmentStringsW", {wide}); assert(cpu.reg(d2rt::R_EAX) == 1);
+    call("FreeEnvironmentStringsW", {wide}); assert(cpu.reg(d2rt::R_EAX) == 0);
+    call("FreeEnvironmentStringsA", {ansi}); assert(cpu.reg(d2rt::R_EAX) == 1);
+    call("FreeEnvironmentStringsA", {0}); assert(cpu.reg(d2rt::R_EAX) == 0);
+    call("GetEnvironmentStrings", {}); assert(cpu.reg(d2rt::R_EAX) == ansi); // released copy reused
     fclose(log);
 }

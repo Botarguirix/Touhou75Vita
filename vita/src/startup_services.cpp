@@ -37,13 +37,19 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool command_line = import.name == "GetCommandLineA";
     const bool std_handle = import.name == "GetStdHandle";
     const bool file_type = import.name == "GetFileType";
-    const bool process = startup_info || command_line || std_handle || file_type;
+    const bool handle_count = import.name == "SetHandleCount";
+    const bool environment_get = import.name == "GetEnvironmentStringsW" ||
+        import.name == "GetEnvironmentStringsA" || import.name == "GetEnvironmentStrings";
+    const bool environment_free = import.name == "FreeEnvironmentStringsW" ||
+        import.name == "FreeEnvironmentStringsA";
+    const bool environment = environment_get || environment_free;
+    const bool process = startup_info || command_line || std_handle || file_type || handle_count;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !tls &&
-        !get_error && !set_error && !thread_id && !process &&
+        !get_error && !set_error && !thread_id && !process && !environment &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -52,8 +58,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = (tls_alloc || get_error || thread_id || command_line) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type) ? 1u :
+    const uint32_t parameter_count = (tls_alloc || get_error || thread_id || command_line || environment_get) ? 0u :
+        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free) ? 1u :
         ((proc_address || critical_init || tls_set) ? 2u : 3u));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -238,6 +244,43 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             return StartupServiceResult::ContractFailure;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (environment) {
+        const bool wide = import.name.back() == 'W';
+        if (environment_get) {
+            // Owned copy of the empty process environment: two terminating NULs.
+            if (!heap_ready_) return StartupServiceResult::ContractFailure;
+            if (environment_free_blocks_.empty() && uint64_t(heap_next_) + 16 > 0x01400000u) {
+                wx86_set_lasterr(cpu_, 8); // ERROR_NOT_ENOUGH_MEMORY
+            } else {
+                const uint32_t zero = 0;
+                uint32_t copy = 1;
+                const uint32_t address = environment_free_blocks_.empty() ?
+                    heap_next_ : environment_free_blocks_.back();
+                if (!cpu_.write(address, &zero, 4) ||
+                    !cpu_.read(address, &copy, 4) || copy != 0)
+                    return StartupServiceResult::ContractFailure;
+                expected_eax = address;
+                if (environment_free_blocks_.empty()) heap_next_ += 16;
+                else environment_free_blocks_.pop_back();
+                environment_blocks_.emplace(expected_eax, wide);
+                fprintf(log_, "startup_environment_block_va=0x%08X\n", expected_eax);
+                fprintf(log_, "startup_environment_profile=empty\n");
+                fprintf(log_, "startup_environment_readback=passed\n");
+            }
+        } else {
+            const auto block = environment_blocks_.find(arg);
+            if (block == environment_blocks_.end() || block->second != wide) {
+                wx86_set_lasterr(cpu_, 87);
+            } else {
+                environment_free_blocks_.push_back(arg);
+                environment_blocks_.erase(block);
+                expected_eax = 1;
+                fprintf(log_, "startup_environment_release=passed\n");
+            }
+        }
+        ++environment_calls_;
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (process) {
         if (startup_info) {
             // GUI process without inherited CRT handles or reserved startup data.
@@ -270,6 +313,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 expected_eax = 0;
                 fprintf(log_, "startup_standard_handle_profile=no_console\n");
             }
+        } else if (handle_count) {
+            // Legacy API is a no-op on NT; return the requested count.
+            expected_eax = arg;
+            fprintf(log_, "startup_handle_count_requested=%u\n", arg);
         } else {
             if (arg != 0 && arg != 0xFFFFFFFFu) return StartupServiceResult::Unsupported;
             expected_eax = 0; // FILE_TYPE_UNKNOWN, invalid NULL/INVALID_HANDLE_VALUE
