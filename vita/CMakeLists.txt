@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 08 IAT Bridge Test")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 08 r2 IAT Bridge Test")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.08")
+set(VITA_VERSION "01.09")
 
 set(WINVITA_ARCHIVE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/build-vita/libwinx86_vita.a")

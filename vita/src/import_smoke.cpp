@@ -5,7 +5,11 @@
 #include <cstdlib>
 
 namespace {
-constexpr uint32_t kCode = 0x00700000;
+// Keep every routine on its own page, distinct from the basic smoke at
+// 0x00700000. Remapping a page clears protection bookkeeping and can make
+// invalidate_code() miss a previously translated block at that address.
+constexpr uint32_t kLastErrorCode = 0x00710000;
+constexpr uint32_t kTickCode = 0x00711000;
 constexpr uint32_t kStack = 0x00800000;
 constexpr uint32_t kTrap = 0x00B00000;
 constexpr uint32_t kError = 0x00000775;
@@ -17,23 +21,33 @@ void emit_call(std::vector<uint8_t>& code, uint32_t iat) {
     code.push_back(0xFF); code.push_back(0x15); // call dword ptr [iat]
     emit32(code, iat);
 }
-bool probe(d2rt::Bridge& bridge, const std::vector<uint8_t>& code,
+bool probe(d2rt::Bridge& bridge, uint32_t code_va, const std::vector<uint8_t>& code,
            const char* name, bool check_value, uint32_t expected,
            bool& unsupported, FILE* log) {
     auto& cpu = *bridge.cpu();
-    if (!cpu.write(kCode, code.data(), code.size())) return false;
-    cpu.invalidate_code(kCode, (uint32_t)code.size());
+    cpu.discard_code(code_va, 0x1000);
+    if (!cpu.write(code_va, code.data(), (uint32_t)code.size())) {
+        fprintf(log, "import_smoke_error=code_write_failed\n");
+        return false;
+    }
+    std::vector<uint8_t> readback(code.size());
+    if (!cpu.read(code_va, readback.data(), (uint32_t)readback.size()) || readback != code) {
+        fprintf(log, "import_smoke_error=code_readback_mismatch\n");
+        return false;
+    }
     cpu.set_reg(d2rt::R_EFLAGS, 0x202);
     fprintf(log, "import_smoke_begin=%s\n", name);
+    fprintf(log, "import_smoke_%s_code_va=0x%08X\n", name, code_va);
     uint32_t result = 0;
     const char* fault = nullptr;
-    const bool stopped = bridge.call_va(kCode, {}, result, &fault);
+    const bool stopped = bridge.call_va(code_va, {}, result, &fault);
     const bool passed = stopped && !unsupported &&
         cpu.reg(d2rt::R_EIP) == bridge.sentinel() &&
         cpu.reg(d2rt::R_ESP) == kStack + 0x00200000 - 0x1000 &&
         (!check_value || result == expected);
     fprintf(log, "import_smoke_%s_eax=0x%08X\n", name, result);
     fprintf(log, "import_smoke_%s_esp=0x%08X\n", name, cpu.reg(d2rt::R_ESP));
+    fprintf(log, "import_smoke_%s_eip=0x%08X\n", name, cpu.reg(d2rt::R_EIP));
     fprintf(log, "import_smoke_%s_result=%s\n", name, passed ? "passed" : "failed");
     if (!stopped) fprintf(log, "import_smoke_fault=%s\n", fault ? fault : "unknown");
     return passed;
@@ -50,7 +64,7 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     std::string error;
     auto* image = bridge.add_module("TH075.exe", exe, error);
     if (!image || image->load_base() != 0x00400000 ||
-        (uint64_t)image->load_base() + image->image_size() > kCode) {
+        (uint64_t)image->load_base() + image->image_size() > 0x00700000) {
         fprintf(log, "import_bridge_error=invalid_image_or_layout %s\n", error.c_str());
         return false;
     }
@@ -61,14 +75,23 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     unsigned set_calls = 0, get_calls = 0, tick_calls = 0;
     bool unsupported = false;
     d2rt::Shim set; set.argc = 1;
-    set.fn = [&](d2rt::Cpu& c) { ++set_calls; last_error = c.arg(0); return 0u; };
+    set.fn = [&](d2rt::Cpu& c) {
+        ++set_calls; last_error = c.arg(0);
+        fprintf(log, "import_shim=SetLastError arg0=0x%08X\n", last_error);
+        return 0u;
+    };
     bridge.register_shim("KERNEL32.dll", "SetLastError", set);
     d2rt::Shim get;
-    get.fn = [&](d2rt::Cpu&) { ++get_calls; return last_error; };
+    get.fn = [&](d2rt::Cpu&) {
+        ++get_calls;
+        fprintf(log, "import_shim=GetLastError return=0x%08X\n", last_error);
+        return last_error;
+    };
     bridge.register_shim("KERNEL32.dll", "GetLastError", get);
     d2rt::Shim tick;
     tick.fn = [&](d2rt::Cpu&) {
         ++tick_calls;
+        fprintf(log, "import_shim=GetTickCount\n");
         return (uint32_t)(sceKernelGetProcessTimeWide() / 1000ull);
     };
     bridge.register_shim("KERNEL32.dll", "GetTickCount", tick);
@@ -94,7 +117,7 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
         return false;
     }
     if (!bridge.commit(error) || !bridge.link(error) ||
-        !cpu.map(kCode, 0x1000, nullptr, d2rt::P_RWX)) {
+        !cpu.map(kLastErrorCode, 0x2000, nullptr, d2rt::P_RWX)) {
         fprintf(log, "import_bridge_error=%s\n", error.c_str());
         return false;
     }
@@ -104,17 +127,29 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     fprintf(log, "import_bridge_trap_base=0x%08X\n", kTrap);
     fprintf(log, "import_bridge_lasterror_scope=diagnostic_single_thread\n");
     fprintf(log, "import_bridge_tick_origin=vita_process_start\n");
+    for (const char* name : {"SetLastError", "GetLastError", "GetTickCount"}) {
+        const uint32_t iat = std::string(name) == "SetLastError" ? set_iat :
+            (std::string(name) == "GetLastError" ? get_iat : tick_iat);
+        const uint32_t expected = bridge.shim_trap_existing("KERNEL32.dll", name);
+        uint32_t target = 0;
+        if (!cpu.read(iat, &target, sizeof(target)) || !expected || target != expected) {
+            fprintf(log, "import_bridge_error=iat_target_mismatch name=%s\n", name);
+            cpu.set_trap(0, 0, [](d2rt::Cpu&, uint32_t) { return false; });
+            return false;
+        }
+        fprintf(log, "import_bridge_binding=%s iat=0x%08X target=0x%08X\n", name, iat, target);
+    }
 
     std::vector<uint8_t> code = {0x68}; // push kError
     emit32(code, kError);
     emit_call(code, set_iat);
     emit_call(code, get_iat);
     code.push_back(0xC3); // ret to bridge sentinel
-    bool passed = probe(bridge, code, "lasterror", true, kError, unsupported, log);
+    bool passed = probe(bridge, kLastErrorCode, code, "lasterror", true, kError, unsupported, log);
     if (passed) {
         code.clear(); emit_call(code, tick_iat); code.push_back(0xC3);
         const uint32_t before = (uint32_t)(sceKernelGetProcessTimeWide() / 1000ull);
-        passed = probe(bridge, code, "tickcount", false, 0, unsupported, log);
+        passed = probe(bridge, kTickCode, code, "tickcount", false, 0, unsupported, log);
         const uint32_t observed = cpu.reg(d2rt::R_EAX);
         const uint32_t after = (uint32_t)(sceKernelGetProcessTimeWide() / 1000ull);
         const bool in_range = observed - before <= after - before;
