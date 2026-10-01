@@ -43,13 +43,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool environment_free = import.name == "FreeEnvironmentStringsW" ||
         import.name == "FreeEnvironmentStringsA";
     const bool environment = environment_get || environment_free;
+    const bool wide_to_bytes = import.name == "WideCharToMultiByte";
     const bool process = startup_info || command_line || std_handle || file_type || handle_count;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !tls &&
-        !get_error && !set_error && !thread_id && !process && !environment &&
+        !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -58,9 +59,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = (tls_alloc || get_error || thread_id || command_line || environment_get) ? 0u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u :
+        ((tls_alloc || get_error || thread_id || command_line || environment_get) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free) ? 1u :
-        ((proc_address || critical_init || tls_set) ? 2u : 3u));
+        ((proc_address || critical_init || tls_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
@@ -244,6 +246,67 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             return StartupServiceResult::ContractFailure;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (wide_to_bytes) {
+        uint32_t args[8] = {};
+        if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
+        const uint32_t page = args[0], flags = args[1], source = args[2];
+        const uint32_t count = args[3], dest = args[4], capacity = args[5], used = args[7];
+        fprintf(log_, "startup_conversion_code_page=%u\n", page);
+        fprintf(log_, "startup_conversion_input_units=%u\n", count);
+        if (page != 0 && page != 1 && page != 932 && page != 1252 && page != 65001)
+            return StartupServiceResult::Unsupported;
+        if (flags != 0) return StartupServiceResult::Unsupported;
+        uint32_t error = 0;
+        if (!source || !count || (count > 0x7FFFFFFFu && count != 0xFFFFFFFFu) ||
+            capacity > 0x7FFFFFFFu || (capacity && (!dest || dest == source)) ||
+            (page == 65001 && (args[6] || used))) error = 87;
+        std::vector<uint8_t> bytes;
+        const uint32_t max_units = 16384;
+        if (!error) {
+            if (count != 0xFFFFFFFFu && count > max_units) {
+                fprintf(log_, "startup_conversion_scope=input_limit\n");
+                return StartupServiceResult::Unsupported;
+            }
+            const uint32_t limit = count == 0xFFFFFFFFu ? max_units : count;
+            bool terminated = false;
+            for (uint32_t i = 0; i < limit; ++i) {
+                uint16_t unit = 0;
+                if (uint64_t(source) + 2ull*i + 2 > 0x100000000ull ||
+                    !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
+                if (unit > 127) {
+                    fprintf(log_, "startup_conversion_scope=non_ascii_not_implemented\n");
+                    return StartupServiceResult::Unsupported;
+                }
+                bytes.push_back(uint8_t(unit));
+                if (count == 0xFFFFFFFFu && unit == 0) { terminated = true; break; }
+            }
+            if (count == 0xFFFFFFFFu && !terminated) return StartupServiceResult::Unsupported;
+            if (capacity && capacity < bytes.size()) error = 122;
+        }
+        if (error) {
+            wx86_set_lasterr(cpu_, error);
+        } else {
+            uint32_t previous_used = 0;
+            if (used && !cpu_.read(used, &previous_used, 4)) return StartupServiceResult::ContractFailure;
+            if (capacity) {
+                if (uint64_t(dest) + bytes.size() > 0x100000000ull)
+                    return StartupServiceResult::ContractFailure;
+                std::vector<uint8_t> copy(bytes.size());
+                if (!cpu_.read(dest, copy.data(), uint32_t(copy.size())) ||
+                    !cpu_.write(dest, bytes.data(), uint32_t(bytes.size())) ||
+                    !cpu_.read(dest, copy.data(), uint32_t(copy.size())) || copy != bytes)
+                    return StartupServiceResult::ContractFailure;
+                fprintf(log_, "startup_conversion_readback=passed\n");
+            }
+            const uint32_t false_value = 0;
+            if (used && !cpu_.write(used, &false_value, 4)) return StartupServiceResult::ContractFailure;
+            expected_eax = uint32_t(bytes.size());
+            fprintf(log_, "startup_conversion_mode=%s\n", capacity ? "write" : "size_query");
+            fprintf(log_, "startup_conversion_output_bytes=%u\n", expected_eax);
+        }
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++conversion_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!WideCharToMultiByte\n");
     } else if (environment) {
         const bool wide = import.name.back() == 'W';
         if (environment_get) {

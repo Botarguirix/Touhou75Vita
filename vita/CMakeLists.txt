@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 21 Process Startup")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 22 Process Startup")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.24")
+set(VITA_VERSION "01.25")
 
 set(WINVITA_ARCHIVE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/build-vita/libwinx86_vita.a")

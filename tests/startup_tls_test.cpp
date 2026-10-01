@@ -95,5 +95,31 @@ int main() {
     call("FreeEnvironmentStringsA", {ansi}); assert(cpu.reg(d2rt::R_EAX) == 1);
     call("FreeEnvironmentStringsA", {0}); assert(cpu.reg(d2rt::R_EAX) == 0);
     call("GetEnvironmentStrings", {}); assert(cpu.reg(d2rt::R_EAX) == ansi); // released copy reused
+    const uint16_t text[] = {'A', 0, 'B', 0};
+    cpu.write(0x00682000, text, sizeof(text));
+    assert(call("WideCharToMultiByte", {0, 0, 0x00682000, 0xFFFFFFFF, 0, 0, 0, 0}) == StartupServiceResult::Serviced);
+    assert(cpu.reg(d2rt::R_EAX) == 2); // includes the first terminating NUL
+    const uint8_t guard[5] = {0xAA, 0xAA, 0xAA, 0xAA, 0xAA};
+    cpu.write(0x00683000, guard, 5);
+    assert(call("WideCharToMultiByte", {932, 0, 0x00682000, 3, 0x00683001, 3, 0, 0x00684000}) == StartupServiceResult::Serviced);
+    assert(cpu.reg(d2rt::R_EAX) == 3);
+    uint8_t converted[5]; cpu.read(0x00683000, converted, 5);
+    assert(converted[0] == 0xAA && converted[1] == 'A' && converted[2] == 0 && converted[3] == 'B' && converted[4] == 0xAA);
+    uint32_t used = 1; cpu.read(0x00684000, &used, 4); assert(used == 0);
+    cpu.write(0x00683000, guard, 5);
+    call("WideCharToMultiByte", {0, 0, 0x00682000, 3, 0x00683001, 2, 0, 0});
+    assert(cpu.reg(d2rt::R_EAX) == 0 && wx86_get_lasterr(cpu) == 122);
+    cpu.read(0x00683000, converted, 5); assert(std::memcmp(converted, guard, 5) == 0);
+    call("WideCharToMultiByte", {0, 0, 0x00682000, 0, 0, 0, 0, 0});
+    assert(cpu.reg(d2rt::R_EAX) == 0 && wx86_get_lasterr(cpu) == 87);
+    const uint16_t empty[2] = {0, 0}; cpu.write(0x00682000, empty, sizeof(empty));
+    call("WideCharToMultiByte", {0, 0, 0x00682000, 1, 0, 0, 0, 0});
+    assert(cpu.reg(d2rt::R_EAX) == 1); // actual CRT environment size query
+    call("WideCharToMultiByte", {0, 0, 0x00682000, 1, 0x00683000, 1, 0, 0});
+    assert(cpu.reg(d2rt::R_EAX) == 1); cpu.read(0x00683000, converted, 1); assert(converted[0] == 0);
+    assert(call("WideCharToMultiByte", {0, 0, 0x01400000, 1, 0, 0, 0, 0}) == StartupServiceResult::ContractFailure);
+    const uint16_t japanese[] = {0x3042, 0}; cpu.write(0x00682000, japanese, sizeof(japanese));
+    assert(call("WideCharToMultiByte", {932, 0, 0x00682000, 1, 0, 0, 0, 0}) == StartupServiceResult::Unsupported);
+    assert(call("WideCharToMultiByte", {99999, 0, 0x00682000, 1, 0, 0, 0, 0}) == StartupServiceResult::Unsupported);
     fclose(log);
 }
