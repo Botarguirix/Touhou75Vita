@@ -2,27 +2,27 @@
 
 Porting research and runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation Vita.
 
-The current Vita build is a diagnostic VPK. It checks that the homebrew starts, writes a log to the memory card, and recognizes the PE32/x86 headers of a user-supplied `TH075.exe`. It does not execute the game yet.
+The current iteration integrates the pinned WinVita PE32 loader and Box86-derived ARMv7 dynamic recompiler. It maps the user's Japanese `TH075.exe` into guest memory, inventories its imports, and runs a tiny synthetic x86 smoke routine through the dynarec. It deliberately does not call the game's entry point or execute the English patch.
 
-## Build the diagnostic VPK
+## Build the runtime-test VPK
 
-Install VitaSDK, set `VITASDK`, and build from this directory:
+Install VitaSDK, set `VITASDK`, build the pinned runtime, then build the Vita app:
 
 ```sh
-cd vita
-make
+TARGET=vita bash third_party/winvita/build.sh
+make -C vita
 ```
 
-The package is `vita/touhou75_vita.vpk`. The same build runs in the VitaSDK container used by GitHub Actions.
+The package is `vita/touhou75_vita.vpk`. GitHub Actions uses the same VitaSDK runtime build and publishes `Touhou75Vita-iteration07-armv7-dynarec-smoke-vpk`.
 
 ## Try it on a Vita
 
 1. Create `ux0:data/TH075Vita/` on the memory card.
 2. Copy the Japanese game executable there as `TH075.exe`. Keep the optional English translation patch at `TH075E.exe`; it is not the game executable.
-3. Install the VPK built from this revision with VitaShell and launch **Touhou 7.5 Vita - Iteration 06 Diagnostic**. In GitHub Actions, download the artifact named `Touhou75Vita-iteration06-vpk` from a successful run on the commit containing this code.
-4. Open `ux0:data/TH075Vita/iteration06.log` in VitaShell. Confirm it contains `build_id=iteration06-dual-pe-probe-r1`, then share the full log.
+3. Install the VPK built from this revision with VitaShell and launch **Touhou 7.5 Vita - Iteration 07 ARMv7 Runtime Test**. In GitHub Actions, download the artifact named `Touhou75Vita-iteration07-armv7-dynarec-smoke-vpk` from a successful run on the commit containing this code.
+4. Open `ux0:data/TH075Vita/iteration07.log` in VitaShell. Confirm it contains `build_id=iteration07-winvita-armv7-smoke-r1` and `dynarec_smoke_result=passed`, then share the full log.
 
-The app returns to LiveArea after writing the report. That is expected in this diagnostic build.
+The app returns to LiveArea after writing the report. That is expected; this iteration tests the loader and CPU engine, not game startup.
 
 ## Keep game data outside Git
 

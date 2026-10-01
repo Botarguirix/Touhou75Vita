@@ -1,0 +1,256 @@
+#include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
+#include <psp2/kernel/processmgr.h>
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "runtime/cpu.h"
+#include "runtime/pe_image.h"
+#include "platform/vita_host.h"
+
+#define APP_DIR "ux0:data/TH075Vita"
+#define GAME_EXE_PATH APP_DIR "/TH075.exe"
+#define LOG_PATH APP_DIR "/iteration07.log"
+#define BUILD_ID "iteration07-winvita-armv7-smoke-r1"
+
+static const uint32_t kArenaGuestLimit = 0x01000000;
+static const uint32_t kSmokeResult = 0x00000075;
+static const char* const kExpectedGameSha256 =
+    "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
+
+extern "C" const char* const wx86_vita_progress_path = LOG_PATH;
+
+static void write_u32_le(uint8_t* out, uint32_t value) {
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+    out[2] = (uint8_t)(value >> 16);
+    out[3] = (uint8_t)(value >> 24);
+}
+
+static bool read_file(const char* path, std::vector<uint8_t>& bytes,
+                      FILE* log, const char* prefix) {
+    FILE* file = fopen(path, "rb");
+    if (file == NULL) {
+        fprintf(log, "%s_file_result=missing_or_unreadable\n", prefix);
+        return false;
+    }
+
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fprintf(log, "%s_file_result=seek_failed\n", prefix);
+        fclose(file);
+        return false;
+    }
+
+    long length = ftell(file);
+    if (length < 0 || length > 64 * 1024 * 1024 ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fprintf(log, "%s_file_result=invalid_size_or_seek_failed\n", prefix);
+        fclose(file);
+        return false;
+    }
+
+    bytes.resize((size_t)length);
+    const bool ok = bytes.empty() ||
+                    fread(bytes.data(), 1, bytes.size(), file) == bytes.size();
+    fclose(file);
+    if (!ok) {
+        bytes.clear();
+        fprintf(log, "%s_file_result=short_read\n", prefix);
+        return false;
+    }
+
+    fprintf(log, "%s_file_size_bytes=%u\n", prefix,
+            (unsigned)bytes.size());
+    fprintf(log, "%s_expected_sha256=%s\n", prefix, kExpectedGameSha256);
+    fprintf(log, "%s_sha256_verified_on_vita=no\n", prefix);
+    return true;
+}
+
+static bool load_game_pe(const std::vector<uint8_t>& bytes,
+                         d2rt::PeImage& image, FILE* log) {
+    if (bytes.size() != 2576384) {
+        fprintf(log, "game_file_result=unexpected_size\n");
+        return false;
+    }
+
+    std::string error;
+    /* A zero base asks PeImage to use the PE's preferred ImageBase. */
+    if (!image.load(bytes, 0, error)) {
+        fprintf(log, "game_pe_load_result=failed\n");
+        fprintf(log, "game_pe_load_error=%s\n", error.c_str());
+        return false;
+    }
+
+    fprintf(log, "game_image_base=0x%08X\n", image.load_base());
+    fprintf(log, "game_image_size_bytes=%u\n", image.image_size());
+    fprintf(log, "game_expected_image_base=0x00400000\n");
+    if (image.load_base() != 0x00400000) {
+        fprintf(log, "game_pe_load_result=unexpected_image_base\n");
+        return false;
+    }
+    fprintf(log, "game_pe_load_result=loaded_by_winvita_peimage\n");
+    fprintf(log, "game_entry_rva=0x%08X\n", image.entry_rva());
+    fprintf(log, "game_entry_va=0x%08X\n", image.entry_va());
+    fprintf(log, "game_subsystem=%u\n", image.subsystem());
+    fprintf(log, "game_imports_total=%u\n",
+            (unsigned)image.imports().size());
+
+    std::map<std::string, unsigned> imports_by_module;
+    for (const auto& import : image.imports()) {
+        ++imports_by_module[import.dll];
+    }
+    fprintf(log, "game_import_modules=%u\n",
+            (unsigned)imports_by_module.size());
+    for (const auto& module : imports_by_module) {
+        fprintf(log, "game_import_module=%s count=%u\n",
+                module.first.c_str(), module.second);
+    }
+    for (const auto& import : image.imports()) {
+        const std::string symbol = import.name.empty()
+            ? ("#" + std::to_string(import.ordinal)) : import.name;
+        fprintf(log, "game_import=%s!%s iat=0x%08X\n",
+                import.dll.c_str(), symbol.c_str(), import.iat_va);
+    }
+    fprintf(log, "game_import_resolution=not_attempted\n");
+    return true;
+}
+
+static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
+                              uint32_t stack_va, uint32_t trap_va,
+                              FILE* log) {
+    uint8_t code[10] = {
+        0xB8, 0x75, 0x00, 0x00, 0x00, /* mov eax, 0x75 */
+        0xE9, 0x00, 0x00, 0x00, 0x00  /* jmp trap */
+    };
+    const uint32_t next_eip = code_va + sizeof(code);
+    write_u32_le(&code[6], trap_va - next_eip);
+
+    if (!cpu.map(code_va, 0x1000, nullptr, d2rt::P_RWX)) {
+        fprintf(log, "dynarec_smoke_result=failed\n");
+        fprintf(log, "dynarec_smoke_error=code_map_failed\n");
+        return false;
+    }
+    if (!cpu.map(stack_va, 0x1000, nullptr, d2rt::P_RW)) {
+        fprintf(log, "dynarec_smoke_result=failed\n");
+        fprintf(log, "dynarec_smoke_error=stack_map_failed\n");
+        return false;
+    }
+    if (!cpu.write(code_va, code, sizeof(code))) {
+        fprintf(log, "dynarec_smoke_result=failed\n");
+        fprintf(log, "dynarec_smoke_error=guest_code_write_failed\n");
+        return false;
+    }
+
+    cpu.set_trap(trap_va, trap_va + 0x10,
+                 [](d2rt::Cpu&, uint32_t) { return false; });
+    cpu.set_reg(d2rt::R_ESP, stack_va + 0x1000);
+    cpu.set_reg(d2rt::R_EFLAGS, 0x202);
+
+    const char* fault = nullptr;
+    const bool clean_stop = cpu.run(code_va, &fault);
+    const uint32_t eax = cpu.reg(d2rt::R_EAX);
+    const uint32_t final_eip = cpu.reg(d2rt::R_EIP);
+    fprintf(log, "dynarec_smoke_guest_code_va=0x%08X\n", code_va);
+    fprintf(log, "dynarec_smoke_trap_va=0x%08X\n", trap_va);
+    fprintf(log, "dynarec_smoke_eax=0x%08X\n", eax);
+    fprintf(log, "dynarec_smoke_final_eip=0x%08X\n", final_eip);
+    if (!clean_stop) {
+        fprintf(log, "dynarec_smoke_result=failed\n");
+        fprintf(log, "dynarec_smoke_fault=%s\n",
+                fault != nullptr ? fault : "unknown");
+        fprintf(log, "dynarec_smoke_fault_va=0x%08X\n", cpu.fault_addr());
+        return false;
+    }
+
+    const bool passed = eax == kSmokeResult && final_eip == trap_va;
+    fprintf(log, "dynarec_smoke_result=%s\n", passed ? "passed" : "failed");
+    return passed;
+}
+
+static int run(FILE* log) {
+    fprintf(log, "Touhou 7.5 Vita - Iteration 07 ARMv7 dynarec and PE load diagnostic\n");
+    fprintf(log, "build_id=%s\n", BUILD_ID);
+    fprintf(log, "target_cpu=ARMv7\n");
+    fprintf(log, "execution=synthetic_x86_smoke_only\n");
+    fprintf(log, "game_entrypoint=not_attempted\n");
+    fprintf(log, "game_code_executed=no\n");
+    fprintf(log, "tls_callbacks=not_attempted\n");
+    fprintf(log, "translation_patch=not_loaded\n");
+
+    std::vector<uint8_t> exe_bytes;
+    d2rt::PeImage game_image;
+    const bool file_read = read_file(GAME_EXE_PATH, exe_bytes, log, "game");
+    const bool pe_loaded = file_read && load_game_pe(exe_bytes, game_image, log);
+
+    if (setenv("WX86_ARENA", "02000000", 1) != 0) {
+        fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
+        fprintf(log, "dynarec_init_result=failed\n");
+        fprintf(log, "dynarec_init_error=setenv_failed\n");
+        return 1;
+    }
+    fprintf(log, "guest_arena_requested_bytes=0x02000000\n");
+    fprintf(log, "guest_address_span_for_smoke=0x01000000\n");
+
+    std::unique_ptr<d2rt::Cpu> cpu(d2rt::make_cpu_box86());
+    if (!cpu) {
+        fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
+        fprintf(log, "dynarec_init_result=failed\n");
+        fprintf(log, "dynarec_init_error=cpu_backend_unavailable\n");
+        return 1;
+    }
+    fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
+    fprintf(log, "dynarec_init_result=created\n");
+
+    bool game_mapped = false;
+    if (pe_loaded) {
+        const bool mapped = cpu->map(game_image.load_base(),
+                                     game_image.image_size(),
+                                     game_image.image().data(), d2rt::P_RWX);
+        game_mapped = mapped;
+        fprintf(log, "game_guest_map_result=%s\n", mapped ? "passed" : "failed");
+        if (!mapped) {
+            fprintf(log, "game_guest_map_error=cpu_map_failed\n");
+        }
+    } else {
+        fprintf(log, "game_guest_map_result=skipped\n");
+    }
+
+    const uint64_t image_end = pe_loaded
+        ? (uint64_t)game_image.load_base() + game_image.image_size()
+        : 0x00400000u;
+    const uint64_t code64 = (image_end + 0x1FFFu) & ~0xFFFu;
+    const uint64_t stack64 = code64 + 0x00100000u;
+    const uint64_t trap64 = code64 + 0x00200000u;
+    if (trap64 + 0x1000u > kArenaGuestLimit) {
+        fprintf(log, "dynarec_smoke_result=failed\n");
+        fprintf(log, "dynarec_smoke_error=guest_arena_too_small_for_image\n");
+        return 1;
+    }
+
+    const bool smoke_passed = run_dynarec_smoke(
+        *cpu, (uint32_t)code64, (uint32_t)stack64, (uint32_t)trap64, log);
+    const bool passed = pe_loaded && game_mapped && smoke_passed;
+    fprintf(log, "result=%s\n", passed ? "pe_mapped_and_dynarec_smoke_passed" : "failed");
+    return passed ? 0 : 1;
+}
+
+int main(void) {
+    sceIoMkdir(APP_DIR, 0777);
+    FILE* log = fopen(LOG_PATH, "wb");
+    if (log == NULL) {
+        return 2;
+    }
+
+    const int result = run(log);
+    fflush(log);
+    fclose(log);
+    return result;
+}

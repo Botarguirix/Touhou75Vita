@@ -25,6 +25,10 @@ jobs:
           command -v vita-mksfoex
           command -v vita-pack-vpk
 
+      - name: Build WinVita ARMv7 runtime
+        working-directory: third_party/winvita
+        run: TARGET=vita bash build.sh
+
       - name: Build
         working-directory: vita
         run: make
@@ -32,6 +36,6 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-iteration06-vpk
+          name: Touhou75Vita-iteration07-armv7-dynarec-smoke-vpk
           path: vita/build/*.vpk
           if-no-files-found: error
