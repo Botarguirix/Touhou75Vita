@@ -109,8 +109,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         heap_ready_ = true;
         ++heap_create_calls_;
-        // HeapCreate(flags, initial, maximum) is stdcall with three arguments.
-        cpu_.trap_epilogue(0x00AB0000, 12, ret);
+        // trap_epilogue consumes the return address plus all three stdcall arguments.
+        cpu_.trap_epilogue(0x00AB0000, 16, ret);
         expected_eax = 0x00AB0000;
         fprintf(log_, "startup_heap_created_handle=0x00AB0000\n");
         fprintf(log_, "startup_heap_initial_bytes=%u\n", initial);
@@ -125,7 +125,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         uint32_t bytes = (size + 15u) & ~15u;
         if (!bytes || heap_next_ + bytes > 0x01400000) {
-            cpu_.trap_epilogue(0, 12, ret);
+            cpu_.trap_epilogue(0, 16, ret);
             expected_eax = 0;
         } else {
             const uint32_t result = heap_next_;
@@ -135,7 +135,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 cpu_.write(result, zero.data(), bytes);
             }
             ++heap_alloc_calls_;
-            cpu_.trap_epilogue(result, 12, ret);
+            cpu_.trap_epilogue(result, 16, ret);
             expected_eax = result;
             fprintf(log_, "startup_heap_alloc_va=0x%08X\n", result);
         }
@@ -143,17 +143,19 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     } else if (heap_free) {
         if (!heap_ready_ || import.iat_va != 0x00657098 || !in_stack(esp, 16))
             return StartupServiceResult::ContractFailure;
-        cpu_.trap_epilogue(1, 12, ret);
+        cpu_.trap_epilogue(1, 16, ret);
         expected_eax = 1;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapFree\n");
     } else if (heap_size) {
         if (!heap_ready_ || !in_stack(esp, 16)) return StartupServiceResult::ContractFailure;
-        cpu_.trap_epilogue(0, 12, ret);
+        cpu_.trap_epilogue(0, 16, ret);
         expected_eax = 0;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    const uint32_t cleanup = (version || module) ? 8u : 12u;
+    const uint32_t parameter_count = (version || module) ? 1u : 3u;
+    const uint32_t cleanup = 4u * (1u + parameter_count); // return address + arguments
+    fprintf(log_, "startup_service_stack_bytes=%u\n", cleanup);
     bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&
         cpu_.reg(d2rt::R_EAX) == expected_eax;
     for (unsigned i = 0; i < 4; ++i) abi_ok = abi_ok && cpu_.reg(preserved[i]) == before[i];
