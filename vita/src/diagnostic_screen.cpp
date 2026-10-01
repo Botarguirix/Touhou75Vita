@@ -96,7 +96,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     text(pixels,40,377,entry,reached?good:bad);
     text(pixels,40,408,reached?"STOP: NEXT IMPORT":"STOP: SEE LOG",neutral);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
-    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION12.LOG",neutral,2);
+    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION14.LOG",neutral,2);
     text(pixels,40,500,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;

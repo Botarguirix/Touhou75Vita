@@ -15,7 +15,9 @@ namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
-constexpr uint64_t kRunBudget = 4096, kTimeoutUs = 5000000;
+// Allow the original entrypoint to traverse the post-HeapCreate allocator
+// setup while retaining the five-second watchdog as the hard safety bound.
+constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
