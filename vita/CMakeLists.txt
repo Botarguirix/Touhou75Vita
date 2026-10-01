@@ -38,6 +38,12 @@ add_executable(${PROJECT_NAME}
   src/diagnostic_screen.cpp
 )
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
+# VitaSDK's linker script reserves this gap before the next load segment.
+# vita-elf-create appends SCE module/import metadata to the code segment;
+# page alignment alone can leave too little space as the executable grows.
+target_link_options(${PROJECT_NAME} PRIVATE
+  "LINKER:--defsym=__sce_headroom=0x10000"
+)
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/src"
 )

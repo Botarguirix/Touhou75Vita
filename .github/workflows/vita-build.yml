@@ -33,6 +33,13 @@ jobs:
         working-directory: vita
         run: make
 
+      - name: Show linked ELF segments
+        if: always()
+        run: |
+          if [ -f vita/build/touhou75_vita ]; then
+            arm-vita-eabi-readelf --program-headers --wide vita/build/touhou75_vita
+          fi
+
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:

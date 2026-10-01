@@ -1,6 +1,18 @@
 # Iteración 10 — estado básico del hilo y proceso
 
-Estado: código preparado localmente; compilación en Actions y validación en Vita pendientes. La Iteración 09 r2 pasó las pruebas de identidad, CPU, IAT, heap y archivo, y su pantalla fue confirmada con log e imagen. La Iteración 10 conserva esos controles y la presentación NEXTFRAME.
+Estado: el código compiló y enlazó en Actions, pero falló la conversión a VELF. La corrección del enlace está preparada localmente; falta confirmarla en Actions y validar en Vita. La Iteración 09 r2 pasó las pruebas de identidad, CPU, IAT, heap y archivo, y su pantalla fue confirmada con log e imagen. La Iteración 10 conserva esos controles y la presentación NEXTFRAME.
+
+## Corrección de la generación del VPK
+
+La [ejecución 26](https://github.com/Botarguirix/Touhou75Vita/actions/runs/36822854734), del commit `c389f5e`, llegó a `Built target touhou75_vita`. Después falló con:
+
+```text
+vita-elf-create: Cannot allocate 1652 bytes for SCE data at end of segment 0; segment 1 overlaps
+```
+
+`Makefile:7: all Error 2` es la consecuencia. El convertidor necesita añadir metadatos de módulo/imports al segmento de código, pero el segmento siguiente estaba demasiado cerca. Se añade al enlace `--defsym=__sce_headroom=0x10000`: el [script de enlace de VitaSDK](https://github.com/vitasdk/buildscripts/blob/master/patches/binutils/0001-vita.patch) usa ese símbolo para reservar 64 KiB antes del siguiente segmento y mantener la alineación de Vita. La reserva es espacio entre segmentos, no un buffer del juego ni memoria x86 invitada.
+
+Actions también mostrará los encabezados de programa del ELF enlazado aunque falle la conversión, para poder revisar la separación real. No se ha compilado esta corrección localmente porque aquí no está instalado VitaSDK. El próximo workflow debe completar VELF, SELF y VPK antes de probar en la consola.
 
 ## Alcance
 
