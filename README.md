@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Iteration 18 returned from HeapCreate and reached a named KERNEL32 module query. Iteration 18 validates nested SEH chains and serves that query. Full game boot remains unverified. See [Iteration 18 scope](docs/STATUS_ITERATION18.md) and [roadmap](docs/ROADMAP.md).
+Iteration 19 returned from HeapCreate and reached a named KERNEL32 module query. Iteration 19 validates nested SEH chains and serves that query. Full game boot remains unverified. See [Iteration 19 scope](docs/STATUS_ITERATION19.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,18 +15,18 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration18-startup-heap-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration19-startup-heap-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 18 Heap Service**, package version 01.21, on the same Vita used previously. The screen must show ITERATION 18.
+3. Launch **Touhou 7.5 Vita - Iteration 19 Heap Service**, package version 01.22, on the same Vita used previously. The screen must show ITERATION 19.
 4. Wait for the results screen. Photograph it, then press X to exit; automatic exit after 120 seconds.
-5. Inspect iteration18.log, iteration18-runtime.log and iteration18-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration18-startup-heap-r2 and startup_service_stack_bytes=16 for HeapCreate. The goal is startup_dynamic_export_called=yes and startup_critical_init_calls greater than zero, followed by a later import boundary; full boot remains unverified.
+5. Inspect iteration19.log, iteration19-runtime.log and iteration19-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration19-startup-heap-r2 and startup_service_stack_bytes=16 for HeapCreate. The goal is four FLS lookups handled as unavailable and startup_tls_calls greater than zero, followed by a later import boundary; full boot remains unverified.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 
 ## Keep game data outside Git
 
-Do not commit TH075.exe, TH075E.exe, translation DLLs, th075.dat, th075bgm.dat or other proprietary files. Supply your own files on the Vita. Iteration 18 needs only the known Japanese EXE and verifies its hash before PE loading.
+Do not commit TH075.exe, TH075E.exe, translation DLLs, th075.dat, th075bgm.dat or other proprietary files. Supply your own files on the Vita. Iteration 19 needs only the known Japanese EXE and verifies its hash before PE loading.

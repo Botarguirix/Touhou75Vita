@@ -1,6 +1,7 @@
 #include "startup_services.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
+#include "runtime/guest_thread_ctx.h"
 #include <array>
 #include <vector>
 #include <string>
@@ -24,11 +25,20 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool module = import.name == "GetModuleHandleA";
     const bool proc_address = import.name == "GetProcAddress";
     const bool critical_init = import.name == "InitializeCriticalSectionAndSpinCount";
+    const bool tls_alloc = import.name == "TlsAlloc";
+    const bool tls_get = import.name == "TlsGetValue";
+    const bool tls_set = import.name == "TlsSetValue";
+    const bool tls_free = import.name == "TlsFree";
+    const bool tls = tls_alloc || tls_get || tls_set || tls_free;
+    const bool get_error = import.name == "GetLastError";
+    const bool set_error = import.name == "SetLastError";
+    const bool thread_id = import.name == "GetCurrentThreadId";
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
-    if (!version && !module && !proc_address && !critical_init &&
+    if (!version && !module && !proc_address && !critical_init && !tls &&
+        !get_error && !set_error && !thread_id &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -37,7 +47,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    if (!in_stack(esp, 8) || !cpu_.read(esp, &ret, 4) || !cpu_.read(esp + 4, &arg, 4)) {
+    const uint32_t parameter_count = (tls_alloc || get_error || thread_id) ? 0u :
+        ((version || module || tls_get || tls_free || set_error) ? 1u :
+        ((proc_address || critical_init || tls_set) ? 2u : 3u));
+    const uint32_t cleanup = 4u * (1u + parameter_count);
+    if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
+        (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
@@ -135,12 +150,20 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
         fprintf(log_, "startup_export_requested=%s\n", name);
-        if (std::string(name) != "InitializeCriticalSectionAndSpinCount")
-            return StartupServiceResult::Unsupported;
-        cpu_.trap_epilogue(critical_init_trap, 12, ret);
-        expected_eax = critical_init_trap;
+        const std::string symbol_name(name);
+        if (symbol_name == "FlsAlloc" || symbol_name == "FlsFree" ||
+            symbol_name == "FlsGetValue" || symbol_name == "FlsSetValue") {
+            // The advertised XP profile uses the CRT's existing TLS fallback.
+            expected_eax = 0;
+            wx86_set_lasterr(cpu_, 127); // ERROR_PROC_NOT_FOUND
+            ++unavailable_export_calls_;
+            fprintf(log_, "startup_export_availability=not_available_xp_profile\n");
+        } else if (symbol_name == "InitializeCriticalSectionAndSpinCount") {
+            expected_eax = critical_init_trap;
+        } else return StartupServiceResult::Unsupported;
+        cpu_.trap_epilogue(expected_eax, 12, ret);
         ++proc_address_calls_;
-        fprintf(log_, "startup_export_resolved_va=0x%08X\n", critical_init_trap);
+        fprintf(log_, "startup_export_resolved_va=0x%08X\n", expected_eax);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetProcAddress\n");
     } else if (critical_init) {
         uint32_t spin = 0;
@@ -168,6 +191,48 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_critical_section_spin=%u\n", spin);
         fprintf(log_, "startup_critical_section_readback=passed\n");
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!InitializeCriticalSectionAndSpinCount\n");
+    } else if (tls) {
+        const uint32_t slots = wx86_cur_tib() + 0xE10;
+        if (!wx86_cur_tib()) return StartupServiceResult::ContractFailure;
+        if (tls_alloc) {
+            expected_eax = 0xFFFFFFFFu;
+            for (uint32_t i = 0; i < tls_allocated_.size(); ++i) {
+                if (tls_allocated_[i]) continue;
+                const uint32_t zero = 0;
+                if (!cpu_.write(slots + 4 * i, &zero, 4))
+                    return StartupServiceResult::ContractFailure;
+                tls_allocated_[i] = true;
+                expected_eax = i;
+                fprintf(log_, "startup_tls_index=%u\n", i);
+                break;
+            }
+            if (expected_eax == 0xFFFFFFFFu) wx86_set_lasterr(cpu_, 259);
+        } else if (arg >= tls_allocated_.size() || !tls_allocated_[arg]) {
+            wx86_set_lasterr(cpu_, 87);
+            expected_eax = 0;
+        } else if (tls_get) {
+            if (!cpu_.read(slots + 4 * arg, &expected_eax, 4))
+                return StartupServiceResult::ContractFailure;
+            wx86_set_lasterr(cpu_, 0);
+        } else {
+            uint32_t value = 0;
+            if (tls_set && !cpu_.read(esp + 8, &value, 4))
+                return StartupServiceResult::ContractFailure;
+            if (!cpu_.write(slots + 4 * arg, &value, 4))
+                return StartupServiceResult::ContractFailure;
+            if (tls_free) tls_allocated_[arg] = false;
+            expected_eax = 1;
+        }
+        ++tls_calls_;
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (get_error || set_error || thread_id) {
+        if (get_error) expected_eax = wx86_get_lasterr(cpu_);
+        if (set_error) wx86_set_lasterr(cpu_, arg);
+        if (thread_id && (!wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x24, &expected_eax, 4)))
+            return StartupServiceResult::ContractFailure;
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (heap_create) {
         uint32_t initial = 0, maximum = 0;
         if (heap_create_calls_ || import.iat_va != 0x00657160 || ret != 0x0064974C ||
@@ -226,9 +291,6 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    const uint32_t parameter_count = (version || module) ? 1u :
-        ((proc_address || critical_init) ? 2u : 3u);
-    const uint32_t cleanup = 4u * (1u + parameter_count); // return address + arguments
     fprintf(log_, "startup_service_stack_bytes=%u\n", cleanup);
     bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&
         cpu_.reg(d2rt::R_EAX) == expected_eax;

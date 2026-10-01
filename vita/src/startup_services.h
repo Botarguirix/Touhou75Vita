@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <set>
+#include <array>
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure };
 // Narrow contracts for the two imports observed at the beginning of TH075.
@@ -16,6 +17,8 @@ public:
     unsigned heap_alloc_calls() const { return heap_alloc_calls_; }
     unsigned proc_address_calls() const { return proc_address_calls_; }
     unsigned critical_init_calls() const { return critical_init_calls_; }
+    unsigned tls_calls() const { return tls_calls_; }
+    unsigned unavailable_export_calls() const { return unavailable_export_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
@@ -27,6 +30,8 @@ private:
     unsigned heap_create_calls_ = 0, heap_alloc_calls_ = 0;
     unsigned proc_address_calls_ = 0, critical_init_calls_ = 0;
     std::set<uint32_t> critical_sections_;
+    std::array<bool,64> tls_allocated_{};
+    unsigned tls_calls_ = 0, unavailable_export_calls_ = 0;
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
 };
