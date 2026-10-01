@@ -6,7 +6,7 @@ El servicio crea una arena invitada RW en `0x00C00000`, devuelve el handle `0x00
 
 La compilación local con VitaSDK 2026.08 pasó: WinVita ARMv7, CMake, enlace SELF y generación VPK. Falta publicar y validar en una sola Vita.
 
-Resultado esperado en la pantalla: `ITERATION 13`, `EXE: HEAP SERVICE RETURNED`, `STOP: NEXT IMPORT`. Los archivos serán `iteration14.log`, `iteration14-runtime.log` e `iteration14-watchdog.log` en `ux0:data/TH075Vita/`.
+Resultado esperado en la pantalla: `ITERATION 14`, `EXE: HEAP SERVICE RETURNED`, `STOP: NEXT IMPORT`. Los archivos serán `iteration14.log`, `iteration14-runtime.log` e `iteration14-watchdog.log` en `ux0:data/TH075Vita/`.
 
 ## Publicación y prueba
 
