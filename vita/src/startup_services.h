@@ -26,6 +26,7 @@ public:
     unsigned conversion_calls() const { return conversion_calls_; }
     unsigned sync_calls() const { return sync_calls_; }
     unsigned code_page_calls() const { return code_page_calls_; }
+    unsigned string_type_calls() const { return string_type_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
@@ -44,6 +45,7 @@ private:
     unsigned conversion_calls_ = 0;
     unsigned sync_calls_ = 0;
     unsigned code_page_calls_ = 0;
+    unsigned string_type_calls_ = 0;
     std::map<uint32_t, bool> environment_blocks_; // address -> Unicode variant
     std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;

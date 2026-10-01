@@ -45,8 +45,10 @@ complete HeapFree/HeapSize behavior and instruction-level tracing remain work.
 
 ### Current success criteria
 
-Iteration 24 should return from GetACP with the Japanese CP932 profile and
-record the next boundary. The next major milestone is completing CRT startup
+Hardware iteration 24 returned from GetACP and GetCPInfo with the Japanese
+CP932 profile and reached GetStringTypeW. Iteration 25 should return from the
+CRT character-classification probe and record the next boundary.
+The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
 No reliable iteration count or completion percentage is available yet.

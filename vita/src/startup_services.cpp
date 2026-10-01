@@ -17,6 +17,18 @@ bool in_stack(uint32_t p, uint32_t size) {
 void put32(uint8_t* out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = uint8_t(value >> (8 * i));
 }
+uint16_t ascii_ctype1(uint16_t ch) {
+    uint16_t flags = 0x0200; // C1_DEFINED
+    if (ch < 32 || ch == 127) flags |= 0x0020;
+    if (ch == ' ' || (ch >= 9 && ch <= 13)) flags |= 0x0008;
+    if (ch == ' ' || ch == 9) flags |= 0x0040;
+    if (ch >= 'A' && ch <= 'Z') flags |= 0x0101;
+    if (ch >= 'a' && ch <= 'z') flags |= 0x0102;
+    if (ch >= '0' && ch <= '9') flags |= 0x0084;
+    if ((ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')) flags |= 0x0080;
+    if (ch >= 33 && ch <= 126 && !(flags & 0x0104)) flags |= 0x0010;
+    return flags;
+}
 }
 
 StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
@@ -52,6 +64,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool wide_to_bytes = import.name == "WideCharToMultiByte";
     const bool code_page_query = import.name == "GetACP" || import.name == "GetOEMCP";
     const bool code_page_info = import.name == "GetCPInfo";
+    const bool string_type = import.name == "GetStringTypeW";
     const bool process = startup_info || command_line || std_handle || file_type || handle_count;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
@@ -59,7 +72,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
-        !code_page_query && !code_page_info &&
+        !code_page_query && !code_page_info && !string_type &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -68,7 +81,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u : string_type ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
@@ -78,7 +91,58 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (code_page_query || code_page_info) {
+    if (string_type) {
+        uint32_t args[4] = {};
+        if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
+        const uint32_t source = args[1], count = args[2], dest = args[3];
+        fprintf(log_, "startup_string_type_kind=%u\n", args[0]);
+        fprintf(log_, "startup_string_type_source_va=0x%08X\n", source);
+        fprintf(log_, "startup_string_type_input_units=%u\n", count);
+        if (args[0] != 1) {
+            fprintf(log_, "startup_string_type_boundary=ctype2_or_ctype3_not_implemented\n");
+            return StartupServiceResult::Unsupported;
+        }
+        if (!source || !dest || source == dest || !count) {
+            wx86_set_lasterr(cpu_, 87);
+        } else {
+            const bool terminated_input = count > 0x7FFFFFFFu;
+            constexpr uint32_t max_units = 16384;
+            if (!terminated_input && count > max_units) return StartupServiceResult::Unsupported;
+            const uint32_t limit = terminated_input ? max_units : count;
+            std::vector<uint16_t> types;
+            bool terminated = false;
+            for (uint32_t i = 0; i < limit; ++i) {
+                uint16_t unit = 0;
+                if (uint64_t(source) + 2ull*i + 2 > 0x100000000ull ||
+                    !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
+                if (unit > 127) {
+                    fprintf(log_, "startup_string_type_boundary=unicode_classification_not_implemented\n");
+                    fprintf(log_, "startup_string_type_unsupported_unit=0x%04X\n", unsigned(unit));
+                    return StartupServiceResult::Unsupported;
+                }
+                types.push_back(ascii_ctype1(unit));
+                if (!unit && terminated_input) { terminated = true; break; }
+            }
+            if (terminated_input && !terminated) return StartupServiceResult::Unsupported;
+            const uint32_t size = uint32_t(types.size()) * 2;
+            std::vector<uint16_t> readback(types.size());
+            if (uint64_t(dest) + size > 0x100000000ull ||
+                (uint64_t(source) < uint64_t(dest) + size && uint64_t(dest) < uint64_t(source) + size)) {
+                wx86_set_lasterr(cpu_, 87);
+            } else {
+                if (!cpu_.read(dest, readback.data(), size) ||
+                    !cpu_.write(dest, types.data(), size) ||
+                    !cpu_.read(dest, readback.data(), size) || readback != types)
+                    return StartupServiceResult::ContractFailure;
+                expected_eax = 1;
+                fprintf(log_, "startup_string_type_output_units=%u\n", unsigned(types.size()));
+                fprintf(log_, "startup_string_type_readback=passed\n");
+            }
+        }
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++string_type_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetStringTypeW\n");
+    } else if (code_page_query || code_page_info) {
         // Explicit Japanese Windows compatibility profile; independent of host locale.
         constexpr uint32_t japanese_code_page = 932;
         if (code_page_query) {
