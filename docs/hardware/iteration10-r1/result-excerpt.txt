@@ -1,0 +1,44 @@
+# Extract from user-supplied iteration10.log and iteration10-runtime.log.
+# The attached image confirms all eight results visibly passed on a physical Vita.
+build_id=iteration10-winvita-teb-fs-tls-r1
+target_cpu=ARMv7
+execution=synthetic_x86_services_and_thread_context_only
+game_entrypoint=not_attempted
+game_code_executed=no
+tls_callbacks=not_attempted
+translation_patch=not_loaded
+sha256_selfcheck=passed
+game_sha256_result=passed
+game_sha256_verified_on_vita=yes
+game_pe_load_result=loaded_by_winvita_peimage
+game_guest_map_result=passed
+dynarec_backend=Box86-derived-ARMv7
+dynarec_smoke_result=passed
+thread_context_result=initialized
+thread_teb_va=0x00730000
+process_peb_va=0x00731000
+thread_context_scope=one_diagnostic_thread
+import_bridge_unresolved=140
+game_import_resolution=partial_diagnostic_only
+import_smoke_result=passed
+heap_live_bytes=0
+heap_smoke_result=passed
+file_header_compare=passed
+file_smoke_result=passed
+teb_fs_smoke_result=passed
+tls_live_slots=0
+tls_smoke_result=passed
+process_smoke_result=passed
+result=identity_services_teb_tls_process_passed
+screen_present_sync=nextframe
+screen_present_rc=0x00000000
+screen_vblank_rc=0x00000000
+screen_query_rc=0x00000000
+screen_active_matches=yes
+screen_result=presented
+screen_exit=cross
+screen_detach_rc=0x00000000
+
+# Runtime log: no error reported in the supplied four progress entries.
+# A 16 MiB guest span was allocated; the first 16 MiB JIT segment was reserved.
+[   5.00s] vm-domain: BRACKET close+open arme (premier rc=0x00000000)

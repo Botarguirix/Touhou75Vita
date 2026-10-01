@@ -1,0 +1,15 @@
+# Extract from user-supplied logs; not a full log copy.
+# Attached image confirms a visible Iteration 09 R2 results screen.
+build_id=iteration09-winvita-heap-file-screen-r2
+service_calls=10
+file_header_compare=passed
+file_smoke_result=passed
+result=identity_cpu_iat_heap_file_passed
+screen_present_sync=nextframe
+screen_present_rc=0x00000000
+screen_vblank_rc=0x00000000
+screen_query_rc=0x00000000
+screen_active_matches=yes
+screen_result=presented
+screen_exit=cross
+screen_detach_rc=0x00000000
