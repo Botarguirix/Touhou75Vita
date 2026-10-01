@@ -16,9 +16,11 @@ Integrar una revisión fijada de WinVita, mapear la imagen PE32 japonesa en la m
 
 Se integra [Franckrst/WinVita](https://github.com/Franckrst/WinVita) en la revisión `8065b469da1b65b1f968024b881ef187e7f7fef7`, con su `LICENSE` y `THIRD-PARTY-NOTICES.md`. Su `build.sh` compila el runtime genérico y el dynarec Box86 para ARMv7. El workflow de GitHub Actions quedó configurado para producir `Touhou75Vita-iteration07-armv7-dynarec-smoke-vpk` después de subir los cambios.
 
-## Validación pendiente
+## Resultado en consola
 
-La VPK debe compilarse en Actions, instalarse en la PS Vita y dejar `ux0:data/TH075Vita/iteration07.log`. Un resultado satisfactorio incluye:
+El log de la PS Vita revisado en la sesión anterior reportó `result=pe_mapped_and_dynarec_smoke_passed`, EAX `0x00000075` y EIP final `0x00894000`. También enumeró 157 imports en ocho DLL. La Iteración 07 pasó esta prueba limitada en hardware. El archivo original estaba en `D:/data/TH075Vita/iteration07.log`; esa unidad no está disponible al preparar la Iteración 08, por lo que aquí se registra el resultado previamente leído, sin adjuntar una copia íntegra del log.
+
+La VPK probada dejó `ux0:data/TH075Vita/iteration07.log`. Los indicadores de éxito registrados fueron:
 
 ```text
 build_id=iteration07-winvita-armv7-smoke-r1

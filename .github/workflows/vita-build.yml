@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [ main ]
   push:
-    branches: [ main ]
+    branches: [ main, codex/d2vita-runtime-review ]
 
 jobs:
   build-vita:
@@ -36,6 +36,6 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-iteration07-armv7-dynarec-smoke-vpk
+          name: Touhou75Vita-iteration08-iat-bridge-vpk
           path: vita/build/*.vpk
           if-no-files-found: error

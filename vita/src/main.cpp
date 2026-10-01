@@ -15,18 +15,19 @@
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "platform/vita_host.h"
+#include "import_smoke.h"
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration07.log"
-#define BUILD_ID "iteration07-winvita-armv7-smoke-r1"
+#define LOG_PATH APP_DIR "/iteration08.log"
+#define BUILD_ID "iteration08-winvita-iat-bridge-r1"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = LOG_PATH;
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration08-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -149,7 +150,9 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
         return false;
     }
 
-    cpu.set_trap(trap_va, trap_va + 0x10,
+    // CpuBox86 initializes trap stubs only for its first trap window.
+    // Reserve the same complete window that Bridge will use afterwards.
+    cpu.set_trap(trap_va, trap_va + 0x00100000,
                  [](d2rt::Cpu&, uint32_t) { return false; });
     cpu.set_reg(d2rt::R_ESP, stack_va + 0x1000);
     cpu.set_reg(d2rt::R_EFLAGS, 0x202);
@@ -176,10 +179,10 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 }
 
 static int run(FILE* log) {
-    fprintf(log, "Touhou 7.5 Vita - Iteration 07 ARMv7 dynarec and PE load diagnostic\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 08 x86 IAT bridge diagnostic\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     fprintf(log, "target_cpu=ARMv7\n");
-    fprintf(log, "execution=synthetic_x86_smoke_only\n");
+    fprintf(log, "execution=synthetic_x86_smoke_and_iat_calls_only\n");
     fprintf(log, "game_entrypoint=not_attempted\n");
     fprintf(log, "game_code_executed=no\n");
     fprintf(log, "tls_callbacks=not_attempted\n");
@@ -211,6 +214,10 @@ static int run(FILE* log) {
 
     bool game_mapped = false;
     if (pe_loaded) {
+        if ((uint64_t)game_image.load_base() + game_image.image_size() > 0x00700000) {
+            fprintf(log, "game_guest_map_error=image_exceeds_reserved_region\n");
+            return 1;
+        }
         const bool mapped = cpu->map(game_image.load_base(),
                                      game_image.image_size(),
                                      game_image.image().data(), d2rt::P_RWX);
@@ -223,13 +230,10 @@ static int run(FILE* log) {
         fprintf(log, "game_guest_map_result=skipped\n");
     }
 
-    const uint64_t image_end = pe_loaded
-        ? (uint64_t)game_image.load_base() + game_image.image_size()
-        : 0x00400000u;
-    const uint64_t code64 = (image_end + 0x1FFFu) & ~0xFFFu;
-    const uint64_t stack64 = code64 + 0x00100000u;
-    const uint64_t trap64 = code64 + 0x00200000u;
-    if (trap64 + 0x1000u > kArenaGuestLimit) {
+    const uint64_t code64 = 0x00700000;
+    const uint64_t stack64 = 0x00800000;
+    const uint64_t trap64 = 0x00B00000;
+    if (trap64 + 0x00100000u > kArenaGuestLimit) {
         fprintf(log, "dynarec_smoke_result=failed\n");
         fprintf(log, "dynarec_smoke_error=guest_arena_too_small_for_image\n");
         return 1;
@@ -237,8 +241,10 @@ static int run(FILE* log) {
 
     const bool smoke_passed = run_dynarec_smoke(
         *cpu, (uint32_t)code64, (uint32_t)stack64, (uint32_t)trap64, log);
-    const bool passed = pe_loaded && game_mapped && smoke_passed;
-    fprintf(log, "result=%s\n", passed ? "pe_mapped_and_dynarec_smoke_passed" : "failed");
+    const bool imports_passed = pe_loaded && game_mapped && smoke_passed &&
+        run_import_smoke(*cpu, exe_bytes, log);
+    const bool passed = pe_loaded && game_mapped && smoke_passed && imports_passed;
+    fprintf(log, "result=%s\n", passed ? "pe_mapped_dynarec_and_iat_smoke_passed" : "failed");
     return passed ? 0 : 1;
 }
 
@@ -248,6 +254,7 @@ int main(void) {
     if (log == NULL) {
         return 2;
     }
+    setvbuf(log, nullptr, _IONBF, 0);
 
     const int result = run(log);
     fflush(log);
