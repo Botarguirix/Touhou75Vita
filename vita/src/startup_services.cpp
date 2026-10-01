@@ -4,6 +4,8 @@
 #include <array>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <iterator>
 
 namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
@@ -20,11 +22,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (import.dll != "KERNEL32.dll") return StartupServiceResult::Unsupported;
     const bool version = import.name == "GetVersionExA";
     const bool module = import.name == "GetModuleHandleA";
+    const bool proc_address = import.name == "GetProcAddress";
+    const bool critical_init = import.name == "InitializeCriticalSectionAndSpinCount";
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
-    if (!version && !module && !heap_create && !heap_alloc && !heap_free && !heap_size)
+    if (!version && !module && !proc_address && !critical_init &&
+        !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -113,6 +118,56 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             ++module_calls_;
             fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
         }
+    } else if (proc_address) {
+        uint32_t symbol = 0;
+        if (!in_stack(esp, 12) || !cpu_.read(esp + 8, &symbol, 4) ||
+            arg != 0x00AB1000 || symbol <= 0xFFFFu) {
+            fprintf(log_, "startup_service_error=unsupported_export_frame\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        char name[128] = {};
+        unsigned n = 0;
+        for (; n < sizeof(name); ++n) {
+            if (uint64_t(symbol) + n > 0xFFFFFFFFull ||
+                !cpu_.read(symbol + n, &name[n], 1))
+                return StartupServiceResult::ContractFailure;
+            if (!name[n]) break;
+        }
+        if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
+        fprintf(log_, "startup_export_requested=%s\n", name);
+        if (std::string(name) != "InitializeCriticalSectionAndSpinCount")
+            return StartupServiceResult::Unsupported;
+        cpu_.trap_epilogue(critical_init_trap, 12, ret);
+        expected_eax = critical_init_trap;
+        ++proc_address_calls_;
+        fprintf(log_, "startup_export_resolved_va=0x%08X\n", critical_init_trap);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetProcAddress\n");
+    } else if (critical_init) {
+        uint32_t spin = 0;
+        uint32_t previous[6] = {};
+        if (!in_stack(esp, 12) || !cpu_.read(esp + 8, &spin, 4) || !arg || (arg & 3u) ||
+            critical_sections_.count(arg) || !cpu_.read(arg, previous, sizeof(previous))) {
+            fprintf(log_, "startup_service_error=invalid_critical_section_frame\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        // x86 RTL_CRITICAL_SECTION: DebugInfo, LockCount, RecursionCount,
+        // OwningThread, LockSemaphore, SpinCount. Only initialization is served;
+        // lock acquisition remains an explicit boundary until implemented.
+        const uint32_t state[6] = {0, 0xFFFFFFFFu, 0, 0, 0, spin};
+        uint32_t copy[6] = {};
+        if (!cpu_.write(arg, state, sizeof(state)) || !cpu_.read(arg, copy, sizeof(copy)) ||
+            !std::equal(std::begin(state), std::end(state), std::begin(copy))) {
+            fprintf(log_, "startup_service_error=critical_section_write_failed\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        critical_sections_.insert(arg);
+        ++critical_init_calls_;
+        cpu_.trap_epilogue(1, 12, ret);
+        expected_eax = 1;
+        fprintf(log_, "startup_critical_section_va=0x%08X\n", arg);
+        fprintf(log_, "startup_critical_section_spin=%u\n", spin);
+        fprintf(log_, "startup_critical_section_readback=passed\n");
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!InitializeCriticalSectionAndSpinCount\n");
     } else if (heap_create) {
         uint32_t initial = 0, maximum = 0;
         if (heap_create_calls_ || import.iat_va != 0x00657160 || ret != 0x0064974C ||
@@ -171,7 +226,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    const uint32_t parameter_count = (version || module) ? 1u : 3u;
+    const uint32_t parameter_count = (version || module) ? 1u :
+        ((proc_address || critical_init) ? 2u : 3u);
     const uint32_t cleanup = 4u * (1u + parameter_count); // return address + arguments
     fprintf(log_, "startup_service_stack_bytes=%u\n", cleanup);
     bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&

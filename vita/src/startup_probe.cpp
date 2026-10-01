@@ -22,7 +22,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration17-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration18-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -49,7 +49,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration17-r1\n");
+        fprintf(report_, "watchdog_revision=iteration18-r1\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -195,7 +195,7 @@ struct RunnerPlacement {
 
 bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                        const std::vector<uint8_t>& exe, FILE* log) {
-    fprintf(log, "startup_scope=original_exe_nested_seh_named_kernel32\n");
+    fprintf(log, "startup_scope=original_exe_dynamic_critical_section\n");
     fprintf(log, "startup_import_policy=serve_startup_and_heap_contracts_stop_before_unknown_import\n");
     fprintf(log, "game_bootable=not_yet_established\n");
     // This checkpoint doesn't initialize PE static TLS or call its callbacks.
@@ -228,6 +228,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     }
     StartupServices services(cpu, image, log);
     TrapCleanup cleanup{cpu};
+    if (image.imports().size() > (StartupServices::critical_init_trap - kTrap) / 16) {
+        fprintf(log, "startup_result=trap_space_exhausted\n"); return false;
+    }
     for (size_t i = 0; i < image.imports().size(); ++i) {
         const uint32_t target = kTrap + uint32_t(i) * 16;
         const uint32_t iat = image.imports()[i].iat_va;
@@ -246,15 +249,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_text_patch=none\n");
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
+    const d2rt::ImportRef dynamic_critical = {
+        "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     cpu.set_trap(kTrap, kTrapEnd, [&](d2rt::Cpu& c, uint32_t trap) {
         if (trap == kSentinel) {
             fprintf(log, "startup_stop=entrypoint_returned\n"); return false;
         }
-        if (trap < kTrap || (trap - kTrap) % 16 ||
-            (trap - kTrap) / 16 >= image.imports().size()) {
+        const bool dynamic = trap == StartupServices::critical_init_trap;
+        if (!dynamic && (trap < kTrap || (trap - kTrap) % 16 ||
+            (trap - kTrap) / 16 >= image.imports().size())) {
             fprintf(log, "startup_stop=unknown_trap\n"); return false;
         }
-        const auto& imp = image.imports()[(trap - kTrap) / 16];
+        const auto& imp = dynamic ? dynamic_critical : image.imports()[(trap - kTrap) / 16];
+        if (dynamic) fprintf(log, "startup_dynamic_export_called=yes\n");
         const bool first = !import_hit;
         import_hit = true;
         const std::string tag = imp.dll + "!" +
@@ -372,9 +379,11 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
-    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls());
+    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls());
     fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
     fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
+    fprintf(log, "startup_proc_address_calls=%u\n", services.proc_address_calls());
+    fprintf(log, "startup_critical_init_calls=%u\n", services.critical_init_calls());
     if (!stopped) {
         fprintf(log, "startup_fault=%s\n", fault ? fault : "unknown");
         fprintf(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
