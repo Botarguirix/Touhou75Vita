@@ -1,6 +1,12 @@
 # Iteración 09 — identidad, memoria, archivos y pantalla
 
-Estado: implementación local preparada. Compilación VitaSDK y prueba física pendientes. La Iteración 08 r2 pasó en la consola del usuario; se conservan esas pruebas. No se ejecuta el entry point, callbacks TLS ni código comercial del juego.
+Estado: r1 probada en hardware: identidad, CPU, puente, heap y archivo pasaron; la presentación falló y el usuario observó una pantalla negra. Corrección r2 preparada localmente, pendiente de compilación y consola. No se ejecuta el entry point, callbacks TLS ni código comercial del juego.
+
+## Resultado r1 y corrección r2
+
+Los logs aportados confirman `result=identity_cpu_iat_heap_file_passed`, hash calculado idéntico al japonés esperado, diez llamadas de servicios, ocupación del heap cero y cabecera comparada correctamente. Se conserva un extracto en docs/hardware/iteration09-r1/result-excerpt.txt.
+
+La pantalla falla con `screen_present_rc=0x80290006`. El [header oficial de VitaSDK](https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/display.h) identifica ese valor como `SCE_DISPLAY_ERROR_INVALID_UPDATETIMING`. El código r1 pidió SCE_DISPLAY_SETBUF_IMMEDIATE. r2 cambia la presentación y desconexión a SCE_DISPLAY_SETBUF_NEXTFRAME, espera vblank y consulta el framebuffer activo, registrando tanto el resultado como la coincidencia de dirección, pitch, tamaño y formato. La presentación visible aún debe confirmarse con hardware y foto. Si desconectar el buffer falla, su liberación se difiere al cierre del proceso.
 
 ## Comprobaciones
 
@@ -30,15 +36,15 @@ Todo cabe en el espacio invitado de 16 MiB probado previamente. La pantalla usa 
 ## Prueba
 
 1. Commit y push en codex/d2vita-runtime-review o main. Esperar el workflow exitoso del commit nuevo.
-2. Descargar **Touhou75Vita-iteration09-heap-file-screen-vpk**, extraer e instalar la VPK. Title ID T075VITA1; versión de paquete `01.10`.
+2. Descargar **Touhou75Vita-iteration09-r2-heap-file-screen-vpk**, extraer e instalar la VPK. Title ID T075VITA1; versión de paquete `01.11`.
 3. Mantener el EXE japonés en ux0:data/TH075Vita/TH075.exe. No se necesitan nuevos archivos.
-4. Abrir **Touhou 7.5 Vita - Iteration 09 Services Test**. Esperar, fotografiar los resultados y pulsar X para salir.
+4. Abrir **Touhou 7.5 Vita - Iteration 09 r2 Services Test**. Esperar, fotografiar los resultados y pulsar X para salir.
 5. Compartir iteration09.log, iteration09-runtime.log y la foto. Ambos logs se reinician con cada lanzamiento.
 
 Indicadores esperados, pendientes de comprobar en hardware:
 
 ```text
-build_id=iteration09-winvita-heap-file-screen-r1
+build_id=iteration09-winvita-heap-file-screen-r2
 sha256_selfcheck=passed
 game_sha256_result=passed
 game_sha256_verified_on_vita=yes
@@ -53,6 +59,8 @@ file_header_compare=passed
 file_smoke_result=passed
 result=identity_cpu_iat_heap_file_passed
 screen_present_rc=0x00000000
+screen_present_sync=nextframe
+screen_active_matches=yes
 screen_result=presented
 ```
 

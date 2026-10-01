@@ -74,7 +74,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 09 - X86 SERVICES",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 09 R2 - X86 SERVICES",0xFFE9C975);
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
     text(pixels,40,137,result==0?"RESULT: PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ"};
@@ -90,22 +90,40 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     text(pixels,40,477,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
-    int rc=sceDisplaySetFrameBuf(&fb,SCE_DISPLAY_SETBUF_IMMEDIATE);
+    // r1's immediate update was rejected by hardware (0x80290006).
+    // Schedule scanout at the next frame boundary instead.
+    fprintf(log,"screen_present_sync=nextframe\n");
+    int rc=sceDisplaySetFrameBuf(&fb,SCE_DISPLAY_SETBUF_NEXTFRAME);
     fprintf(log,"screen_present_rc=0x%08X\n",(unsigned)rc);
-    fprintf(log,"screen_result=%s\n",rc<0?"failed":"presented");
+    if(rc>=0) {
+        int wait_rc=sceDisplayWaitVblankStart();
+        fprintf(log,"screen_vblank_rc=0x%08X\n",(unsigned)wait_rc);
+        SceDisplayFrameBuf active={};active.size=sizeof(active);
+        int get_rc=sceDisplayGetFrameBuf(&active,SCE_DISPLAY_SETBUF_IMMEDIATE);
+        fprintf(log,"screen_query_rc=0x%08X\n",(unsigned)get_rc);
+        bool matches=get_rc>=0&&active.base==base&&active.pitch==960&&
+            active.width==960&&active.height==544&&active.pixelformat==fb.pixelformat;
+        fprintf(log,"screen_active_matches=%s\n",matches?"yes":"no");
+        fprintf(log,"screen_result=%s\n",wait_rc>=0&&matches?"presented":"confirmation_failed");
+    } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
         const uint64_t deadline=sceKernelGetProcessTimeWide()+120000000ull;
-        bool released=false;
+        bool released=false;const char* exit_reason="timeout";
         while(sceKernelGetProcessTimeWide()<deadline) {
             SceCtrlData pad={};
-            if(sceCtrlPeekBufferPositive(0,&pad,1)<0) { fprintf(log,"screen_exit=controller_error\n");break; }
+            if(sceCtrlPeekBufferPositive(0,&pad,1)<0) { exit_reason="controller_error";break; }
             if(!(pad.buttons&SCE_CTRL_CROSS)) released=true;
-            if(released&&(pad.buttons&SCE_CTRL_CROSS)) { fprintf(log,"screen_exit=cross\n");break; }
+            if(released&&(pad.buttons&SCE_CTRL_CROSS)) { exit_reason="cross";break; }
             sceKernelDelayThread(16000);
         }
-        // Detach display before freeing the buffer it scans out.
-        sceDisplaySetFrameBuf(nullptr,SCE_DISPLAY_SETBUF_IMMEDIATE);
-        sceDisplayWaitVblankStart();
+        fprintf(log,"screen_exit=%s\n",exit_reason);
+        // Retain the allocation until process exit if detaching is refused;
+        // never free a buffer that may still be scanned out by the display.
+        int detach_rc=sceDisplaySetFrameBuf(nullptr,SCE_DISPLAY_SETBUF_NEXTFRAME);
+        fprintf(log,"screen_detach_rc=0x%08X\n",(unsigned)detach_rc);
+        if(detach_rc<0||sceDisplayWaitVblankStart()<0) {
+            fprintf(log,"screen_buffer_release=deferred_to_process_exit\n");return;
+        }
     }
     sceKernelFreeMemBlock(block);
 }
