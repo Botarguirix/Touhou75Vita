@@ -6,7 +6,7 @@
 - Verify the Japanese PE32 image, SHA-256, x86 register smoke tests, IAT bridge, heap, file, TEB/FS, TLS and process services.
 - Record every run in a versioned log and show the active iteration on screen.
 
-## Phase 1 — deterministic original entrypoint (current)
+## Phase 1 — deterministic original entrypoint (checkpoint reached)
 
 Goal: execute the original PE entrypoint far enough to observe a stable import boundary.
 
@@ -15,7 +15,11 @@ Goal: execute the original PE entrypoint far enough to observe a stable import b
 3. Add an instruction trace and repeated-EIP guard so loops and bad returns are diagnosed instead of silently consuming budget.
 4. Reach and record the first unsupported import after allocator initialization.
 
-## Phase 2 — Win32 startup surface
+Hardware iteration 23 reached GetACP after HeapCreate, three HeapAlloc calls
+and critical-section acquisition. Entry and import interception work, but
+complete HeapFree/HeapSize behavior and instruction-level tracing remain work.
+
+## Phase 2 — Win32 startup surface (current)
 
 - Implement the small KERNEL32/USER32 contracts observed by the Japanese executable.
 - Add file, timing, window, input and thread shims only when the log proves they are needed.
@@ -41,4 +45,8 @@ Goal: execute the original PE entrypoint far enough to observe a stable import b
 
 ### Current success criteria
 
-The next useful milestone is not a full game boot. It is a log showing `HeapAlloc` serviced and the first unsupported import after allocator setup, with no execution-limit-only failure.
+Iteration 24 should return from GetACP with the Japanese CP932 profile and
+record the next boundary. The next major milestone is completing CRT startup
+and reaching game initialization. Then record actual game asset requests and
+the first graphics calls before implementing a renderer for a real game frame.
+No reliable iteration count or completion percentage is available yet.

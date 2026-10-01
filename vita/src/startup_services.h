@@ -7,7 +7,7 @@
 #include <vector>
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure };
-// Narrow contracts for the two imports observed at the beginning of TH075.
+// Bounded Win32 contracts for the observed TH075 startup path.
 class StartupServices {
 public:
     StartupServices(d2rt::Cpu& cpu, const d2rt::PeImage& image, FILE* log)
@@ -25,6 +25,7 @@ public:
     unsigned environment_calls() const { return environment_calls_; }
     unsigned conversion_calls() const { return conversion_calls_; }
     unsigned sync_calls() const { return sync_calls_; }
+    unsigned code_page_calls() const { return code_page_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
@@ -42,6 +43,7 @@ private:
     unsigned environment_calls_ = 0;
     unsigned conversion_calls_ = 0;
     unsigned sync_calls_ = 0;
+    unsigned code_page_calls_ = 0;
     std::map<uint32_t, bool> environment_blocks_; // address -> Unicode variant
     std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;

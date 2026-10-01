@@ -50,6 +50,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         import.name == "FreeEnvironmentStringsA";
     const bool environment = environment_get || environment_free;
     const bool wide_to_bytes = import.name == "WideCharToMultiByte";
+    const bool code_page_query = import.name == "GetACP" || import.name == "GetOEMCP";
+    const bool code_page_info = import.name == "GetCPInfo";
     const bool process = startup_info || command_line || std_handle || file_type || handle_count;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
@@ -57,6 +59,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
+        !code_page_query && !code_page_info &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -66,16 +69,53 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u :
-        ((tls_alloc || get_error || thread_id || command_line || environment_get) ? 0u :
+        ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
-        ((proc_address || critical_init || tls_set) ? 2u : 3u)));
+        ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (version) {
+    if (code_page_query || code_page_info) {
+        // Explicit Japanese Windows compatibility profile; independent of host locale.
+        constexpr uint32_t japanese_code_page = 932;
+        if (code_page_query) {
+            expected_eax = japanese_code_page;
+            fprintf(log_, "startup_code_page_profile=japanese_cp932\n");
+        } else {
+            uint32_t dest = 0;
+            if (!cpu_.read(esp + 8, &dest, 4)) return StartupServiceResult::ContractFailure;
+            const uint32_t page = arg <= 1 ? japanese_code_page : arg;
+            fprintf(log_, "startup_code_page_requested=%u\n", arg);
+            if (page != japanese_code_page) {
+                fprintf(log_, "startup_code_page_boundary=unsupported_page\n");
+                return StartupServiceResult::Unsupported;
+            }
+            if (!dest) {
+                wx86_set_lasterr(cpu_, 87);
+                expected_eax = 0;
+            } else {
+                // x86 CPINFO: UINT + DefaultChar[2] + LeadByte[12] + padding.
+                std::array<uint8_t, 20> info{}, readback{};
+                put32(info.data(), 2);
+                info[4] = '?';
+                info[6] = 0x81; info[7] = 0x9F;
+                info[8] = 0xE0; info[9] = 0xFC;
+                if (uint64_t(dest) + info.size() > 0x100000000ull ||
+                    !cpu_.read(dest, readback.data(), uint32_t(readback.size())) ||
+                    !cpu_.write(dest, info.data(), uint32_t(info.size())) ||
+                    !cpu_.read(dest, readback.data(), uint32_t(readback.size())) || readback != info)
+                    return StartupServiceResult::ContractFailure;
+                expected_eax = 1;
+                fprintf(log_, "startup_code_page_info_readback=passed\n");
+            }
+        }
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++code_page_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (version) {
         // This port advertises an explicit XP 5.1/2600 compatibility profile.
         // It isn't host OS detection. Only the observed 148-byte ANSI layout
         // and the first call site are admitted in this iteration.
