@@ -2,6 +2,7 @@
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include <array>
+#include <vector>
 
 namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
@@ -18,12 +19,18 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (import.dll != "KERNEL32.dll") return StartupServiceResult::Unsupported;
     const bool version = import.name == "GetVersionExA";
     const bool module = import.name == "GetModuleHandleA";
-    if (!version && !module) return StartupServiceResult::Unsupported;
+    const bool heap_create = import.name == "HeapCreate";
+    const bool heap_alloc = import.name == "HeapAlloc";
+    const bool heap_free = import.name == "HeapFree";
+    const bool heap_size = import.name == "HeapSize";
+    if (!version && !module && !heap_create && !heap_alloc && !heap_free && !heap_size)
+        return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
     uint32_t before[4];
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
+    uint32_t expected_eax = 0;
     if (!in_stack(esp, 8) || !cpu_.read(esp, &ret, 4) || !cpu_.read(esp + 4, &arg, 4)) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
@@ -57,9 +64,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_version_buffer_readback=passed\n");
         fprintf(log_, "startup_version_return_va=0x%08X\n", ret);
         cpu_.trap_epilogue(1, 8, ret); // BOOL TRUE; stdcall ret 4
+        expected_eax = 1;
         ++version_calls_;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetVersionExA\n");
-    } else {
+    } else if (module) {
         // Named modules are not handled here. The loaded EXE itself is real
         // guest memory and its DOS/PE headers must be readable before return.
         if (arg) {
@@ -84,12 +92,69 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_module_headers=passed\n");
         fprintf(log_, "startup_module_return_va=0x%08X\n", ret);
         cpu_.trap_epilogue(base, 8, ret); // HMODULE; stdcall ret 4
+        expected_eax = base;
         ++module_calls_;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
+    } else if (heap_create) {
+        uint32_t initial = 0, maximum = 0;
+        if (heap_create_calls_ || import.iat_va != 0x00657160 || ret != 0x0064974C ||
+            !in_stack(esp, 16) || !cpu_.read(esp + 8, &initial, 4) ||
+            !cpu_.read(esp + 12, &maximum, 4) || arg != 0 || initial != 0x1000 || maximum != 0) {
+            fprintf(log_, "startup_service_error=unsupported_heap_create_call\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        if (!cpu_.map(heap_next_, 0x00800000, nullptr, d2rt::P_RW)) {
+            fprintf(log_, "startup_service_error=heap_map_failed\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        heap_ready_ = true;
+        ++heap_create_calls_;
+        cpu_.trap_epilogue(0x00AB0000, 8, ret);
+        expected_eax = 0x00AB0000;
+        fprintf(log_, "startup_heap_created_handle=0x00AB0000\n");
+        fprintf(log_, "startup_heap_initial_bytes=%u\n", initial);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapCreate\n");
+    } else if (heap_alloc) {
+        uint32_t flags = 0, size = 0;
+        if (!heap_ready_ || !in_stack(esp, 16) || !cpu_.read(esp + 4, &arg, 4) ||
+            !cpu_.read(esp + 8, &flags, 4) || !cpu_.read(esp + 12, &size, 4) ||
+            arg != 0x00AB0000 || size > 0x007FF000) {
+            fprintf(log_, "startup_service_error=unsupported_heap_alloc_call\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        uint32_t bytes = (size + 15u) & ~15u;
+        if (!bytes || heap_next_ + bytes > 0x01400000) {
+            cpu_.trap_epilogue(0, 12, ret);
+            expected_eax = 0;
+        } else {
+            const uint32_t result = heap_next_;
+            heap_next_ += bytes;
+            if (flags & 8u) {
+                std::vector<uint8_t> zero(bytes, 0);
+                cpu_.write(result, zero.data(), bytes);
+            }
+            ++heap_alloc_calls_;
+            cpu_.trap_epilogue(result, 12, ret);
+            expected_eax = result;
+            fprintf(log_, "startup_heap_alloc_va=0x%08X\n", result);
+        }
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapAlloc\n");
+    } else if (heap_free) {
+        if (!heap_ready_ || import.iat_va != 0x00657098 || !in_stack(esp, 16))
+            return StartupServiceResult::ContractFailure;
+        cpu_.trap_epilogue(1, 12, ret);
+        expected_eax = 1;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapFree\n");
+    } else if (heap_size) {
+        if (!heap_ready_ || !in_stack(esp, 16)) return StartupServiceResult::ContractFailure;
+        cpu_.trap_epilogue(0, 12, ret);
+        expected_eax = 0;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + 8 && cpu_.reg(d2rt::R_EIP) == ret &&
-        cpu_.reg(d2rt::R_EAX) == (version ? 1u : image_.load_base());
+    const uint32_t cleanup = (version || module || heap_create) ? 8u : 12u;
+    bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&
+        cpu_.reg(d2rt::R_EAX) == expected_eax;
     for (unsigned i = 0; i < 4; ++i) abi_ok = abi_ok && cpu_.reg(preserved[i]) == before[i];
     if (!abi_ok) {
         fprintf(log_, "startup_service_error=stdcall_epilogue_mismatch\n");

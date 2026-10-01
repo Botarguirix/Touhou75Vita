@@ -87,14 +87,14 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
              status=="passed"?good:(status=="failed"?bad:neutral));
     }
     const std::string startup=values.count("startup_result")?values["startup_result"]:"not_attempted";
-    const bool reached=startup=="reached_heap_create";
-    const char* entry=reached?"EXE: TWO SERVICES RETURNED":
+    const bool reached=startup=="reached_next_import_after_heap";
+    const char* entry=reached?"EXE: HEAP SERVICE RETURNED":
         (startup=="cpu_fault"?"EXE: CPU FAULT":
         (startup=="budget_exhausted"?"EXE: EXECUTION LIMIT REACHED":
         (startup=="watchdog_unavailable"?"EXE: WATCHDOG NOT READY":
         (startup=="service_contract_failed"?"EXE: SERVICE CONTRACT FAILED":"EXE: CHECK LOG"))));
     text(pixels,40,377,entry,reached?good:bad);
-    text(pixels,40,408,reached?"STOP: HEAPCREATE":"STOP: SEE LOG",neutral);
+    text(pixels,40,408,reached?"STOP: NEXT IMPORT":"STOP: SEE LOG",neutral);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
     text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION12.LOG",neutral,2);
     text(pixels,40,500,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);

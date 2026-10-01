@@ -19,7 +19,7 @@ constexpr uint64_t kRunBudget = 4096, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration12-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration13-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -46,7 +46,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration12-r1\n");
+        fprintf(report_, "watchdog_revision=iteration13-r1\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -303,7 +303,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         fprintf(log, "startup_stop_iat_va=0x%08X\n", imp.iat_va);
         fprintf(log, "startup_stop_trap_va=0x%08X\n", trap);
         fprintf(log, "startup_stop_api_executed=no\n");
-        if (imp.dll == "KERNEL32.dll" && imp.name == "HeapCreate") {
+        if (services.heap_ready()) {
+            expected_boundary = true;
+            fprintf(log, "startup_heap_boundary=passed\n");
+        } else if (imp.dll == "KERNEL32.dll" && imp.name == "HeapCreate") {
             uint32_t initial = 0, maximum = 0;
             const bool heap_frame = stack_range(esp, 16) &&
                 c.read(esp + 8, &initial, 4) && c.read(esp + 12, &maximum, 4);
@@ -355,6 +358,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
     fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls());
+    fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
+    fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
     if (!stopped) {
         fprintf(log, "startup_fault=%s\n", fault ? fault : "unknown");
         fprintf(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
@@ -362,7 +367,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     }
     const bool passed = stopped && !limit && !service_failed && expected_boundary;
     fprintf(log, "game_code_executed=%s\n", original_call_valid ? "yes" : "unconfirmed");
-    fprintf(log, "startup_result=%s\n", passed ? "reached_heap_create" :
+    fprintf(log, "startup_result=%s\n", passed ? "reached_next_import_after_heap" :
         (!stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
         (service_failed ? "service_contract_failed" :
         (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
