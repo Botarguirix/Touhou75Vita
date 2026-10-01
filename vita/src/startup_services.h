@@ -19,6 +19,7 @@ public:
     unsigned critical_init_calls() const { return critical_init_calls_; }
     unsigned tls_calls() const { return tls_calls_; }
     unsigned unavailable_export_calls() const { return unavailable_export_calls_; }
+    unsigned process_calls() const { return process_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
@@ -32,6 +33,7 @@ private:
     std::set<uint32_t> critical_sections_;
     std::array<bool,64> tls_allocated_{};
     unsigned tls_calls_ = 0, unavailable_export_calls_ = 0;
+    unsigned process_calls_ = 0;
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
 };

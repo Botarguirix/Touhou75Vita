@@ -52,5 +52,28 @@ int main() {
     }
     call("TlsGetValue", {0}); assert(cpu.reg(d2rt::R_EAX) == 0); // reused slot cleared
     call("TlsAlloc", {}); assert(cpu.reg(d2rt::R_EAX) == 0xFFFFFFFF && wx86_get_lasterr(cpu) == 259);
+    uint32_t dirty[19]; for (auto& word : dirty) word = 0xA5A5A5A5;
+    cpu.write(0x00680000, dirty, sizeof(dirty));
+    assert(call("GetStartupInfoA", {0x00680004}) == StartupServiceResult::Serviced);
+    uint32_t result[19] = {}; cpu.read(0x00680000, result, sizeof(result));
+    assert(result[0] == 0xA5A5A5A5 && result[18] == 0xA5A5A5A5);
+    assert(result[1] == 68);
+    for (unsigned i = 2; i < 18; ++i) assert(result[i] == 0);
+    assert(call("GetStartupInfoA", {0x013FFFF0}) == StartupServiceResult::ContractFailure);
+    assert(call("GetStartupInfoA", {0}) == StartupServiceResult::ContractFailure);
+    for (uint32_t selector : {0xFFFFFFF6u, 0xFFFFFFF5u, 0xFFFFFFF4u}) {
+        assert(call("GetStdHandle", {selector}) == StartupServiceResult::Serviced);
+        assert(cpu.reg(d2rt::R_EAX) == 0);
+    }
+    call("GetStdHandle", {123}); assert(cpu.reg(d2rt::R_EAX) == 0xFFFFFFFFu);
+    assert(call("GetFileType", {0}) == StartupServiceResult::Serviced);
+    assert(cpu.reg(d2rt::R_EAX) == 0 && wx86_get_lasterr(cpu) == 6);
+    assert(call("GetFileType", {0x1234}) == StartupServiceResult::Unsupported);
+    const char command[] = "\"C:\\TH075\\TH075.exe\"";
+    cpu.write(0x00732000, command, sizeof(command));
+    assert(call("GetCommandLineA", {}) == StartupServiceResult::Serviced);
+    assert(cpu.reg(d2rt::R_EAX) == 0x00732000);
+    char stored[sizeof(command)]; cpu.read(cpu.reg(d2rt::R_EAX), stored, sizeof(stored));
+    assert(std::strcmp(stored, command) == 0);
     fclose(log);
 }

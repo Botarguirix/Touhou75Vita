@@ -33,12 +33,17 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool get_error = import.name == "GetLastError";
     const bool set_error = import.name == "SetLastError";
     const bool thread_id = import.name == "GetCurrentThreadId";
+    const bool startup_info = import.name == "GetStartupInfoA";
+    const bool command_line = import.name == "GetCommandLineA";
+    const bool std_handle = import.name == "GetStdHandle";
+    const bool file_type = import.name == "GetFileType";
+    const bool process = startup_info || command_line || std_handle || file_type;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !tls &&
-        !get_error && !set_error && !thread_id &&
+        !get_error && !set_error && !thread_id && !process &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -47,8 +52,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = (tls_alloc || get_error || thread_id) ? 0u :
-        ((version || module || tls_get || tls_free || set_error) ? 1u :
+    const uint32_t parameter_count = (tls_alloc || get_error || thread_id || command_line) ? 0u :
+        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type) ? 1u :
         ((proc_address || critical_init || tls_set) ? 2u : 3u));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -232,6 +237,46 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         if (thread_id && (!wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x24, &expected_eax, 4)))
             return StartupServiceResult::ContractFailure;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (process) {
+        if (startup_info) {
+            // GUI process without inherited CRT handles or reserved startup data.
+            const uint32_t info[17] = {68};
+            uint32_t old[17] = {}, copy[17] = {};
+            if (!arg || uint64_t(arg) + sizeof(info) > 0x100000000ull ||
+                !cpu_.read(arg, old, sizeof(old)) || !cpu_.write(arg, info, sizeof(info)) ||
+                !cpu_.read(arg, copy, sizeof(copy)) ||
+                !std::equal(std::begin(info), std::end(info), std::begin(copy))) {
+                fprintf(log_, "startup_service_error=invalid_startup_info_buffer\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            fprintf(log_, "startup_info_bytes=68\n");
+            fprintf(log_, "startup_info_readback=passed\n");
+        } else if (command_line) {
+            // ThreadSmoke owns the persistent, NUL-terminated ANSI command line.
+            expected_eax = 0x00732000;
+            char first = 0;
+            if (!cpu_.read(expected_eax, &first, 1) || first != '"') {
+                fprintf(log_, "startup_service_error=command_line_not_initialized\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            fprintf(log_, "startup_command_line_va=0x%08X\n", expected_eax);
+        } else if (std_handle) {
+            if (arg != 0xFFFFFFF6u && arg != 0xFFFFFFF5u && arg != 0xFFFFFFF4u) {
+                expected_eax = 0xFFFFFFFFu;
+                wx86_set_lasterr(cpu_, 87);
+            } else {
+                // NULL means that this GUI process has no attached console.
+                expected_eax = 0;
+                fprintf(log_, "startup_standard_handle_profile=no_console\n");
+            }
+        } else {
+            if (arg != 0 && arg != 0xFFFFFFFFu) return StartupServiceResult::Unsupported;
+            expected_eax = 0; // FILE_TYPE_UNKNOWN, invalid NULL/INVALID_HANDLE_VALUE
+            wx86_set_lasterr(cpu_, 6);
+        }
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++process_calls_;
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (heap_create) {
         uint32_t initial = 0, maximum = 0;
