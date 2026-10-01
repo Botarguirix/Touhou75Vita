@@ -1,6 +1,16 @@
 # Iteración 08 — llamadas x86 por la IAT hacia Vita
 
-Estado: r1 compilada y probada en la PS Vita; prueba LastError fallida. Corrección r2 preparada localmente, pendiente de compilación y consola. Este entorno no tiene VitaSDK instalado; no se afirma que r2 haya compilado.
+Estado: r1 falló la prueba LastError; r2 pasó en la PS Vita del usuario. El log identifica `iteration08-winvita-iat-bridge-r2` y termina con `result=pe_mapped_dynarec_and_iat_smoke_passed`. Esto confirma la prueba limitada del puente, no el arranque del juego.
+
+## Resultado r2 en consola
+
+Los dos logs proporcionados se revisaron el 2026-09-30. El reporte confirma los enlaces IAT de las tres APIs, SetLastError con argumento `0x775`, GetLastError con retorno `0x775`, ESP `0x009FF000` y EIP sentinel `0x00BFFFF0` en ambas rutinas. GetTickCount devuelve `0x1751` y pasa la comprobación de rango del reloj nativo. Los contadores son `set:1 get:1 tick:1`; no se ejecutó código del juego y quedan 154 imports pendientes. Se conserva un extracto en `docs/hardware/iteration08-r2/result-excerpt.txt`.
+
+La corrección elimina el fallo observado de r1. El resultado es consistente con la hipótesis de traducción antigua reutilizada; esta prueba no separa el efecto de cambiar las direcciones del de descartar la caché. El log de progreso del motor contiene dos grupos de inicialización porque se acumula entre lanzamientos; el reporte principal identifica la ejecución r2.
+
+## Próximo hito
+
+Preparar la Iteración 09 para comprobar identidad SHA-256 en Vita y llamadas x86 de reserva/liberación de memoria y lectura de archivos mediante APIs Win32. Auditar y reutilizar los mecanismos genéricos del runtime cuando sus contratos encajen con Touhou. Acompañar los resultados con una pantalla de diagnóstico persistente; esa pantalla prueba la aplicación Vita y no el renderer del juego. Después hacen falta el entorno TEB/FS/TLS y una prueba controlada del arranque original que identifique la primera API o instrucción bloqueante. La Iteración 09 está propuesta, todavía no implementada.
 
 ## Resultado r1 y corrección r2
 

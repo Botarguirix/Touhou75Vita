@@ -2,7 +2,7 @@
 
 Porting research and runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation Vita.
 
-The current iteration integrates the pinned WinVita PE32 loader and Box86-derived ARMv7 dynamic recompiler. It maps the user's Japanese `TH075.exe` into guest memory, inventories its imports, and runs synthetic x86 routines through the dynarec and the real IAT slots for three diagnostic KERNEL32 shims. Iteration 07 passed the PE mapping and minimal dynarec smoke test on the user's physical Vita; Iteration 08 r1 failed its LastError test on hardware; r2 separates test code pages and unconditionally discards cached translations before writing synthetic code. The cache explanation awaits confirmation on hardware. It deliberately does not call the game's entry point or execute the English patch.
+The current iteration integrates the pinned WinVita PE32 loader and Box86-derived ARMv7 dynamic recompiler. It maps the user's Japanese `TH075.exe` into guest memory, inventories its imports, and runs synthetic x86 routines through the dynarec and the real IAT slots for three diagnostic KERNEL32 shims. Iteration 07 passed the PE mapping and minimal dynarec smoke test on the user's physical Vita; Iteration 08 r1 failed its LastError test on hardware; r2 separates test code pages and unconditionally discards cached translations before writing synthetic code. The user's physical Vita log confirms r2 passes all three diagnostic calls, exact stack restoration, and the timer range check. Game startup and 154 remaining imports are still unsupported. It deliberately does not call the game's entry point or execute the English patch.
 
 ## Build the runtime-test VPK
 
