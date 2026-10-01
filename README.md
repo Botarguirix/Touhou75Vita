@@ -2,7 +2,7 @@
 
 Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation Vita, using a pinned WinVita PE32 loader and Box86-derived ARMv7 dynarec. Iteration 08 r2 passed its synthetic CPU and three diagnostic import calls on the user's physical Vita.
 
-Iteration 09 r2 passed identity, CPU, IAT, heap, file and visible-screen checks on hardware. Iteration 10 adds a single diagnostic TEB/PEB, x86 FS reads/writes, dynamic TLS calls and three partial process APIs. Its build and hardware validation are pending. The game's entry point, TLS callbacks and English patch are not executed. See [scope and expected results](docs/STATUS_ITERATION10.md).
+Iteration 10 passed identity, CPU, IAT, heap, file, TEB/FS, dynamic TLS, basic process and visible-screen checks on the user's physical Vita. It uses a single diagnostic TEB/PEB and partial Win32 APIs. The game's entry point, TLS callbacks and English patch are not executed. See [scope and hardware results](docs/STATUS_ITERATION10.md) and the [next startup probe](docs/STARTUP_PROBE_PLAN.md).
 
 ## Build
 

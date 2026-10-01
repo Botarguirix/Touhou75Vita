@@ -1,6 +1,8 @@
 # Iteración 10 — estado básico del hilo y proceso
 
-Estado: el código compiló y enlazó en Actions, pero falló la conversión a VELF. La corrección del enlace está preparada localmente; falta confirmarla en Actions y validar en Vita. La Iteración 09 r2 pasó las pruebas de identidad, CPU, IAT, heap y archivo, y su pantalla fue confirmada con log e imagen. La Iteración 10 conserva esos controles y la presentación NEXTFRAME.
+Estado: **validada en la Vita física del usuario** con `iteration10.log`, `iteration10-runtime.log` y una captura de las ocho pruebas en PASS. El build identificado es `iteration10-winvita-teb-fs-tls-r1`. Pasaron identidad, CPU, IAT, heap, archivo, TEB/FS, TLS y proceso. El framebuffer se presentó y se retiró sin error; la salida fue con X. El entry point del juego sigue sin ejecutarse.
+
+La evidencia resumida se conserva en [hardware/iteration10-r1/result-excerpt.txt](hardware/iteration10-r1/result-excerpt.txt). El [plan de arranque](STARTUP_PROBE_PLAN.md) identifica la primera API del camino inicial todavía sin implementar.
 
 ## Corrección de la generación del VPK
 
@@ -12,7 +14,7 @@ vita-elf-create: Cannot allocate 1652 bytes for SCE data at end of segment 0; se
 
 `Makefile:7: all Error 2` es la consecuencia. El convertidor necesita añadir metadatos de módulo/imports al segmento de código, pero el segmento siguiente estaba demasiado cerca. Se añade al enlace `--defsym=__sce_headroom=0x10000`: el [script de enlace de VitaSDK](https://github.com/vitasdk/buildscripts/blob/master/patches/binutils/0001-vita.patch) usa ese símbolo para reservar 64 KiB antes del siguiente segmento y mantener la alineación de Vita. La reserva es espacio entre segmentos, no un buffer del juego ni memoria x86 invitada.
 
-Actions también mostrará los encabezados de programa del ELF enlazado aunque falle la conversión, para poder revisar la separación real. No se ha compilado esta corrección localmente porque aquí no está instalado VitaSDK. El próximo workflow debe completar VELF, SELF y VPK antes de probar en la consola.
+Actions también muestra los encabezados de programa del ELF enlazado aunque falle la conversión, para poder revisar la separación real. No se compiló localmente porque aquí no está instalado VitaSDK. Posteriormente el usuario pudo instalar y ejecutar la VPK de Iteración 10 y aportó los resultados satisfactorios de hardware.
 
 ## Alcance
 
@@ -55,7 +57,7 @@ Estas regiones caben en los 16 MiB invitados y no se superponen con las rutinas,
 3. Ejecutar **Touhou 7.5 Vita - Iteration 10 Thread Context Test** con el mismo EXE japonés. No necesitas añadir archivos.
 4. Fotografiar la pantalla, pulsar X y compartir `iteration10.log` y `iteration10-runtime.log`.
 
-Resultado esperado, aún sin comprobar en hardware:
+Resultado confirmado en los logs de hardware:
 
 ```text
 build_id=iteration10-winvita-teb-fs-tls-r1
