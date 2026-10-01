@@ -1,6 +1,8 @@
 #include "import_smoke.h"
 #include "runtime/bridge.h"
 #include "service_smoke.h"
+#include "thread_smoke.h"
+#include "runtime/guest_thread_ctx.h"
 #include <psp2/kernel/processmgr.h>
 #include <string>
 #include <cstdlib>
@@ -70,23 +72,26 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
         return false;
     }
 
-    // These are diagnostic single-thread shims. They are not a process/TEB
-    // implementation and must not be used to launch the game's threads.
-    uint32_t last_error = 0;
-    ServiceSmoke services(cpu, log, last_error);
+    // The diagnostic main thread owns a guest TEB; all shims share its
+    // LastErrorValue instead of a separate host variable.
+    ThreadSmoke thread(cpu, log);
+    thread.install(bridge);
+    ServiceSmoke services(cpu, log);
     services.install(bridge);
     unsigned set_calls = 0, get_calls = 0, tick_calls = 0;
     bool unsupported = false;
     d2rt::Shim set; set.argc = 1;
     set.fn = [&](d2rt::Cpu& c) {
-        ++set_calls; last_error = c.arg(0);
+        ++set_calls; const uint32_t last_error = c.arg(0);
+        wx86_set_lasterr(c, last_error);
         fprintf(log, "import_shim=SetLastError arg0=0x%08X\n", last_error);
         return 0u;
     };
     bridge.register_shim("KERNEL32.dll", "SetLastError", set);
     d2rt::Shim get;
-    get.fn = [&](d2rt::Cpu&) {
+    get.fn = [&](d2rt::Cpu& c) {
         ++get_calls;
+        const uint32_t last_error = wx86_get_lasterr(c);
         fprintf(log, "import_shim=GetLastError return=0x%08X\n", last_error);
         return last_error;
     };
@@ -119,7 +124,7 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
         fprintf(log, "import_bridge_error=required_import_missing\n");
         return false;
     }
-    if (!bridge.commit(error) || !bridge.link(error) ||
+    if (!bridge.commit(error) || !thread.initialize() || !bridge.link(error) ||
         !cpu.map(kLastErrorCode, 0x2000, nullptr, d2rt::P_RWX)) {
         fprintf(log, "import_bridge_error=%s\n", error.c_str());
         return false;
@@ -128,7 +133,7 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     fprintf(log, "game_import_resolution=partial_diagnostic_only\n");
     fprintf(log, "import_bridge_stack_base=0x%08X\n", kStack);
     fprintf(log, "import_bridge_trap_base=0x%08X\n", kTrap);
-    fprintf(log, "import_bridge_lasterror_scope=diagnostic_single_thread\n");
+    fprintf(log, "import_bridge_lasterror_scope=guest_teb_single_thread\n");
     fprintf(log, "import_bridge_tick_origin=vita_process_start\n");
     for (const char* name : {"SetLastError", "GetLastError", "GetTickCount"}) {
         const uint32_t iat = std::string(name) == "SetLastError" ? set_iat :
@@ -163,7 +168,8 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     fprintf(log, "import_smoke_calls=set:%u get:%u tick:%u\n", set_calls, get_calls, tick_calls);
     fprintf(log, "import_smoke_result=%s\n", passed ? "passed" : "failed");
     const bool services_passed = passed && services.run(bridge, *image, exe, unsupported);
+    const bool thread_passed = services_passed && thread.run(bridge, *image, unsupported);
     // bridge owns the installed handler; clear it before bridge leaves scope.
     cpu.set_trap(0, 0, [](d2rt::Cpu&, uint32_t) { return false; });
-    return passed && services_passed;
+    return passed && services_passed && thread_passed;
 }

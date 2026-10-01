@@ -1,12 +1,16 @@
 # Iteración 09 — identidad, memoria, archivos y pantalla
 
-Estado: r1 probada en hardware: identidad, CPU, puente, heap y archivo pasaron; la presentación falló y el usuario observó una pantalla negra. Corrección r2 preparada localmente, pendiente de compilación y consola. No se ejecuta el entry point, callbacks TLS ni código comercial del juego.
+Estado: r2 validada en la PS Vita del usuario. Identidad, CPU, puente, heap, archivo y pantalla pasaron. La imagen aportada confirma que los resultados son visibles. No se ejecuta el entry point, callbacks TLS ni código comercial del juego.
+
+## Resultado r2 en consola
+
+El log identifica `iteration09-winvita-heap-file-screen-r2` y confirma `result=identity_cpu_iat_heap_file_passed`, presentación NEXTFRAME con retorno cero, vblank y consulta exitosos, `screen_active_matches=yes` y `screen_result=presented`. El usuario salió con X y la desconexión del buffer devolvió cero. La imagen muestra Iteration 09 R2 y todas las comprobaciones en PASSED. Se conserva un extracto en docs/hardware/iteration09-r2/result-excerpt.txt. El progreso del motor registra arena y JIT inicializados sin errores reportados.
 
 ## Resultado r1 y corrección r2
 
 Los logs aportados confirman `result=identity_cpu_iat_heap_file_passed`, hash calculado idéntico al japonés esperado, diez llamadas de servicios, ocupación del heap cero y cabecera comparada correctamente. Se conserva un extracto en docs/hardware/iteration09-r1/result-excerpt.txt.
 
-La pantalla falla con `screen_present_rc=0x80290006`. El [header oficial de VitaSDK](https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/display.h) identifica ese valor como `SCE_DISPLAY_ERROR_INVALID_UPDATETIMING`. El código r1 pidió SCE_DISPLAY_SETBUF_IMMEDIATE. r2 cambia la presentación y desconexión a SCE_DISPLAY_SETBUF_NEXTFRAME, espera vblank y consulta el framebuffer activo, registrando tanto el resultado como la coincidencia de dirección, pitch, tamaño y formato. La presentación visible aún debe confirmarse con hardware y foto. Si desconectar el buffer falla, su liberación se difiere al cierre del proceso.
+La pantalla r1 falló con `screen_present_rc=0x80290006`. El [header oficial de VitaSDK](https://github.com/vitasdk/vita-headers/blob/master/include/psp2common/display.h) identifica ese valor como `SCE_DISPLAY_ERROR_INVALID_UPDATETIMING`. El código r1 pidió SCE_DISPLAY_SETBUF_IMMEDIATE. r2 cambia la presentación y desconexión a SCE_DISPLAY_SETBUF_NEXTFRAME, espera vblank y consulta el framebuffer activo, registrando tanto el resultado como la coincidencia de dirección, pitch, tamaño y formato. La revisión r2 confirmó la presentación visible mediante log y foto del usuario. Si desconectar el buffer falla, su liberación se difiere al cierre del proceso.
 
 ## Comprobaciones
 

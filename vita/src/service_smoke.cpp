@@ -1,5 +1,6 @@
 #include "service_smoke.h"
 #include "runtime/bridge.h"
+#include "runtime/guest_thread_ctx.h"
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -55,11 +56,13 @@ bool invoke(d2rt::Bridge& bridge,const d2rt::PeImage& image,const char* name,
 }
 }
 
-ServiceSmoke::ServiceSmoke(d2rt::Cpu& cpu,FILE* log,uint32_t& last_error)
-    :cpu_(cpu),log_(log),last_error_(last_error) {
+ServiceSmoke::ServiceSmoke(d2rt::Cpu& cpu,FILE* log)
+    :cpu_(cpu),log_(log) {
     heap_.init(kHeap,kHeapSize,16,"Touhou diagnostic heap");
 }
 ServiceSmoke::~ServiceSmoke() { if(file_) fclose(file_); }
+void ServiceSmoke::set_error(uint32_t value) { wx86_set_lasterr(cpu_,value); }
+uint32_t ServiceSmoke::last_error() const { return wx86_get_lasterr(cpu_); }
 
 void ServiceSmoke::install(d2rt::Bridge& bridge) {
     auto add=[&](const char* name,uint32_t argc,std::function<uint32_t(d2rt::Cpu&)> fn) {
@@ -72,59 +75,59 @@ void ServiceSmoke::install(d2rt::Bridge& bridge) {
     };
     add("GetProcessHeap",0,[](d2rt::Cpu&){return kHeapHandle;});
     add("HeapAlloc",3,[this](d2rt::Cpu& c) {
-        if(c.arg(0)!=kHeapHandle||(c.arg(1)&~8u)) {last_error_=87;return 0u;}
+        if(c.arg(0)!=kHeapHandle||(c.arg(1)&~8u)) {set_error(87);return 0u;}
         uint32_t n=c.arg(2),a=heap_.alloc(n);
-        if(!a) {last_error_=8;return 0u;}
+        if(!a) {set_error(8);return 0u;}
         if(c.arg(1)&8) {
             std::vector<uint8_t> zero(n,0);
-            if(!cpu_.write(a,zero.data(),n)) {heap_.free(a);last_error_=487;return 0u;}
+            if(!cpu_.write(a,zero.data(),n)) {heap_.free(a);set_error(487);return 0u;}
         }
         return a;
     });
     add("HeapFree",3,[this](d2rt::Cpu& c) {
-        if(c.arg(0)!=kHeapHandle||c.arg(1)||!heap_.free(c.arg(2))) {last_error_=87;return 0u;}
+        if(c.arg(0)!=kHeapHandle||c.arg(1)||!heap_.free(c.arg(2))) {set_error(87);return 0u;}
         return 1u;
     });
     add("CreateFileA",7,[this](d2rt::Cpu& c) {
         char name[32]={};bool ended=false;
         for(unsigned i=0;i<sizeof(name);++i) {
-            if(!buffer_ok(c.arg(0)+i,1)||!c.read(c.arg(0)+i,&name[i],1)) {last_error_=87;return 0xFFFFFFFFu;}
+            if(!buffer_ok(c.arg(0)+i,1)||!c.read(c.arg(0)+i,&name[i],1)) {set_error(87);return 0xFFFFFFFFu;}
             if(!name[i]) {ended=true;break;}
         }
         // Only the exercised read-only contract is supported in this iteration.
         if(!ended||strcmp(name,"TH075.exe")||c.arg(1)!=0x80000000u||
            c.arg(2)>7||c.arg(3)||c.arg(4)!=3||c.arg(5)!=0x80||c.arg(6)||file_) {
-            last_error_=87;return 0xFFFFFFFFu;
+            set_error(87);return 0xFFFFFFFFu;
         }
         file_=fopen("ux0:data/TH075Vita/TH075.exe","rb");
-        if(!file_) {last_error_=2;return 0xFFFFFFFFu;}
+        if(!file_) {set_error(2);return 0xFFFFFFFFu;}
         return kFileHandle;
     });
     add("GetFileSize",2,[this](d2rt::Cpu& c) {
-        if(c.arg(0)!=kFileHandle||!file_) {last_error_=6;return 0xFFFFFFFFu;}
-        if(c.arg(1)&&!buffer_ok(c.arg(1),4)) {last_error_=87;return 0xFFFFFFFFu;}
+        if(c.arg(0)!=kFileHandle||!file_) {set_error(6);return 0xFFFFFFFFu;}
+        if(c.arg(1)&&!buffer_ok(c.arg(1),4)) {set_error(87);return 0xFFFFFFFFu;}
         long old=ftell(file_);
-        if(old<0||fseek(file_,0,SEEK_END)) {last_error_=30;return 0xFFFFFFFFu;}
+        if(old<0||fseek(file_,0,SEEK_END)) {set_error(30);return 0xFFFFFFFFu;}
         long size=ftell(file_);
-        if(fseek(file_,old,SEEK_SET)||size<0) {last_error_=30;return 0xFFFFFFFFu;}
-        if(c.arg(1)) {uint32_t high=0;if(!c.write(c.arg(1),&high,4)) {last_error_=87;return 0xFFFFFFFFu;}}
+        if(fseek(file_,old,SEEK_SET)||size<0) {set_error(30);return 0xFFFFFFFFu;}
+        if(c.arg(1)) {uint32_t high=0;if(!c.write(c.arg(1),&high,4)) {set_error(87);return 0xFFFFFFFFu;}}
         return uint32_t(size);
     });
     add("ReadFile",5,[this](d2rt::Cpu& c) {
-        if(c.arg(0)!=kFileHandle||!file_) {last_error_=6;return 0u;}
+        if(c.arg(0)!=kFileHandle||!file_) {set_error(6);return 0u;}
         uint32_t n=c.arg(2),count=0;
-        if(n>4096||c.arg(4)||!buffer_ok(c.arg(1),n)||!buffer_ok(c.arg(3),4)) {last_error_=87;return 0u;}
-        if(!c.write(c.arg(3),&count,4)) {last_error_=87;return 0u;}
+        if(n>4096||c.arg(4)||!buffer_ok(c.arg(1),n)||!buffer_ok(c.arg(3),4)) {set_error(87);return 0u;}
+        if(!c.write(c.arg(3),&count,4)) {set_error(87);return 0u;}
         std::vector<uint8_t> bytes(n);
         count=uint32_t(fread(bytes.data(),1,n,file_));
-        if(ferror(file_)) {last_error_=30;return 0u;}
-        if(!c.write(c.arg(1),bytes.data(),count)||!c.write(c.arg(3),&count,4)) {last_error_=87;return 0u;}
+        if(ferror(file_)) {set_error(30);return 0u;}
+        if(!c.write(c.arg(1),bytes.data(),count)||!c.write(c.arg(3),&count,4)) {set_error(87);return 0u;}
         return 1u;
     });
     add("CloseHandle",1,[this](d2rt::Cpu& c) {
-        if(c.arg(0)!=kFileHandle||!file_) {last_error_=6;return 0u;}
+        if(c.arg(0)!=kFileHandle||!file_) {set_error(6);return 0u;}
         int rc=fclose(file_);file_=nullptr;
-        if(rc) {last_error_=6;return 0u;}return 1u;
+        if(rc) {set_error(6);return 0u;}return 1u;
     });
 }
 
@@ -151,8 +154,8 @@ bool ServiceSmoke::run(d2rt::Bridge& bridge,const d2rt::PeImage& image,
         ok=execute(bridge,code,result,unsupported,log_,"heap_guest_write")&&result==0x75&&cpu_.read_u32(pointer)==0x75;
     }
     if(ok) ok=invoke(bridge,image,"HeapFree",{heap_handle,0,pointer},result,unsupported,log_)&&result==1&&heap_.used_bytes()==0;
-    if(ok) ok=invoke(bridge,image,"HeapFree",{heap_handle,0,pointer},result,unsupported,log_)&&result==0&&last_error_==87;
-    if(ok) ok=invoke(bridge,image,"HeapAlloc",{heap_handle,0,kHeapSize+1},result,unsupported,log_)&&result==0&&last_error_==8;
+    if(ok) ok=invoke(bridge,image,"HeapFree",{heap_handle,0,pointer},result,unsupported,log_)&&result==0&&last_error()==87;
+    if(ok) ok=invoke(bridge,image,"HeapAlloc",{heap_handle,0,kHeapSize+1},result,unsupported,log_)&&result==0&&last_error()==8;
     fprintf(log_,"heap_live_bytes=%u\n",heap_.used_bytes());
     fprintf(log_,"heap_smoke_result=%s\n",ok?"passed":"failed");
     if(!ok) return false;
@@ -168,7 +171,7 @@ bool ServiceSmoke::run(d2rt::Bridge& bridge,const d2rt::PeImage& image,
     if(ok) ok=exe.size()>=64&&cpu_.read(kBuffer,bytes.data(),64)&&std::equal(bytes.begin(),bytes.end(),exe.begin());
     fprintf(log_,"file_header_compare=%s\n",ok?"passed":"failed");
     if(ok) ok=invoke(bridge,image,"CloseHandle",{handle},result,unsupported,log_)&&result==1&&!file_;
-    if(ok) ok=invoke(bridge,image,"CloseHandle",{handle},result,unsupported,log_)&&result==0&&last_error_==6;
+    if(ok) ok=invoke(bridge,image,"CloseHandle",{handle},result,unsupported,log_)&&result==0&&last_error()==6;
     fprintf(log_,"service_calls=%u\n",calls_);
     fprintf(log_,"file_smoke_result=%s\n",ok?"passed":"failed");
     return ok;

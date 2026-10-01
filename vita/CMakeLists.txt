@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 09 r2 Services Test")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 10 Thread Context Test")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.11")
+set(VITA_VERSION "01.12")
 
 set(WINVITA_ARCHIVE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/build-vita/libwinx86_vita.a")
@@ -33,6 +33,7 @@ add_executable(${PROJECT_NAME}
   src/main.cpp
   src/import_smoke.cpp
   src/service_smoke.cpp
+  src/thread_smoke.cpp
   src/sha256.cpp
   src/diagnostic_screen.cpp
 )

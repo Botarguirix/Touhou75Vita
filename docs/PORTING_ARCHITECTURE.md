@@ -1,7 +1,7 @@
 # Porting architecture review
 
 **Date:** 2026-09-30  
-**Status:** Runtime proof of concept in progress. The previously reviewed Iteration 07 console log reports successful PE mapping and synthetic x86 execution on physical Vita. Iteration 08 r2 passed three diagnostic IAT calls on physical Vita. Iteration 09 adds identity, heap, file and display diagnostics; its build and hardware validation are pending.
+**Status:** Runtime proof of concept in progress. The previously reviewed Iteration 07 console log reports successful PE mapping and synthetic x86 execution on physical Vita. Iteration 08 r2 passed three diagnostic IAT calls on physical Vita. Iteration 09 r2 passed identity, heap, file and visible-screen diagnostics on hardware. Iteration 10 adds diagnostic TEB/PEB, FS and TLS; its build and hardware validation are pending.
 
 ## Executive decision
 
@@ -75,4 +75,4 @@ Keep proprietary executable and game data outside Git. Record hashes and let use
 
 ## Immediate next iteration
 
-Build and test Iteration 09 as documented in docs/STATUS_ITERATION09.md. It preserves the hardware-confirmed Iteration 08 r2 checks and adds full EXE SHA-256 verification, diagnostic heap allocation/free and guest writes, read-only EXE access through real IAT calls, and a native results screen. Ten imports have diagnostic shims; 147 remain unsupported. This is not a Windows process environment or Direct3D 8 renderer. The game entry point remains uncalled. After hardware confirmation, prepare TEB/FS/TLS and process state, audit startup imports and exception behavior, and run a controlled startup to identify the first missing API/instruction. Keep proprietary inputs external and defer the English patch until the Japanese executable can start.
+Build and test Iteration 10 as documented in docs/STATUS_ITERATION10.md. Iteration 09 r2's identity, CPU, IAT, heap, file and screen checks passed on the user's physical Vita. Iteration 10 preserves those checks and adds a single diagnostic TEB/PEB, FS access to guest thread state, dynamic TLS calls and three partial process APIs. LastError now lives in guest TEB memory shared by the shims. Seventeen imports have diagnostic implementations; 140 remain unsupported. The game entry point, static TLS callbacks, exception machinery, dynamic DLL loader and Direct3D 8 remain unimplemented. After FS/TLS validation, analyze the original startup path and prepare a controlled first execution that records the first unsupported instruction or service. Do not treat diagnostic shims as a complete Win32 environment.

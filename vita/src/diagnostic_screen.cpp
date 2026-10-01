@@ -74,20 +74,21 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 09 R2 - X86 SERVICES",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 10 - TEB FS AND TLS",0xFFE9C975);
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
     text(pixels,40,137,result==0?"RESULT: PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
-    const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ"};
+    const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};
     const char* keys[]={"game_sha256_result","dynarec_smoke_result","import_smoke_result",
-                        "heap_smoke_result","file_smoke_result"};
-    for(unsigned i=0;i<5;++i) {
+                        "heap_smoke_result","file_smoke_result","teb_fs_smoke_result",
+                        "tls_smoke_result","process_smoke_result"};
+    for(unsigned i=0;i<8;++i) {
         std::string status=values.count(keys[i])?values[keys[i]]:"NOT RUN";
-        text(pixels,40,184+int(i)*36,std::string(labels[i])+": "+status,
+        text(pixels,40,174+int(i)*27,std::string(labels[i])+": "+status,
              status=="passed"?good:(status=="failed"?bad:neutral));
     }
-    text(pixels,40,385,"GAME STARTUP: NOT ATTEMPTED",neutral);
-    text(pixels,40,425,"LOG: UX0:DATA/TH075VITA/ITERATION09.LOG",neutral,2);
-    text(pixels,40,477,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
+    text(pixels,40,407,"GAME STARTUP: NOT ATTEMPTED",neutral);
+    text(pixels,40,451,"LOG: UX0:DATA/TH075VITA/ITERATION10.LOG",neutral,2);
+    text(pixels,40,493,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
     // r1's immediate update was rejected by hardware (0x80290006).
