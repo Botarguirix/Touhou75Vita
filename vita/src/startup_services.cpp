@@ -1,4 +1,5 @@
 #include "startup_services.h"
+#include "cp932_data.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread_ctx.h"
@@ -17,17 +18,13 @@ bool in_stack(uint32_t p, uint32_t size) {
 void put32(uint8_t* out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = uint8_t(value >> (8 * i));
 }
-uint16_t ascii_ctype1(uint16_t ch) {
-    uint16_t flags = 0x0200; // C1_DEFINED
-    if (ch < 32 || ch == 127) flags |= 0x0020;
-    if (ch == ' ' || (ch >= 9 && ch <= 13)) flags |= 0x0008;
-    if (ch == ' ' || ch == 9) flags |= 0x0040;
-    if (ch >= 'A' && ch <= 'Z') flags |= 0x0101;
-    if (ch >= 'a' && ch <= 'z') flags |= 0x0102;
-    if (ch >= '0' && ch <= '9') flags |= 0x0084;
-    if ((ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')) flags |= 0x0080;
-    if (ch >= 33 && ch <= 126 && !(flags & 0x0104)) flags |= 0x0010;
-    return flags;
+bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
+    const auto* end = std::end(kCp932Types);
+    const auto* entry = std::lower_bound(std::begin(kCp932Types), end, unit,
+        [](const Cp932Type& item, uint16_t value) { return item.unit < value; });
+    if (entry == end || entry->unit != unit) return false;
+    flags = entry->flags;
+    return true;
 }
 }
 
@@ -62,6 +59,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         import.name == "FreeEnvironmentStringsA";
     const bool environment = environment_get || environment_free;
     const bool wide_to_bytes = import.name == "WideCharToMultiByte";
+    const bool bytes_to_wide = import.name == "MultiByteToWideChar";
     const bool code_page_query = import.name == "GetACP" || import.name == "GetOEMCP";
     const bool code_page_info = import.name == "GetCPInfo";
     const bool string_type = import.name == "GetStringTypeW";
@@ -72,7 +70,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
-        !code_page_query && !code_page_info && !string_type &&
+        !code_page_query && !code_page_info && !string_type && !bytes_to_wide &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -81,7 +79,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u : string_type ? 4u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u : bytes_to_wide ? 6u : string_type ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
@@ -91,7 +89,84 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (string_type) {
+    if (bytes_to_wide) {
+        uint32_t args[6] = {};
+        if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
+        const uint32_t page = args[0], flags = args[1], source = args[2];
+        const uint32_t count = args[3], dest = args[4], capacity = args[5];
+        fprintf(log_, "startup_decode_code_page=%u\n", page);
+        fprintf(log_, "startup_decode_flags=0x%08X\n", flags);
+        fprintf(log_, "startup_decode_input_bytes=%u\n", count);
+        if (page != 0 && page != 1 && page != 3 && page != 932) return StartupServiceResult::Unsupported;
+        if (flags & 6u) { // Composite and glyph modes need separate mapping data.
+            fprintf(log_, "startup_decode_boundary=composite_or_glyph_mode\n");
+            return StartupServiceResult::Unsupported;
+        }
+        uint32_t error = (flags & ~9u) ? 1004u : 0u;
+        if (!source || !count || (count > 0x7FFFFFFFu && count != 0xFFFFFFFFu) ||
+            capacity > 0x7FFFFFFFu || (capacity && (!dest || dest == source))) error = 87;
+        std::vector<uint8_t> input;
+        std::vector<uint16_t> output;
+        if (!error) {
+            constexpr uint32_t max_bytes = 16384;
+            if (count != 0xFFFFFFFFu && count > max_bytes) return StartupServiceResult::Unsupported;
+            const uint32_t limit = count == 0xFFFFFFFFu ? max_bytes : count;
+            bool terminated = false;
+            for (uint32_t i = 0; i < limit; ++i) {
+                uint8_t byte = 0;
+                if (uint64_t(source) + i + 1 > 0x100000000ull ||
+                    !cpu_.read(source + i, &byte, 1)) return StartupServiceResult::ContractFailure;
+                input.push_back(byte);
+                if (count == 0xFFFFFFFFu && !byte) { terminated = true; break; }
+            }
+            if (count == 0xFFFFFFFFu && !terminated) return StartupServiceResult::Unsupported;
+            for (size_t i = 0; i < input.size(); ++i) {
+                const uint8_t byte = input[i];
+                uint16_t unit = kCp932Single[byte];
+                const bool lead = (byte >= 0x81 && byte <= 0x9F) || (byte >= 0xE0 && byte <= 0xFC);
+                if (lead) {
+                    unit = 0xFFFF;
+                    if (i + 1 < input.size()) {
+                        const uint8_t trail = input[i + 1];
+                        if ((trail >= 0x40 && trail <= 0x7E) || (trail >= 0x80 && trail <= 0xFC)) {
+                            const unsigned row = byte <= 0x9F ? byte - 0x81 : byte - 0xE0 + 31;
+                            const unsigned col = trail <= 0x7E ? trail - 0x40 : trail - 0x80 + 63;
+                            unit = kCp932Pairs[row * 188 + col];
+                            if (unit != 0xFFFF) ++i;
+                        }
+                    }
+                }
+                if (unit == 0xFFFF) {
+                    fprintf(log_, "startup_decode_invalid_byte_offset=%u\n", unsigned(i));
+                    if (flags & 8u) { error = 1113; break; }
+                    // Do not approximate XP's drop/recovery behavior on malformed sequences.
+                    fprintf(log_, "startup_decode_boundary=invalid_sequence_xp_recovery_pending\n");
+                    return StartupServiceResult::Unsupported;
+                }
+                output.push_back(unit);
+            }
+            if (!error && capacity && capacity < output.size()) error = 122;
+            const uint32_t output_bytes = uint32_t(output.size()) * 2;
+            if (!error && capacity && (uint64_t(dest) + output_bytes > 0x100000000ull ||
+                (uint64_t(source) < uint64_t(dest) + output_bytes && uint64_t(dest) < uint64_t(source) + input.size()))) error = 87;
+            if (!error && capacity) {
+                std::vector<uint16_t> readback(output.size());
+                if (!cpu_.read(dest, readback.data(), output_bytes) ||
+                    !cpu_.write(dest, output.data(), output_bytes) ||
+                    !cpu_.read(dest, readback.data(), output_bytes) || readback != output)
+                    return StartupServiceResult::ContractFailure;
+                fprintf(log_, "startup_decode_readback=passed\n");
+            }
+            if (!error) expected_eax = uint32_t(output.size());
+        }
+        if (error) wx86_set_lasterr(cpu_, error);
+        fprintf(log_, "startup_decode_error=%u\n", error);
+        fprintf(log_, "startup_decode_mode=%s\n", capacity ? "write" : "size_query");
+        fprintf(log_, "startup_decode_output_units=%u\n", expected_eax);
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++conversion_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!MultiByteToWideChar\n");
+    } else if (string_type) {
         uint32_t args[4] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t source = args[1], count = args[2], dest = args[3];
@@ -115,12 +190,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 uint16_t unit = 0;
                 if (uint64_t(source) + 2ull*i + 2 > 0x100000000ull ||
                     !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
-                if (unit > 127) {
-                    fprintf(log_, "startup_string_type_boundary=unicode_classification_not_implemented\n");
+                uint16_t type = 0;
+                if (!cp932_ctype1(unit, type)) {
+                    fprintf(log_, "startup_string_type_boundary=outside_cp932_repertoire\n");
                     fprintf(log_, "startup_string_type_unsupported_unit=0x%04X\n", unsigned(unit));
                     return StartupServiceResult::Unsupported;
                 }
-                types.push_back(ascii_ctype1(unit));
+                types.push_back(type);
                 if (!unit && terminated_input) { terminated = true; break; }
             }
             if (terminated_input && !terminated) return StartupServiceResult::Unsupported;

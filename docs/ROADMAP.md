@@ -46,8 +46,9 @@ complete HeapFree/HeapSize behavior and instruction-level tracing remain work.
 ### Current success criteria
 
 Hardware iteration 24 returned from GetACP and GetCPInfo with the Japanese
-CP932 profile and reached GetStringTypeW. Iteration 25 should return from the
-CRT character-classification probe and record the next boundary.
+CP932 profile and reached GetStringTypeW. Hardware iteration 25 passed that
+probe and reached MultiByteToWideChar. Iteration 26 adds CP932 decoding and
+classification of its character repertoire to continue CRT initialization.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
