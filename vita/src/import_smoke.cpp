@@ -1,5 +1,6 @@
 #include "import_smoke.h"
 #include "runtime/bridge.h"
+#include "service_smoke.h"
 #include <psp2/kernel/processmgr.h>
 #include <string>
 #include <cstdlib>
@@ -72,6 +73,8 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     // These are diagnostic single-thread shims. They are not a process/TEB
     // implementation and must not be used to launch the game's threads.
     uint32_t last_error = 0;
+    ServiceSmoke services(cpu, log, last_error);
+    services.install(bridge);
     unsigned set_calls = 0, get_calls = 0, tick_calls = 0;
     bool unsupported = false;
     d2rt::Shim set; set.argc = 1;
@@ -104,7 +107,7 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
 
     uint32_t set_iat = 0, get_iat = 0, tick_iat = 0;
     for (const auto& imp : image->imports()) {
-        // shim_trap only resolves one of the three explicitly registered APIs.
+        // Only explicitly installed diagnostic APIs are resolved.
         const bool implemented = !imp.name.empty() && bridge.shim_trap(imp.dll, imp.name);
         fprintf(log, "import_support=%s!%s status=%s\n", imp.dll.c_str(),
                 imp.name.c_str(), implemented ? "diagnostic_shim" : "unsupported");
@@ -159,7 +162,8 @@ bool run_import_smoke(d2rt::Cpu& cpu, const std::vector<uint8_t>& exe, FILE* log
     passed = passed && set_calls == 1 && get_calls == 1 && tick_calls == 1;
     fprintf(log, "import_smoke_calls=set:%u get:%u tick:%u\n", set_calls, get_calls, tick_calls);
     fprintf(log, "import_smoke_result=%s\n", passed ? "passed" : "failed");
+    const bool services_passed = passed && services.run(bridge, *image, exe, unsupported);
     // bridge owns the installed handler; clear it before bridge leaves scope.
     cpu.set_trap(0, 0, [](d2rt::Cpu&, uint32_t) { return false; });
-    return passed;
+    return passed && services_passed;
 }

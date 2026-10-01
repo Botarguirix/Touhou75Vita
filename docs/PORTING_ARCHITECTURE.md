@@ -1,7 +1,7 @@
 # Porting architecture review
 
 **Date:** 2026-09-30  
-**Status:** Runtime proof of concept in progress. The previously reviewed Iteration 07 console log reports successful PE mapping and synthetic x86 execution on physical Vita. Iteration 08 adds diagnostic IAT calls; its build and console validation are pending.
+**Status:** Runtime proof of concept in progress. The previously reviewed Iteration 07 console log reports successful PE mapping and synthetic x86 execution on physical Vita. Iteration 08 r2 passed three diagnostic IAT calls on physical Vita. Iteration 09 adds identity, heap, file and display diagnostics; its build and hardware validation are pending.
 
 ## Executive decision
 
@@ -75,4 +75,4 @@ Keep proprietary executable and game data outside Git. Record hashes and let use
 
 ## Immediate next iteration
 
-Build Iteration 08 in Actions and run it on the Vita. It invokes synthetic x86 through the Japanese executable's real IAT slots for three diagnostic, single-thread KERNEL32 shims: SetLastError, GetLastError, and GetTickCount. Check argument marshalling, stdcall stack restoration, return values, and the host timer range. Every other import remains explicitly unsupported. Read docs/STATUS_ITERATION08.md for expected results and limitations. Game startup requires a process/TEB/TLS model, memory and file services, audited import behavior, exception handling, and the Direct3D 8/input/audio backends. Keep the English patch deferred until the Japanese executable can start.
+Build and test Iteration 09 as documented in docs/STATUS_ITERATION09.md. It preserves the hardware-confirmed Iteration 08 r2 checks and adds full EXE SHA-256 verification, diagnostic heap allocation/free and guest writes, read-only EXE access through real IAT calls, and a native results screen. Ten imports have diagnostic shims; 147 remain unsupported. This is not a Windows process environment or Direct3D 8 renderer. The game entry point remains uncalled. After hardware confirmation, prepare TEB/FS/TLS and process state, audit startup imports and exception behavior, and run a controlled startup to identify the first missing API/instruction. Keep proprietary inputs external and defer the English patch until the Japanese executable can start.

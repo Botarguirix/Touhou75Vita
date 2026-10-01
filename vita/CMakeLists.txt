@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 08 r2 IAT Bridge Test")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 09 Services Test")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.09")
+set(VITA_VERSION "01.10")
 
 set(WINVITA_ARCHIVE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/build-vita/libwinx86_vita.a")
@@ -32,6 +32,9 @@ set_target_properties(winx86_vita PROPERTIES IMPORTED_LOCATION "${WINVITA_ARCHIV
 add_executable(${PROJECT_NAME}
   src/main.cpp
   src/import_smoke.cpp
+  src/service_smoke.cpp
+  src/sha256.cpp
+  src/diagnostic_screen.cpp
 )
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -46,6 +49,8 @@ target_link_libraries(${PROJECT_NAME}
   SceKernelThreadMgr_stub
   SceProcessmgr_stub
   SceSysmem_stub
+  SceDisplay_stub
+  SceCtrl_stub
 )
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})

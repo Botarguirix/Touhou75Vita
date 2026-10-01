@@ -1,29 +1,30 @@
 # Touhou75Vita
 
-Porting research and runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation Vita.
+Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation Vita, using a pinned WinVita PE32 loader and Box86-derived ARMv7 dynarec. Iteration 08 r2 passed its synthetic CPU and three diagnostic import calls on the user's physical Vita.
 
-The current iteration integrates the pinned WinVita PE32 loader and Box86-derived ARMv7 dynamic recompiler. It maps the user's Japanese `TH075.exe` into guest memory, inventories its imports, and runs synthetic x86 routines through the dynarec and the real IAT slots for three diagnostic KERNEL32 shims. Iteration 07 passed the PE mapping and minimal dynarec smoke test on the user's physical Vita; Iteration 08 r1 failed its LastError test on hardware; r2 separates test code pages and unconditionally discards cached translations before writing synthetic code. The user's physical Vita log confirms r2 passes all three diagnostic calls, exact stack restoration, and the timer range check. Game startup and 154 remaining imports are still unsupported. It deliberately does not call the game's entry point or execute the English patch.
+Iteration 09 adds on-console SHA-256 verification, synthetic x86 heap allocation/write/free and read-only EXE access through the original IAT, plus a native results screen. Its VitaSDK build and hardware validation are pending. The game's entry point, TLS callbacks and English patch are not executed. See [scope and expected results](docs/STATUS_ITERATION09.md).
 
-## Build the runtime-test VPK
+## Build
 
-Install VitaSDK, set `VITASDK`, build the pinned runtime, then build the Vita app:
+Install VitaSDK and set VITASDK, then run from the repository root:
 
 ```sh
 TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is `vita/touhou75_vita.vpk`. GitHub Actions uses the same VitaSDK runtime build and publishes `Touhou75Vita-iteration08-r2-iat-bridge-vpk`.
+The package is vita/touhou75_vita.vpk. Actions builds pushes to main and codex/d2vita-runtime-review and publishes **Touhou75Vita-iteration09-heap-file-screen-vpk**.
 
-## Try it on a Vita
+## Test on Vita
 
-1. Create `ux0:data/TH075Vita/` on the memory card.
-2. Copy the Japanese game executable there as `TH075.exe`. Keep the optional English translation patch at `TH075E.exe`; it is not the game executable.
-3. Install the VPK built from this revision with VitaShell and launch **Touhou 7.5 Vita - Iteration 08 r2 IAT Bridge Test**. In GitHub Actions, download the artifact named `Touhou75Vita-iteration08-r2-iat-bridge-vpk` from a successful run on the commit containing this code.
-4. Open `ux0:data/TH075Vita/iteration08.log` in VitaShell. Confirm it contains `build_id=iteration08-winvita-iat-bridge-r2` and `result=pe_mapped_dynarec_and_iat_smoke_passed`, then share the full log.
+1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe.
+2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
+3. Launch **Touhou 7.5 Vita - Iteration 09 Services Test**, package version 01.10.
+4. Wait for the results screen. Photograph it, then press X to exit; automatic exit after 120 seconds.
+5. Share ux0:data/TH075Vita/iteration09.log and iteration09-runtime.log. Confirm build_id=iteration09-winvita-heap-file-screen-r1. Expected services result: identity_cpu_iat_heap_file_passed. Display reports screen_result=presented separately.
 
-The app returns to LiveArea after writing the report. That is expected; this iteration tests the loader and CPU engine, not game startup.
+The screen shows diagnostic results. Game startup, Direct3D 8 graphics, controls and audio remain future work.
 
 ## Keep game data outside Git
 
-The repository intentionally excludes proprietary files. Do not commit `TH075.exe`, `th075.dat`, `th075bgm.dat`, other game data, or generated large analysis streams. Provide files from your own game copy locally when a later runtime stage needs them.
+Do not commit TH075.exe, TH075E.exe, translation DLLs, th075.dat, th075bgm.dat or other proprietary files. Supply your own files on the Vita. Iteration 09 needs only the known Japanese EXE and verifies its hash before PE loading.

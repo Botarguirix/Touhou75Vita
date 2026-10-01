@@ -16,18 +16,20 @@
 #include "runtime/pe_image.h"
 #include "platform/vita_host.h"
 #include "import_smoke.h"
+#include "sha256.h"
+#include "diagnostic_screen.h"
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration08.log"
-#define BUILD_ID "iteration08-winvita-iat-bridge-r2"
+#define LOG_PATH APP_DIR "/iteration09.log"
+#define BUILD_ID "iteration09-winvita-heap-file-screen-r1"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration08-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration09-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -71,8 +73,12 @@ static bool read_file(const char* path, std::vector<uint8_t>& bytes,
     fprintf(log, "%s_file_size_bytes=%u\n", prefix,
             (unsigned)bytes.size());
     fprintf(log, "%s_expected_sha256=%s\n", prefix, kExpectedGameSha256);
-    fprintf(log, "%s_sha256_verified_on_vita=no\n", prefix);
-    return true;
+    const std::string actual = sha256_hex(bytes.data(), bytes.size());
+    const bool matched = actual == kExpectedGameSha256;
+    fprintf(log, "%s_actual_sha256=%s\n", prefix, actual.c_str());
+    fprintf(log, "%s_sha256_result=%s\n", prefix, matched ? "passed" : "failed");
+    fprintf(log, "%s_sha256_verified_on_vita=%s\n", prefix, matched ? "yes" : "no");
+    return matched;
 }
 
 static bool load_game_pe(const std::vector<uint8_t>& bytes,
@@ -179,19 +185,30 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 }
 
 static int run(FILE* log) {
-    fprintf(log, "Touhou 7.5 Vita - Iteration 08 x86 IAT bridge diagnostic\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 09 heap, file and screen diagnostic\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     fprintf(log, "target_cpu=ARMv7\n");
-    fprintf(log, "execution=synthetic_x86_smoke_and_iat_calls_only\n");
+    fprintf(log, "execution=synthetic_x86_iat_heap_and_file_calls_only\n");
     fprintf(log, "game_entrypoint=not_attempted\n");
     fprintf(log, "game_code_executed=no\n");
     fprintf(log, "tls_callbacks=not_attempted\n");
     fprintf(log, "translation_patch=not_loaded\n");
+    const char* abc = "abc";
+    const char* long_vector = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    const bool hash_selfcheck =
+        sha256_hex(nullptr, 0) == "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855" &&
+        sha256_hex(reinterpret_cast<const uint8_t*>(abc), 3) ==
+            "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD" &&
+        sha256_hex(reinterpret_cast<const uint8_t*>(long_vector), strlen(long_vector)) ==
+            "248D6A61D20638B8E5C026930C3E6039A33CE45964FF2167F6ECEDD419DB06C1";
+    fprintf(log, "sha256_selfcheck=%s\n", hash_selfcheck ? "passed" : "failed");
+    if (!hash_selfcheck) { fprintf(log, "result=hash_selfcheck_failed\n"); return 1; }
 
     std::vector<uint8_t> exe_bytes;
     d2rt::PeImage game_image;
     const bool file_read = read_file(GAME_EXE_PATH, exe_bytes, log, "game");
     const bool pe_loaded = file_read && load_game_pe(exe_bytes, game_image, log);
+    if (!pe_loaded) { fprintf(log, "result=input_validation_failed\n"); return 1; }
 
     if (setenv("WX86_ARENA", "02000000", 1) != 0) {
         fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
@@ -244,12 +261,14 @@ static int run(FILE* log) {
     const bool imports_passed = pe_loaded && game_mapped && smoke_passed &&
         run_import_smoke(*cpu, exe_bytes, log);
     const bool passed = pe_loaded && game_mapped && smoke_passed && imports_passed;
-    fprintf(log, "result=%s\n", passed ? "pe_mapped_dynarec_and_iat_smoke_passed" : "failed");
+    fprintf(log, "result=%s\n", passed ? "identity_cpu_iat_heap_file_passed" : "failed");
     return passed ? 0 : 1;
 }
 
 int main(void) {
     sceIoMkdir(APP_DIR, 0777);
+    FILE* progress = fopen(wx86_vita_progress_path, "wb");
+    if (progress) fclose(progress);
     FILE* log = fopen(LOG_PATH, "wb");
     if (log == NULL) {
         return 2;
@@ -257,6 +276,7 @@ int main(void) {
     setvbuf(log, nullptr, _IONBF, 0);
 
     const int result = run(log);
+    show_diagnostic_screen(LOG_PATH, result, log);
     fflush(log);
     fclose(log);
     return result;
