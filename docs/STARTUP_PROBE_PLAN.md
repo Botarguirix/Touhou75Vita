@@ -1,6 +1,6 @@
 # Próxima prueba: primeras instrucciones del EXE original
 
-Este es un plan pendiente de implementación. La Iteración 10 pasó sus pruebas sintéticas en hardware; aún no ejecuta instrucciones del juego.
+Este plan está implementado en el código local de Iteración 11; faltan compilación en Actions y validación en una Vita. La Iteración 10 pasó sus pruebas sintéticas en hardware. Véase [estado y procedimiento de Iteración 11](STATUS_ITERATION11.md).
 
 ## Evidencia estática
 
@@ -22,7 +22,7 @@ Se verificó que la copia japonesa local tiene SHA-256 `BD441E99075436E8DCAD26F8
 2. Preparar un contexto de arranque separado y empezar en `0x0064232C`.
 3. Ejecutar un tramo limitado hasta interceptar la llamada real a `GetVersionExA`, sin devolver éxito ni continuar en esa API todavía.
 4. Registrar EIP, ESP, la dirección IAT, el argumento y `dwOSVersionInfoSize=148`; comprobar que el buffer y el registro `FS:[0]` están dentro de la pila invitada.
-5. Definir un límite efectivo de ejecución y recuperar la pantalla de diagnóstico también ante parada por servicio desconocido o error. El timeout de la pantalla de resultados no limita por sí solo la ejecución x86.
+5. Aplicar un presupuesto aproximado de 512 entradas a bloques del dynarec y un watchdog nativo de cinco segundos. Las paradas cooperativas recuperan la pantalla de diagnóstico; un timeout duro cierra la aplicación y deja un log separado. El timeout de la pantalla de resultados no limita por sí solo la ejecución x86.
 
 La primera meta verificable es confirmar en hardware la ejecución de instrucciones originales hasta esa frontera. Después se implementará y comprobará el contrato necesario de `GetVersionExA` y se seguirá con la siguiente dependencia del inicio. No se habilitará un arranque ilimitado con los 140 imports aún pendientes.
 

@@ -3,6 +3,7 @@
 #include <psp2/kernel/processmgr.h>
 
 #include <stdint.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,18 +19,19 @@
 #include "import_smoke.h"
 #include "sha256.h"
 #include "diagnostic_screen.h"
+#include "startup_probe.h"
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration10.log"
-#define BUILD_ID "iteration10-winvita-teb-fs-tls-r1"
+#define LOG_PATH APP_DIR "/iteration11.log"
+#define BUILD_ID "iteration11-original-entrypoint-first-import-r1"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration10-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration11-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -185,10 +187,17 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 }
 
 static int run(FILE* log) {
-    fprintf(log, "Touhou 7.5 Vita - Iteration 10 TEB, FS, TLS and process diagnostic\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 11 original EXE startup checkpoint\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
+    errno = 0;
+    const int old_watchdog = remove(APP_DIR "/iteration11-watchdog.log");
+    const int watchdog_errno = errno;
+    fprintf(log, "watchdog_previous_log_cleared=%s\n",
+        old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");
+    if (old_watchdog != 0 && watchdog_errno != ENOENT)
+        fprintf(log, "watchdog_previous_log_clear_errno=%d\n", watchdog_errno);
     fprintf(log, "target_cpu=ARMv7\n");
-    fprintf(log, "execution=synthetic_x86_services_and_thread_context_only\n");
+    fprintf(log, "execution=diagnostics_then_bounded_original_exe_startup\n");
     fprintf(log, "game_entrypoint=not_attempted\n");
     fprintf(log, "game_code_executed=no\n");
     fprintf(log, "tls_callbacks=not_attempted\n");
@@ -260,8 +269,11 @@ static int run(FILE* log) {
         *cpu, (uint32_t)code64, (uint32_t)stack64, (uint32_t)trap64, log);
     const bool imports_passed = pe_loaded && game_mapped && smoke_passed &&
         run_import_smoke(*cpu, exe_bytes, log);
-    const bool passed = pe_loaded && game_mapped && smoke_passed && imports_passed;
-    fprintf(log, "result=%s\n", passed ? "identity_services_teb_tls_process_passed" : "failed");
+    const bool diagnostics_passed = pe_loaded && game_mapped && smoke_passed && imports_passed;
+    fprintf(log, "preflight_result=%s\n", diagnostics_passed ? "passed" : "failed");
+    const bool passed = diagnostics_passed && run_startup_probe(*cpu, game_image, exe_bytes, log);
+    if (!diagnostics_passed) fprintf(log, "startup_result=preflight_failed\n");
+    fprintf(log, "result=%s\n", passed ? "real_entrypoint_first_import_passed" : "failed");
     return passed ? 0 : 1;
 }
 
