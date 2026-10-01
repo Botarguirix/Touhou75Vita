@@ -1,6 +1,6 @@
 # Iteración 11 — primera invocación del EXE original
 
-Estado: la **R1 se compiló y se probó en Vita**, pero se detuvo al crear el watchdog, antes de invocar el EXE. La **R2 está corregida localmente; faltan compilación en Actions y prueba en Vita**. No hay VitaSDK instalado en este PC. Las ocho pruebas previas siguen pasando. Un checkpoint satisfactorio confirmará solo el recorrido hasta la primera API, sin establecer aún que el juego pueda arrancar completo.
+Estado: **R2 compilada y validada en una Vita física** con los tres logs y la foto aportados por el usuario el 2026-10-01. Las ocho pruebas previas pasan. El EXE original ejecutó su prólogo, registró SEH mediante FS y llegó a `GetVersionExA` en 271.927 µs sin agotar el presupuesto. El watchdog se desarmó y la pantalla se presentó. Esto confirma el recorrido hasta la primera API; el arranque completo sigue sin verificarse. La siguiente versión está documentada en [Iteración 12](STATUS_ITERATION12.md).
 
 ## Resultado de R1 y corrección R2
 
@@ -17,7 +17,7 @@ watchdog_result=create_failed
 
 `0x80028023` es `SCE_KERNEL_ERROR_ILLEGAL_PRIORITY`, según el [catálogo de errores de VitaSDK](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/kernel/error.h). La R1 pidió `0x10000040`; la consola lo rechazó. Se sustituye por `0x10000100`, usado en el [ejemplo de creación de hilos de VitaSDK](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/kernel/threadmgr/thread.h) y en el código de WinVita fijado en este proyecto. El fallo observado no permite evaluar todavía la ejecución del EXE.
 
-R2 registra la prioridad solicitada y la prioridad efectiva del watchdog. También aplica la afinidad desde el propio hilo, siguiendo `wx86_vita_pin_self()` de WinVita; solicita USER_1 para el watchdog y USER_0 para el tramo x86, y restaura la afinidad anterior del hilo principal después. Comprueba los errores de colocación antes de invocar el EXE y registra las máscaras leídas. Se conservan el presupuesto y la parada antes de servir imports. La [evidencia de R1](hardware/iteration11-r1/result-excerpt.txt) queda guardada.
+R2 registra la prioridad solicitada y la prioridad efectiva del watchdog. También aplica la afinidad desde el propio hilo, siguiendo `wx86_vita_pin_self()` de WinVita; solicita USER_1 para el watchdog y USER_0 para el tramo x86, y restaura la afinidad anterior del hilo principal después. El hardware confirmó las máscaras `0x00020000` y `0x00010000`, y prioridad efectiva `0xA0`. Se conservan el presupuesto y la parada antes de servir imports. Se guardan la [evidencia de R1](hardware/iteration11-r1/result-excerpt.txt) y la [evidencia de R2](hardware/iteration11-r2/result-excerpt.txt).
 
 ## Qué ejecuta
 
@@ -53,7 +53,7 @@ Las otras tres consolas se dejan para después de que el EXE arranque, conforme 
 3. Abrir **Touhou 7.5 Vita - Iteration 11 R2 EXE Startup**, con el EXE japonés de siempre en `ux0:data/TH075Vita/TH075.exe`. La pantalla debe decir `ITERATION 11 R2`.
 4. Fotografiar la pantalla y pulsar X. Compartir los tres logs nuevos. Si la aplicación se cierra antes de la pantalla, compartir los logs disponibles.
 
-Resultado esperado, todavía **sin confirmar en hardware**:
+Resultado **observado en hardware**:
 
 ```text
 build_id=iteration11-original-entrypoint-first-import-r2
@@ -73,8 +73,8 @@ startup_result=reached_first_import
 result=real_entrypoint_first_import_passed
 ```
 
-La pantalla distingue `ENTRY CHECKPOINT PASS` de `GAME BOOT: NOT YET VERIFIED`. El watchdog debe terminar con `watchdog_result=disarmed`. Un PASS de las ocho pruebas de preflight por sí solo no valida la ejecución original.
+La pantalla distingue `ENTRY CHECKPOINT PASS` de `GAME BOOT: NOT YET VERIFIED`. El watchdog terminó con `watchdog_result=disarmed`. El log suministrado termina al presentar la pantalla; no confirma la salida con X de esta ejecución. Un PASS de las ocho pruebas de preflight por sí solo no valida la ejecución original.
 
 ## Después del checkpoint
 
-Si el recorrido se confirma, se implementará el contrato de `GetVersionExA` requerido por este EXE y se continuará hasta la siguiente dependencia real del inicio. Si falla antes, la dirección y el estado de pila/FS permitirán trabajar sobre el problema concreto del traductor. Persisten 140 imports sin servicios compatibles en el diagnóstico, además de gráficos D3D8, entrada, audio y arranque completo. No se estima aún una cantidad de iteraciones para obtener el menú.
+El recorrido se confirmó. [Iteración 12](STATUS_ITERATION12.md) implementa el contrato observado de `GetVersionExA` y `GetModuleHandleA(NULL)` y continúa hasta `HeapCreate`. Está preparada localmente; faltan compilación y validación en Vita. Persisten 140 imports sin servicios compatibles en el preflight, además de gráficos D3D8, entrada, audio y arranque completo. No se estima aún una cantidad de iteraciones para obtener el menú.

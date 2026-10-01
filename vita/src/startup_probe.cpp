@@ -1,4 +1,5 @@
 #include "startup_probe.h"
+#include "startup_services.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
@@ -18,7 +19,7 @@ constexpr uint64_t kRunBudget = 4096, kTimeoutUs = 5000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration11-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration12-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -45,7 +46,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration11-r2\n");
+        fprintf(report_, "watchdog_revision=iteration12-r1\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -191,8 +192,8 @@ struct RunnerPlacement {
 
 bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                        const std::vector<uint8_t>& exe, FILE* log) {
-    fprintf(log, "startup_scope=original_exe_until_first_import\n");
-    fprintf(log, "startup_import_policy=stop_before_every_import\n");
+    fprintf(log, "startup_scope=original_exe_version_module_until_heap_create\n");
+    fprintf(log, "startup_import_policy=serve_two_known_contracts_stop_before_other_imports\n");
     fprintf(log, "game_bootable=not_yet_established\n");
     // This checkpoint doesn't initialize PE static TLS or call its callbacks.
     // Refuse an executable needing that setup rather than skip it silently.
@@ -222,6 +223,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     if (!thread.initialize()) {
         fprintf(log, "startup_result=context_failed\n"); return false;
     }
+    StartupServices services(cpu, image, log);
     TrapCleanup cleanup{cpu};
     for (size_t i = 0; i < image.imports().size(); ++i) {
         const uint32_t target = kTrap + uint32_t(i) * 16;
@@ -239,7 +241,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_iat_intercept_count=%u\n", (unsigned)image.imports().size());
     fprintf(log, "startup_guest_image=restored_from_verified_pe\n");
     fprintf(log, "startup_text_patch=none\n");
-    bool import_hit = false, expected_boundary = false;
+    bool import_hit = false, original_call_valid = false;
+    bool expected_boundary = false, service_failed = false;
     cpu.set_trap(kTrap, kTrapEnd, [&](d2rt::Cpu& c, uint32_t trap) {
         if (trap == kSentinel) {
             fprintf(log, "startup_stop=entrypoint_returned\n"); return false;
@@ -249,24 +252,31 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log, "startup_stop=unknown_trap\n"); return false;
         }
         const auto& imp = image.imports()[(trap - kTrap) / 16];
+        const bool first = !import_hit;
         import_hit = true;
         const std::string tag = imp.dll + "!" +
             (imp.name.empty() ? ("#" + std::to_string(imp.ordinal)) : imp.name);
         const uint32_t esp = c.reg(d2rt::R_ESP);
-        uint32_t ret = 0, arg = 0, size = 0, seh = 0, prev = 0, handler = 0;
+        uint32_t ret = 0, arg = 0, seh = 0, prev = 0, handler = 0;
         const bool frame_ok = stack_range(esp, 8) && c.read(esp, &ret, 4) &&
             c.read(esp + 4, &arg, 4);
-        const bool buffer_ok = frame_ok && stack_range(arg, 148) && c.read(arg, &size, 4);
         const bool seh_ok = c.read(kDiagnosticTeb, &seh, 4) && stack_range(seh, 8) &&
             c.read(seh, &prev, 4) && c.read(seh + 4, &handler, 4) &&
             prev == 0xFFFFFFFF && handler == 0x00645468;
-        fprintf(log, "startup_first_import=%s\n", tag.c_str());
-        fprintf(log, "startup_first_iat_va=0x%08X\n", imp.iat_va);
-        fprintf(log, "startup_stop_trap_va=0x%08X\n", trap);
+        if (first) {
+            fprintf(log, "startup_first_import=%s\n", tag.c_str());
+            fprintf(log, "startup_first_iat_va=0x%08X\n", imp.iat_va);
+            uint32_t size = 0;
+            original_call_valid = imp.dll == "KERNEL32.dll" && imp.name == "GetVersionExA" &&
+                imp.iat_va == 0x00657090 && ret == 0x00642352 && frame_ok && seh_ok &&
+                stack_range(arg, 148) && c.read(arg, &size, 4) && size == 148;
+            fprintf(log, "startup_entry_checkpoint=%s\n", original_call_valid ? "passed" : "failed");
+        }
+        fprintf(log, "startup_import_call=%s\n", tag.c_str());
+        fprintf(log, "startup_call_trap_va=0x%08X\n", trap);
         fprintf(log, "startup_return_va=0x%08X\n", ret);
         fprintf(log, "startup_arg0_va=0x%08X\n", arg);
-        fprintf(log, "startup_version_info_size=%u\n", size);
-        fprintf(log, "startup_stack_buffer=%s\n", buffer_ok ? "valid" : "invalid");
+        fprintf(log, "startup_call_frame=%s\n", frame_ok ? "valid" : "invalid");
         fprintf(log, "startup_seh_record_va=0x%08X\n", seh);
         fprintf(log, "startup_seh_previous=0x%08X\n", prev);
         fprintf(log, "startup_seh_handler=0x%08X\n", handler);
@@ -275,11 +285,37 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         const char* registers[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
         for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r)
             fprintf(log, "startup_%s=0x%08X\n", registers[r], c.reg(r));
-        // No Bridge epilogue: preserve the call frame and EAX at interception.
-        fprintf(log, "startup_api_executed=no\n");
-        expected_boundary = imp.dll == "KERNEL32.dll" && imp.name == "GetVersionExA" &&
-            imp.iat_va == 0x00657090 && ret == 0x00642352 &&
-            buffer_ok && size == 148 && seh_ok;
+        if (!original_call_valid || !frame_ok || !seh_ok) {
+            service_failed = true;
+            fprintf(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
+            fprintf(log, "startup_stop_import=%s\n", tag.c_str());
+            return false;
+        }
+        const StartupServiceResult service = services.call(imp);
+        if (service == StartupServiceResult::Serviced) return true;
+        if (service == StartupServiceResult::ContractFailure) {
+            service_failed = true;
+            fprintf(log, "startup_stop_import=%s\n", tag.c_str());
+            return false;
+        }
+        // Preserve the unsupported API's complete call frame and registers.
+        fprintf(log, "startup_stop_import=%s\n", tag.c_str());
+        fprintf(log, "startup_stop_iat_va=0x%08X\n", imp.iat_va);
+        fprintf(log, "startup_stop_trap_va=0x%08X\n", trap);
+        fprintf(log, "startup_stop_api_executed=no\n");
+        if (imp.dll == "KERNEL32.dll" && imp.name == "HeapCreate") {
+            uint32_t initial = 0, maximum = 0;
+            const bool heap_frame = stack_range(esp, 16) &&
+                c.read(esp + 8, &initial, 4) && c.read(esp + 12, &maximum, 4);
+            fprintf(log, "startup_heap_flags=0x%08X\n", arg);
+            fprintf(log, "startup_heap_initial_bytes=%u\n", initial);
+            fprintf(log, "startup_heap_maximum_bytes=%u\n", maximum);
+            const bool globals = services.version_globals_match();
+            expected_boundary = imp.iat_va == 0x00657160 && ret == 0x0064974C &&
+                heap_frame && arg == 0 && initial == 0x1000 && maximum == 0 &&
+                services.version_calls() == 1 && services.module_calls() == 1 && globals;
+            fprintf(log, "startup_heap_call_frame=%s\n", expected_boundary ? "passed" : "failed");
+        }
         return false;
     });
     for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r) cpu.set_reg(r, 0);
@@ -316,15 +352,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
     fprintf(log, "startup_final_eip=0x%08X\n", cpu.reg(d2rt::R_EIP));
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
+    fprintf(log, "startup_version_calls=%u\n", services.version_calls());
+    fprintf(log, "startup_module_calls=%u\n", services.module_calls());
+    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls());
     if (!stopped) {
         fprintf(log, "startup_fault=%s\n", fault ? fault : "unknown");
         fprintf(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
         fprintf(log, "startup_fault_code=0x%08X\n", cpu.fault_code());
     }
-    const bool passed = stopped && !limit && expected_boundary;
-    fprintf(log, "game_code_executed=%s\n", passed ? "yes" : "unconfirmed");
-    fprintf(log, "startup_result=%s\n", passed ? "reached_first_import" :
+    const bool passed = stopped && !limit && !service_failed && expected_boundary;
+    fprintf(log, "game_code_executed=%s\n", original_call_valid ? "yes" : "unconfirmed");
+    fprintf(log, "startup_result=%s\n", passed ? "reached_heap_create" :
         (!stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
-        (import_hit ? "unexpected_import_or_frame" : "unexpected_stop"))));
+        (service_failed ? "service_contract_failed" :
+        (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
     return passed;
 }

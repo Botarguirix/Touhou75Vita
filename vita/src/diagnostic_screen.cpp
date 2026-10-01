@@ -74,9 +74,9 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 11 R2 - ORIGINAL EXE STARTUP",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 12 - STARTUP SERVICES",0xFFE9C975);
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
-    text(pixels,40,137,result==0?"RESULT: ENTRY CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
+    text(pixels,40,137,result==0?"RESULT: STARTUP CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};
     const char* keys[]={"game_sha256_result","dynarec_smoke_result","import_smoke_result",
                         "heap_smoke_result","file_smoke_result","teb_fs_smoke_result",
@@ -87,15 +87,16 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
              status=="passed"?good:(status=="failed"?bad:neutral));
     }
     const std::string startup=values.count("startup_result")?values["startup_result"]:"not_attempted";
-    const bool reached=startup=="reached_first_import";
-    const char* entry=reached?"EXE: FIRST IMPORT REACHED":
+    const bool reached=startup=="reached_heap_create";
+    const char* entry=reached?"EXE: TWO SERVICES RETURNED":
         (startup=="cpu_fault"?"EXE: CPU FAULT":
         (startup=="budget_exhausted"?"EXE: EXECUTION LIMIT REACHED":
-        (startup=="watchdog_unavailable"?"EXE: WATCHDOG NOT READY":"EXE: CHECK LOG")));
+        (startup=="watchdog_unavailable"?"EXE: WATCHDOG NOT READY":
+        (startup=="service_contract_failed"?"EXE: SERVICE CONTRACT FAILED":"EXE: CHECK LOG"))));
     text(pixels,40,377,entry,reached?good:bad);
-    text(pixels,40,408,reached?"STOP: GETVERSIONEXA":"STOP: SEE LOG",neutral);
+    text(pixels,40,408,reached?"STOP: HEAPCREATE":"STOP: SEE LOG",neutral);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
-    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION11.LOG",neutral,2);
+    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION12.LOG",neutral,2);
     text(pixels,40,500,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
