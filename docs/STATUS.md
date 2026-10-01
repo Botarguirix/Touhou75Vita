@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-01
 
-**Hito:** Iteración 10 validada en Vita; fuente de Iteración 11 preparada localmente
+**Hito:** Iteración 11 R1 pasó el preflight pero no creó el watchdog; corrección R2 preparada localmente
 
 ## Confirmado
 
@@ -11,7 +11,8 @@
 - Pasaron las ocho comprobaciones sintéticas de identidad, CPU, IAT, heap, archivo, TEB/FS, TLS y proceso. La pantalla se confirmó con log e imagen y la app salió con X.
 - Hay 157 imports; 17 tienen shims parciales de diagnóstico y 140 siguen sin implementar. Esa cobertura no equivale a compatibilidad completa de Windows.
 - En el log validado de Iteración 10, `game_code_executed=no`: el EXE está cargado pero todavía no se invocó su entry point.
-- Iteración 11 está preparada para ejecutar instrucciones originales hasta la primera llamada importada. Falta compilarla y ejecutarla en hardware.
+- Iteración 11 R1 repitió esas ocho comprobaciones y se detuvo con `0x80028023` al crear el watchdog con una prioridad inválida. El entry point todavía no se invocó.
+- Iteración 11 R2 corrige la prioridad y registra la colocación de los hilos. Falta compilarla y ejecutarla en la misma Vita.
 
 ## Ejecutables en estudio
 
@@ -24,7 +25,7 @@ El juego base que se debe portar es el japonés `TH075.exe`. Su hash ya fue veri
 
 ## Pendiente inmediato
 
-1. Commit y push de Iteración 11; generar la VPK con Actions.
+1. Commit y push de Iteración 11 R2; generar la VPK con Actions.
 2. Probar en **una sola Vita**, manteniendo el mismo EXE japonés.
 3. Confirmar si el recorrido real llega a `KERNEL32.dll!GetVersionExA` con pila y registro FS correctos. Recoger `iteration11.log`, `iteration11-runtime.log` y `iteration11-watchdog.log`.
 4. Trabajar sobre la primera dependencia real o sobre el fallo de CPU que indique el log; continuar el inicio sin fabricar éxito en servicios desconocidos.

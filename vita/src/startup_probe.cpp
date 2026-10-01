@@ -2,6 +2,8 @@
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
+#include "platform/vita_host.h"
+#include <psp2/kernel/error.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <atomic>
@@ -13,6 +15,9 @@ constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
 constexpr uint64_t kRunBudget = 4096, kTimeoutUs = 5000000;
+// The VitaSDK example and the pinned WinVita native threads use this class.
+// 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
+constexpr int kWatchdogPriority = 0x10000100;
 const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration11-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
@@ -40,14 +45,19 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
+        fprintf(report_, "watchdog_revision=iteration11-r2\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
+        fprintf(log, "startup_watchdog_priority=0x%08X\n", (unsigned)kWatchdogPriority);
+        fprintf(report_, "watchdog_priority=0x%08X\n", (unsigned)kWatchdogPriority);
         deadline_ = sceKernelGetProcessTimeWide() + kTimeoutUs;
         thread_ = sceKernelCreateThread("TH075 startup guard", entry,
-            0x10000040, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_1, nullptr);
+            kWatchdogPriority, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_1, nullptr);
         if (thread_ < 0) {
             fprintf(log, "startup_watchdog_create_rc=0x%08X\n", (unsigned)thread_);
+            if ((uint32_t)thread_ == (uint32_t)SCE_KERNEL_ERROR_ILLEGAL_PRIORITY)
+                fprintf(log, "startup_watchdog_error=illegal_priority\n");
             fprintf(report_, "watchdog_result=create_failed\n");
             fclose(report_); report_ = nullptr;
             return false;
@@ -66,6 +76,11 @@ public:
             sceKernelDelayThread(1000);
         if (!ready_.load()) {
             fprintf(log, "startup_watchdog_error=thread_not_ready\n");
+            finish();
+            return false;
+        }
+        if (!placement_ok_) {
+            fprintf(log, "startup_watchdog_error=affinity_failed\n");
             finish();
             return false;
         }
@@ -96,7 +111,19 @@ private:
         StartupWatchdog* self = nullptr;
         memcpy(&self, arg, sizeof(self));
         if (!self) return 1;
+        // WinVita requires each native thread to pin itself after start.
+        unsigned mask = 0;
+        const int pin_rc = wx86_vita_pin_self(SCE_KERNEL_CPU_MASK_USER_1, &mask);
+        fprintf(self->report_, "watchdog_pin_rc=0x%08X\n", (unsigned)pin_rc);
+        fprintf(self->report_, "watchdog_affinity_readback=0x%08X\n", mask);
+        fprintf(self->report_, "watchdog_actual_priority=0x%08X\n",
+            (unsigned)sceKernelGetThreadCurrentPriority());
+        self->placement_ok_ = pin_rc >= 0;
         self->ready_.store(true);
+        if (!self->placement_ok_) {
+            fprintf(self->report_, "watchdog_result=affinity_failed\n");
+            return 1;
+        }
         while (self->state_.load() == 0) {
             if (sceKernelGetProcessTimeWide() >= self->deadline_) {
                 unsigned running = 0;
@@ -119,6 +146,7 @@ private:
     const uint32_t* ip_;
     std::atomic<unsigned> state_{0}; // running, finished, timed out
     std::atomic<bool> ready_{false};
+    bool placement_ok_ = false; // published by ready_'s release/acquire
     uint64_t deadline_ = 0;
     SceUID thread_ = -1;
     FILE* report_ = nullptr;
@@ -129,6 +157,34 @@ struct TrapCleanup {
     ~TrapCleanup() {
         cpu.set_run_limit(0);
         cpu.set_trap(0, 0, [](d2rt::Cpu&, uint32_t) { return false; });
+    }
+};
+
+// Keep the guest on a different core from the equal-priority watchdog.
+// The watchdog sleeps normally; it must still run if a guest block spins.
+struct RunnerPlacement {
+    FILE* log;
+    int old_mask = -1;
+    bool pinned = false;
+    bool pin() {
+        old_mask = sceKernelGetThreadCpuAffinityMask(sceKernelGetThreadId());
+        if (old_mask < 0) {
+            fprintf(log, "startup_runner_affinity_query_rc=0x%08X\n", (unsigned)old_mask);
+            return false;
+        }
+        unsigned mask = 0;
+        const int rc = wx86_vita_pin_self(SCE_KERNEL_CPU_MASK_USER_0, &mask);
+        pinned = rc >= 0;
+        fprintf(log, "startup_runner_pin_rc=0x%08X\n", (unsigned)rc);
+        fprintf(log, "startup_runner_affinity_readback=0x%08X\n", mask);
+        return pinned;
+    }
+    ~RunnerPlacement() {
+        if (pinned) {
+            unsigned mask = 0;
+            const int rc = wx86_vita_pin_self(old_mask, &mask);
+            fprintf(log, "startup_runner_affinity_restore_rc=0x%08X\n", (unsigned)rc);
+        }
     }
 };
 }
@@ -238,6 +294,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     cpu.set_run_limit(kRunBudget);
     fprintf(log, "startup_run_budget=%llu\n", (unsigned long long)kRunBudget);
     fprintf(log, "startup_budget_unit=approx_instructions_via_512_block_entries\n");
+    RunnerPlacement placement{log};
+    if (!placement.pin()) {
+        fprintf(log, "startup_result=runner_affinity_failed\n"); return false;
+    }
     StartupWatchdog watchdog(cpu.ip_ptr());
     if (!watchdog.start(log)) {
         fprintf(log, "startup_result=watchdog_unavailable\n"); return false;

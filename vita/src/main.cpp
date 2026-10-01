@@ -24,7 +24,7 @@
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
 #define LOG_PATH APP_DIR "/iteration11.log"
-#define BUILD_ID "iteration11-original-entrypoint-first-import-r1"
+#define BUILD_ID "iteration11-original-entrypoint-first-import-r2"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;

@@ -1,6 +1,6 @@
 # Próxima prueba: primeras instrucciones del EXE original
 
-Este plan está implementado en el código local de Iteración 11; faltan compilación en Actions y validación en una Vita. La Iteración 10 pasó sus pruebas sintéticas en hardware. Véase [estado y procedimiento de Iteración 11](STATUS_ITERATION11.md).
+Este plan está implementado en el código local de Iteración 11 R2; faltan compilación en Actions y validación en una Vita. R1 pasó las pruebas previas, pero no invocó el EXE porque falló la creación del watchdog con una prioridad inválida. Véase [estado y procedimiento de Iteración 11](STATUS_ITERATION11.md).
 
 ## Evidencia estática
 
