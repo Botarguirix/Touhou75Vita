@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Iteration 12 passed on the user's physical Vita through HeapCreate. Iteration 13 is locally compiled and serves the initial guest heap, then continues to the next import. Full game boot remains unverified. See [Iteration 13 scope and procedure](docs/STATUS_ITERATION13.md).
+Iteration 12 passed on the user's physical Vita through HeapCreate. Iteration 14 is locally compiled and serves the initial guest heap, then continues to the next import. Full game boot remains unverified. See [Iteration 14 scope and procedure](docs/STATUS_ITERATION13.md).
 
 ## Build
 
@@ -15,7 +15,7 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration13-startup-heap-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration14-startup-heap-vpk**.
 
 ## Test on one Vita
 

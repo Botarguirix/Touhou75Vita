@@ -109,7 +109,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         heap_ready_ = true;
         ++heap_create_calls_;
-        cpu_.trap_epilogue(0x00AB0000, 8, ret);
+        // HeapCreate(flags, initial, maximum) is stdcall with three arguments.
+        cpu_.trap_epilogue(0x00AB0000, 12, ret);
         expected_eax = 0x00AB0000;
         fprintf(log_, "startup_heap_created_handle=0x00AB0000\n");
         fprintf(log_, "startup_heap_initial_bytes=%u\n", initial);
@@ -152,7 +153,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    const uint32_t cleanup = (version || module || heap_create) ? 8u : 12u;
+    const uint32_t cleanup = (version || module) ? 8u : 12u;
     bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&
         cpu_.reg(d2rt::R_EAX) == expected_eax;
     for (unsigned i = 0; i < 4; ++i) abi_ok = abi_ok && cpu_.reg(preserved[i]) == before[i];
