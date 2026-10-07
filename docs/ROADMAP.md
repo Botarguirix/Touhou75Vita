@@ -119,3 +119,11 @@ Hardware iteration 43 decoded and displayed the EXE icon and registered its wind
 Hardware iteration 44 validated all three original window creation callbacks and stopped at ShowWindow. Iteration 45 extracts 272 system images on the host, adds a direct DAT title-frame reader/preview on Vita, adds visibility callbacks and packages local LiveArea identity art. Next priorities are UpdateWindow/message processing, original file-access/texture upload integration and the D3D8 renderer. Resource previews and LiveArea art do not establish game boot.
 
 Hardware iteration 45 confirmed original visibility callbacks and DAT preview, then stopped at UpdateWindow. Iteration 46 removes the 300-case batch, adds native paint/COM/read-only file services and logs the actual stopping API. The Windows title trace was replayed and summarized: 35 Direct3D API functions plus memcpy before the reference frame. Next major work is guest D3D8 interface ownership and the Vita graphics backend feeding original EXE textures/draw calls.
+
+Hardware iteration 46 completed window paint and COM registration, then
+exhausted a CPU slice at 0064175D inside original cosine initialization.
+Iteration 47 observes the 3600-entry table loop through bounded stack frames
+and continues only that loop under slice/progress/time bounds. CPU-limit
+screens identify the final EIP instead of an earlier import. Synthetic
+batch cases remain disabled; actual resource loading and Direct3D rendering
+are still needed before claiming original title-screen boot.

@@ -24,10 +24,28 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration46-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration47-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
+}
+
+// Known Japanese EXE: 0041CAE0 builds 3600 floats at 006884C0.
+// Its saved return address is 00602D0F. Observe only; never fill the table
+// or replace the original x87 cosine routine with a native approximation.
+bool cosine_progress(d2rt::Cpu& cpu, uint32_t& index) {
+    uint32_t frame = cpu.reg(d2rt::R_EBP);
+    for (unsigned depth = 0; depth < 64; ++depth) {
+        uint32_t next = 0, ret = 0;
+        if ((frame & 3) || frame < kStack + 4 || !stack_range(frame, 8) ||
+            !cpu.read(frame, &next, 4) || !cpu.read(frame + 4, &ret, 4)) return false;
+        if (ret == 0x00602D0F) {
+            return cpu.read(frame - 4, &index, 4) && index < 3600;
+        }
+        if (next <= frame) return false;
+        frame = next;
+    }
+    return false;
 }
 bool file_u32(const std::vector<uint8_t>& file, uint64_t offset, uint32_t& out) {
     if (offset > file.size() || file.size() - offset < 4) return false;
@@ -51,7 +69,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration46\n");
+        fprintf(report_, "watchdog_revision=iteration47\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -396,7 +414,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     cpu.take_limit_hit();
     cpu.set_run_limit(kRunBudget);
     fprintf(log, "startup_run_budget=%llu\n", (unsigned long long)kRunBudget);
-    fprintf(log, "startup_budget_unit=approx_instructions_via_512_block_entries\n");
+    fprintf(log, "startup_budget_unit=approx_instructions_via_8_per_block_entry\n");
+    fprintf(log, "startup_budget_block_entries=%llu\n", (unsigned long long)(kRunBudget / 8));
     RunnerPlacement placement{log};
     if (!placement.pin()) {
         fprintf(log, "startup_result=runner_affinity_failed\n"); return false;
@@ -412,8 +431,46 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fflush(log);
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
-    bool stopped = cpu.run(kEntry, &fault);
-    bool limit = cpu.take_limit_hit();
+    bool stopped = false, limit = false;
+    unsigned cosine_slices = 0;
+    auto run_main = [&](uint32_t entry, uint64_t budget) {
+        cpu.take_limit_hit(); cpu.set_run_limit(budget);
+        stopped = cpu.run(entry, &fault);
+        limit = cpu.take_limit_hit();
+        uint32_t previous = 0;
+        bool have_previous = false;
+        unsigned unchanged = 0;
+        while (stopped && limit && !service_failed) {
+            uint32_t index = 0;
+            if (!cosine_progress(cpu, index)) break;
+            const uint64_t elapsed = sceKernelGetProcessTimeWide() - start;
+            uint32_t first = 0, last = 0;
+            const bool samples = index > 0 && cpu.read(0x006884C0, &first, 4) &&
+                cpu.read(0x006884C0 + (index - 1) * 4, &last, 4);
+            fprintf(log, "startup_cosine_progress=%u/3600 eip=0x%08X elapsed_us=%llu\n",
+                index, cpu.reg(d2rt::R_EIP), (unsigned long long)elapsed);
+            if (samples) fprintf(log, "startup_cosine_samples=first:0x%08X last_completed:0x%08X\n", first, last);
+            if (have_previous && index < previous) {
+                fprintf(log, "startup_cosine_resume_stop=index_regressed\n"); break;
+            }
+            unchanged = have_previous && index == previous ? unchanged + 1 : 0;
+            if (unchanged >= 2 || cosine_slices >= 16 || elapsed >= 45000000) {
+                fprintf(log, "startup_cosine_resume_stop=%s\n", unchanged >= 2 ?
+                    "no_index_progress" : cosine_slices >= 16 ? "slice_cap" : "time_cap"); break;
+            }
+            previous = index; have_previous = true;
+            ++cosine_slices;
+            fprintf(log, "startup_cosine_resume_slice=%u budget=%llu\n",
+                cosine_slices, (unsigned long long)kRunBudget);
+            fflush(log);
+            // run() recharges its block budget on the same emulator. All
+            // registers, stack, flags and x87 state remain owned by it.
+            cpu.set_run_limit(kRunBudget);
+            stopped = cpu.run(cpu.reg(d2rt::R_EIP), &fault);
+            limit = cpu.take_limit_hit();
+        }
+    };
+    run_main(kEntry, kRunBudget);
     bool worker_ok = true;
     bool thread_created = false;
     if (worker_create_frame && stopped && !limit && !service_failed) {
@@ -450,9 +507,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 fprintf(log, "startup_thread_handoff=worker_blocked_main_resumed\n");
                 worker_create_frame = 0;
                 expected_boundary = false;
-                cpu.take_limit_hit(); cpu.set_run_limit(4096);
-                stopped = cpu.run(ret,&fault);
-                limit = cpu.take_limit_hit();
+                run_main(ret, 4096);
             }
         }
     }
@@ -463,9 +518,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         else if(worker_ok) {
             priority_dispatch_requested=false;
             expected_boundary=false;
-            cpu.take_limit_hit();cpu.set_run_limit(4096);
-            stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
-            limit=cpu.take_limit_hit();
+            run_main(cpu.reg(d2rt::R_EIP), 4096);
         }
     }
     for(unsigned window_dispatch=0;window_dispatch<4 && services.window_pending() && stopped && !limit && !service_failed && worker_ok;++window_dispatch) {
@@ -474,12 +527,13 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(!window_ok)service_failed=true;
         else {
             expected_boundary=false;
-            cpu.take_limit_hit();cpu.set_run_limit(kRunBudget);
-            stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
-            limit=cpu.take_limit_hit();
+            run_main(cpu.reg(d2rt::R_EIP), kRunBudget);
         }
     }
     fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
+    fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
+    if (limit || !stopped) fprintf(log, "startup_stop_import=%s EIP 0x%08X\n",
+        limit ? "CPU BUDGET" : "CPU FAULT", cpu.reg(d2rt::R_EIP));
     watchdog.finish();
     fprintf(log, "startup_elapsed_us=%llu\n",
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
