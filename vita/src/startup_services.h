@@ -14,6 +14,7 @@ class StartupServices {
 public:
     StartupServices(d2rt::Cpu& cpu, const d2rt::PeImage& image, FILE* log)
         : cpu_(cpu), image_(image), log_(log) {}
+    ~StartupServices();
     StartupServiceResult call(const d2rt::ImportRef& import);
     bool window_pending() const { return window_pending_; }
     bool finish_window_creation(); // Call only after Cpu::run has returned.
@@ -88,10 +89,14 @@ private:
         uint32_t handle=0, procedure=0, frame=0, return_address=0;
         std::array<uint32_t,12> args{};
         std::vector<uint32_t> surface;
-        bool created=false, visible=false;
+        bool created=false, visible=false, invalidated=false;
     } window_;
     bool window_pending_=false;
     uint32_t window_callback_message_=0, window_callback_parameter_=0;
     uint32_t window_callback_wparam_=0;
     bool window_show_pending_=false, window_was_visible_=false;
+    bool window_paint_pending_=false;
+    std::map<uint32_t,unsigned> com_apartments_;
+    std::map<uint32_t,FILE*> files_;
+    uint32_t next_file_handle_=0x00AB8000;
 };

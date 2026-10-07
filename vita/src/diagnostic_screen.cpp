@@ -76,7 +76,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 45 - BATCH CHECKS",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 46 - BOOT STARTUP",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -111,9 +111,8 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         (startup=="watchdog_unavailable"?"EXE: WATCHDOG NOT READY":
         (startup=="service_contract_failed"?"EXE: SERVICE CONTRACT FAILED":"EXE: CHECK LOG"))));
     text(pixels,40,377,entry,reached?good:bad);
-    const std::string batch=values.count("batch_passed") ?
-        "BATCH: "+values["batch_passed"]+"/"+values["batch_total"]+" PASSED - SEE LOG" : "BATCH: NOT RUN";
-    text(pixels,40,408,batch,values["batch_result"]=="passed"?good:bad);
+    std::string boundary=values.count("startup_stop_import") ? values["startup_stop_import"]:"SEE LOG";
+    text(pixels,40,408,"STOP: "+boundary,neutral,2);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
     std::string displayed_log=log_path;
     for(char& ch:displayed_log)if(ch>='a' && ch<='z')ch=char(ch-'a'+'A');

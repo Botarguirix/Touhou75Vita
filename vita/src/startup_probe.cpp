@@ -1,7 +1,6 @@
 #include "startup_probe.h"
 #include "startup_services.h"
 #include "worker_probe.h"
-#include "batch_checks.h"
 #include "seh_chain.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
@@ -25,7 +24,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration45-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration46-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -52,7 +51,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration45\n");
+        fprintf(report_, "watchdog_revision=iteration46\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -298,20 +297,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log, "startup_entry_checkpoint=%s\n", original_call_valid ? "passed" : "failed");
         }
         fprintf(log, "startup_import_call=%s\n", tag.c_str());
-        fprintf(log, "startup_call_trap_va=0x%08X\n", trap);
         fprintf(log, "startup_return_va=0x%08X\n", ret);
-        fprintf(log, "startup_arg0_va=0x%08X\n", arg);
-        fprintf(log, "startup_call_frame=%s\n", frame_ok ? "valid" : "invalid");
-        fprintf(log, "startup_seh_record_va=0x%08X\n", seh);
-        fprintf(log, "startup_seh_previous=0x%08X\n", prev);
-        fprintf(log, "startup_seh_handler=0x%08X\n", handler);
-        fprintf(log, "startup_seh_registration=%s\n", seh_ok ? "passed" : "failed");
-        fprintf(log, "startup_seh_chain_depth=%u\n", seh_depth);
-        fprintf(log, "startup_exception_dispatch=not_implemented\n");
-        const char* registers[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"};
-        for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r)
-            fprintf(log, "startup_%s=0x%08X\n", registers[r], c.reg(r));
+        auto log_frame=[&]() {
+            fprintf(log,"startup_call_trap_va=0x%08X\nstartup_arg0_va=0x%08X\n",trap,arg);
+            fprintf(log,"startup_call_frame=%s\nstartup_seh_registration=%s\n",frame_ok ? "valid":"invalid",seh_ok ? "passed":"failed");
+            fprintf(log,"startup_seh_record_va=0x%08X\nstartup_seh_previous=0x%08X\nstartup_seh_handler=0x%08X\n",seh,prev,handler);
+            fprintf(log,"startup_seh_chain_depth=%u\nstartup_exception_dispatch=not_implemented\n",seh_depth);
+            const char* registers[]={"eax","ecx","edx","ebx","esp","ebp","esi","edi"};
+            for(int r=d2rt::R_EAX;r<=d2rt::R_EDI;++r)
+                fprintf(log,"startup_%s=0x%08X\n",registers[r],c.reg(r));
+        };
+        if(first)log_frame();
         if (!original_call_valid || !frame_ok || !seh_ok) {
+            if(!first)log_frame();
             service_failed = true;
             fprintf(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
             fprintf(log, "startup_stop_import=%s\n", tag.c_str());
@@ -357,11 +355,13 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             return true;
         }
         if (service == StartupServiceResult::ContractFailure) {
+            if(!first)log_frame();
             service_failed = true;
             fprintf(log, "startup_stop_import=%s\n", tag.c_str());
             return false;
         }
         // Preserve the unsupported API's complete call frame and registers.
+        if(!first)log_frame();
         fprintf(log, "startup_stop_import=%s\n", tag.c_str());
         fprintf(log, "startup_stop_iat_va=0x%08X\n", imp.iat_va);
         fprintf(log, "startup_stop_trap_va=0x%08X\n", trap);
@@ -474,7 +474,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(!window_ok)service_failed=true;
         else {
             expected_boundary=false;
-            cpu.take_limit_hit();cpu.set_run_limit(4096);
+            cpu.take_limit_hit();cpu.set_run_limit(kRunBudget);
             stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
             limit=cpu.take_limit_hit();
         }
@@ -525,6 +525,6 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         (!worker_ok ? "worker_probe_failed" : !stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
         (service_failed ? "service_contract_failed" :
         (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
-    const bool batch_passed = run_batch_checks(cpu, services, log);
-    return passed && batch_passed;
+    fprintf(log,"batch_checks=disabled_user_requested_original_boot_only\n");
+    return passed;
 }

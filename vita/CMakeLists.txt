@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 45 Batch Checks")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 46 Boot Startup")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.49")
+set(VITA_VERSION "01.50")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
@@ -42,7 +42,6 @@ add_executable(${PROJECT_NAME}
   src/thread_smoke.cpp
   src/startup_probe.cpp
   src/worker_probe.cpp
-  src/batch_checks.cpp
   src/startup_services.cpp
   src/sha256.cpp
   src/diagnostic_screen.cpp

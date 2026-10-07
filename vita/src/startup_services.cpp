@@ -47,14 +47,18 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool window_create = import.dll == "USER32.dll" && import.name == "CreateWindowExA";
     const bool window_default = import.dll == "USER32.dll" && import.name == "DefWindowProcA";
     const bool window_show = import.dll == "USER32.dll" && import.name == "ShowWindow";
+    const bool window_update = import.dll == "USER32.dll" && import.name == "UpdateWindow";
+    const bool com_init = import.dll == "ole32.dll" && import.name == "CoInitialize";
+    const bool com_uninit = import.dll == "ole32.dll" && import.name == "CoUninitialize";
+    const bool com = com_init || com_uninit;
     const bool stock = import.dll == "GDI32.dll" && import.name == "GetStockObject";
-    const bool gui = icon_load || cursor_load || class_register || stock || window_create || window_default || window_show;
+    const bool gui = icon_load || cursor_load || class_register || stock || window_create || window_default || window_show || window_update;
     const bool winmm = import.dll == "WINMM.dll";
     const bool timer_begin = winmm && import.name == "timeBeginPeriod";
     const bool timer_end = winmm && import.name == "timeEndPeriod";
     const bool timer_time = winmm && import.name == "timeGetTime";
     const bool multimedia_timer = timer_begin || timer_end || timer_time;
-    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics && !gui) return StartupServiceResult::Unsupported;
+    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics && !gui && !com) return StartupServiceResult::Unsupported;
     const bool cwd_set = import.name == "SetCurrentDirectoryA";
     const bool cwd_get = import.name == "GetCurrentDirectoryA";
     const bool cwd = cwd_set || cwd_get;
@@ -89,6 +93,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool exception_filter = import.name == "SetUnhandledExceptionFilter";
     const bool std_handle = import.name == "GetStdHandle";
     const bool file_type = import.name == "GetFileType";
+    const bool file_open = import.name == "CreateFileA";
+    const bool file_size = import.name == "GetFileSize";
+    const bool file_read = import.name == "ReadFile";
+    const bool file_seek = import.name == "SetFilePointer";
+    const bool file_attributes = import.name == "GetFileAttributesA";
+    const bool file_io = file_open || file_size || file_read || file_seek || file_attributes;
     const bool handle_count = import.name == "SetHandleCount";
     const bool environment_get = import.name == "GetEnvironmentStringsW" ||
         import.name == "GetEnvironmentStringsA" || import.name == "GetEnvironmentStrings";
@@ -119,7 +129,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics && !gui)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics && !gui && !com && !file_io)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -127,17 +137,123 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (window_default || string_type || heap_realloc || event_create) ? 4u :
-        ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
-        ((window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
+    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : file_read ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
+        ((com_uninit || tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
+        ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((file_size || window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if(gui) {
+    if(file_io || (event_close && files_.count(arg)) || (file_type && files_.count(arg))) {
+        auto path_for=[&](uint32_t pointer,std::string& native) {
+            std::string path;bool ended=false;
+            for(unsigned i=0;i<260;++i) {char ch=0;
+                if(uint64_t(pointer)+i>0xFFFFFFFFull || !cpu_.read(pointer+i,&ch,1))return false;
+                if(!ch) {ended=true;break;}path.push_back(ch=='\\' ? '/':ch);
+            }
+            if(!ended || path.empty())return false;
+            if(path.rfind("C:/TH075/",0)==0)path.erase(0,9);
+            if(path.rfind("./",0)==0)path.erase(0,2);
+            if(path.empty() || path.front()=='/' || path.find(':')!=std::string::npos)return false;
+            for(size_t begin=0;begin<path.size();) {
+                size_t end=path.find('/',begin);if(end==std::string::npos)end=path.size();
+                const auto part=path.substr(begin,end-begin);
+                if(part.empty() || part=="." || part=="..")return false;
+                begin=end+1;
+            }
+            native="ux0:data/TH075Vita/"+path;
+            fprintf(log_,"startup_file_guest=%s\n",path.c_str());return true;
+        };
+        if(file_open || file_attributes) {
+            std::string native;
+            expected_eax=0xFFFFFFFFu;
+            if(!path_for(arg,native))wx86_set_lasterr(cpu_,123);
+            else if(file_attributes) {
+                SceIoStat info{};
+                if(sceIoGetstat(native.c_str(),&info)<0)wx86_set_lasterr(cpu_,2);
+                else expected_eax=SCE_S_ISDIR(info.st_mode) ? 0x10u:0x20u;
+            } else {
+                uint32_t args[7]{};
+                if(!cpu_.read(esp+4,args,28))return StartupServiceResult::ContractFailure;
+                if(args[1]!=0x80000000u || args[2]>7 || args[3] || args[4]!=3 ||
+                   (args[5]&~0x08000080u) || args[6])return StartupServiceResult::Unsupported;
+                if(files_.size()>=32)wx86_set_lasterr(cpu_,4);
+                else {
+                    FILE* file=fopen(native.c_str(),"rb");
+                    if(!file)wx86_set_lasterr(cpu_,2);
+                    else {expected_eax=next_file_handle_;next_file_handle_+=4;files_.emplace(expected_eax,file);}
+                }
+            }
+        } else {
+            const auto it=files_.find(arg);
+            if(it==files_.end()) {wx86_set_lasterr(cpu_,6);expected_eax=file_size || file_seek ? 0xFFFFFFFFu:0u;}
+            else if(event_close) {
+                const int rc=fclose(it->second);files_.erase(it);expected_eax=rc==0 ? 1u:0u;
+                if(rc)wx86_set_lasterr(cpu_,5);
+            } else if(file_type)expected_eax=1;
+            else if(file_size) {
+                uint32_t high_pointer=0,zero=0;
+                if(!cpu_.read(esp+8,&high_pointer,4) || (high_pointer && !cpu_.write(high_pointer,&zero,4)))
+                    return StartupServiceResult::ContractFailure;
+                const long position=ftell(it->second);
+                if(position<0 || fseek(it->second,0,SEEK_END))return StartupServiceResult::ContractFailure;
+                const long size=ftell(it->second);
+                if(size<0 || fseek(it->second,position,SEEK_SET))return StartupServiceResult::ContractFailure;
+                expected_eax=uint32_t(size);
+            } else if(file_seek) {
+                uint32_t args[4]{};int32_t high=0;
+                if(!cpu_.read(esp+4,args,16) || (args[2] && !cpu_.read(args[2],&high,4)))
+                    return StartupServiceResult::ContractFailure;
+                if(high || args[3]>2)return StartupServiceResult::Unsupported;
+                expected_eax=0xFFFFFFFFu;
+                const int origins[3]={SEEK_SET,SEEK_CUR,SEEK_END};
+                if(fseek(it->second,int32_t(args[1]),origins[args[3]]))wx86_set_lasterr(cpu_,131);
+                else {const long position=ftell(it->second);
+                    if(position<0)wx86_set_lasterr(cpu_,131);
+                    else {expected_eax=uint32_t(position);uint32_t zero=0;
+                        if(args[2] && !cpu_.write(args[2],&zero,4))return StartupServiceResult::ContractFailure;
+                        wx86_set_lasterr(cpu_,0);
+                    }
+                }
+            } else if(file_read) {
+                uint32_t args[5]{};
+                if(!cpu_.read(esp+4,args,20))return StartupServiceResult::ContractFailure;
+                if(args[4] || args[2]>4u*1024u*1024u)return StartupServiceResult::Unsupported;
+                if(!args[3] || uint64_t(args[1])+args[2]>0x02000000ull)return StartupServiceResult::ContractFailure;
+                uint32_t total=0;
+                if(!cpu_.write(args[3],&total,4))return StartupServiceResult::ContractFailure;
+                std::array<uint8_t,4096> buffer{};
+                while(total<args[2]) {
+                    const size_t wanted=std::min<size_t>(buffer.size(),args[2]-total);
+                    const size_t got=fread(buffer.data(),1,wanted,it->second);
+                    if(got && !cpu_.write(args[1]+total,buffer.data(),uint32_t(got)))return StartupServiceResult::ContractFailure;
+                    total+=uint32_t(got);if(got<wanted)break;
+                }
+                if(!cpu_.write(args[3],&total,4))return StartupServiceResult::ContractFailure;
+                expected_eax=ferror(it->second) ? 0u:1u;
+                if(!expected_eax)wx86_set_lasterr(cpu_,30);
+                fprintf(log_,"startup_file_read_bytes=%u\n",total);
+            }
+        }
+        ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_file_scope=owned_readonly_application_mount\n");
+        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+    } else if(com) {
+        const uint32_t tib=wx86_cur_tib();
+        if(com_init) {
+            if(arg)expected_eax=0x80070057u;
+            else {auto& references=com_apartments_[tib];expected_eax=references ? 1u:0u;++references;}
+        } else {
+            auto it=com_apartments_.find(tib);
+            if(it!=com_apartments_.end() && !--it->second)com_apartments_.erase(it);
+        }
+        fprintf(log_,"startup_com_tib=0x%08X\nstartup_com_scope=owned_sta_registration_no_servers\n",tib);
+        ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_serviced_import=ole32.dll!%s\n",import.name.c_str());
+    } else if(gui) {
         auto guest_string=[&](uint32_t pointer,std::string& text) {
             text.clear();if(!pointer)return false;
             for(unsigned i=0;i<128;++i) {char ch=0;
@@ -147,7 +263,16 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
             return false;
         };
-        if(window_show) {
+        if(window_update) {
+            if(!window_.created || arg!=window_.handle || window_pending_)return StartupServiceResult::Unsupported;
+            if(!window_.invalidated)expected_eax=1;
+            else {
+                window_.frame=esp;window_.return_address=ret;
+                window_paint_pending_=true;window_pending_=true;
+                fprintf(log_,"startup_window_update=deferred_original_wm_paint\n");
+                return StartupServiceResult::Deferred;
+            }
+        } else if(window_show) {
             uint32_t command=0;
             if(!cpu_.read(esp+8,&command,4))return StartupServiceResult::ContractFailure;
             // SW_SHOWDEFAULT resolves to normal in our STARTUPINFO profile
@@ -200,6 +325,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             else if(params[1]==0x83) {
                 const uint32_t rectangle[4]={0,0,640,480};
                 if(!cpu_.write(params[3],rectangle,16))return StartupServiceResult::ContractFailure;
+            } else if(params[1]==0x0F) {
+                if(!window_paint_pending_)return StartupServiceResult::Unsupported;
+                std::fill(window_.surface.begin(),window_.surface.end(),0xFFFFFFFFu);
+                window_.invalidated=false;
+                fprintf(log_,"startup_window_paint=owned_white_brush_surface_validated\n");
             } else if(params[1]!=0x18 && params[1]!=5 && params[1]!=3) return StartupServiceResult::Unsupported;
             fprintf(log_,"startup_window_default_message=0x%04X\n",params[1]);
         } else if(icon_load) {
@@ -1316,14 +1446,14 @@ bool StartupServices::finish_window_creation() {
     const uint32_t create[12]={a[11],a[10],a[9],a[8],a[7],a[6],0,0,a[3],a[2],a[1],a[0]};
     const uint32_t rect[4]={0,0,640,480};
     bool ok=cpu_.write(data,create,48) && cpu_.write(data+48,rect,16);
-    const bool showing=window_show_pending_;
-    const uint32_t messages[3]={showing ? 0x18u:0x81u, showing ? 5u:0x83u, showing ? 3u:1u};
+    const bool showing=window_show_pending_,painting=window_paint_pending_;
+    const uint32_t messages[3]={painting ? 0x0Fu:showing ? 0x18u:0x81u, showing ? 5u:0x83u, showing ? 3u:1u};
     const int preserved[4]={d2rt::R_EBX,d2rt::R_EBP,d2rt::R_ESI,d2rt::R_EDI};
-    for(unsigned i=0;i<3 && ok;++i) {
+    for(unsigned i=0;i<(painting ? 1u:3u) && ok;++i) {
         cpu_.load_context(main);
         window_callback_message_=messages[i];
         window_callback_wparam_=showing && messages[i]==0x18 ? 1u:0u;
-        window_callback_parameter_=showing ? (messages[i]==5 ? (480u<<16)|640u:0u):messages[i]==0x83 ? data+48:data;
+        window_callback_parameter_=painting ? 0u:showing ? (messages[i]==5 ? (480u<<16)|640u:0u):messages[i]==0x83 ? data+48:data;
         const uint32_t args[5]={sentinel,window_.handle,messages[i],window_callback_wparam_,window_callback_parameter_};
         ok=cpu_.write(frame,args,20);
         bool returned=false, import_failed=false;
@@ -1368,17 +1498,23 @@ bool StartupServices::finish_window_creation() {
         return false;
     }
     window_.created=true;
-    if(showing)window_.visible=true;
+    if(showing) {window_.visible=true;window_.invalidated=true;}
+    if(painting && window_.invalidated)return false;
     window_show_pending_=false;
-    const uint32_t result=showing ? uint32_t(window_was_visible_):window_.handle;
-    const uint32_t cleanup=showing ? 12u:52u;
+    window_paint_pending_=false;
+    const uint32_t result=painting ? 1u:showing ? uint32_t(window_was_visible_):window_.handle;
+    const uint32_t cleanup=painting ? 8u:showing ? 12u:52u;
     cpu_.trap_epilogue(result,cleanup,window_.return_address);
     ok=cpu_.reg(d2rt::R_ESP)==window_.frame+cleanup &&
        cpu_.reg(d2rt::R_EIP)==window_.return_address && cpu_.reg(d2rt::R_EAX)==result;
     fprintf(log_,"startup_window_handle=0x%08X\n",window_.handle);
-    fprintf(log_,"%s=%s\n",showing ? "startup_window_show":"startup_window_creation",ok ? "guest_callbacks_completed":"epilogue_failed");
+    fprintf(log_,"%s=%s\n",painting ? "startup_window_update":showing ? "startup_window_show":"startup_window_creation",ok ? "guest_callbacks_completed":"epilogue_failed");
     fprintf(log_,"startup_window_rendering=not_yet_connected\n");
     return ok;
+}
+
+StartupServices::~StartupServices() {
+    for(const auto& file:files_)fclose(file.second);
 }
 
 bool StartupServices::version_globals_match() {

@@ -58,6 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('annotated_background', type=Path)
     parser.add_argument('screenshot', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--iteration', type=int, default=45)
     args = parser.parse_args()
     contents = args.output / 'livearea' / 'contents'
     encode(original_icon(args.exe), (128, 128), args.output / 'icon0.png')
@@ -65,8 +66,8 @@ if __name__ == '__main__':
     encode(background, (840, 500), contents / 'bg0.png')
     encode(background, (960, 544), args.output / 'pic0.png')
     encode(Image.open(args.screenshot), (280, 158), contents / 'startup.png')
-    (contents / 'template.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
-<livearea style="psmobile" format-ver="01.00" content-rev="45">
+    (contents / 'template.xml').write_text(f'''<?xml version="1.0" encoding="utf-8"?>
+<livearea style="psmobile" format-ver="01.00" content-rev="{args.iteration}">
   <livearea-background><image>bg0.png</image></livearea-background>
   <gate><startup-image>startup.png</startup-image></gate>
 </livearea>
