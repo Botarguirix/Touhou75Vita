@@ -85,6 +85,10 @@ are still required; this is only the initial context handoff.
 Hardware iteration 37 passed the initial handoff and reached SetThreadPriority.
 Iteration 38 batches four independent event/heap/clock service checks to improve
 hardware coverage per install; it retains that original startup boundary.
+Hardware iteration 38 passed all four service checks. Iteration 39 expands
+coverage to ten checks, including closed handles, failure preservation, TLS,
+Japanese conversion, LastError and pathname buffer boundaries. These checks
+retain the original SetThreadPriority startup boundary.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

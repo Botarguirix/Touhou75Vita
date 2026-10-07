@@ -74,7 +74,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 38 - BATCH CHECKS",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 39 - BATCH CHECKS",0xFFE9C975);
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
     text(pixels,40,137,result==0?"RESULT: STARTUP CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};
@@ -96,10 +96,10 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         (startup=="service_contract_failed"?"EXE: SERVICE CONTRACT FAILED":"EXE: CHECK LOG"))));
     text(pixels,40,377,entry,reached?good:bad);
     const std::string batch=values.count("batch_passed") ?
-        "BATCH: "+values["batch_passed"]+"/4 PASSED - SEE LOG" : "BATCH: NOT RUN";
+        "BATCH: "+values["batch_passed"]+"/"+values["batch_total"]+" PASSED - SEE LOG" : "BATCH: NOT RUN";
     text(pixels,40,408,batch,values["batch_result"]=="passed"?good:bad);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
-    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION38.LOG",neutral,2);
+    text(pixels,40,467,"LOG: UX0:DATA/TH075VITA/ITERATION39.LOG",neutral,2);
     text(pixels,40,500,"PRESS X TO EXIT - AUTO EXIT 120S",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
