@@ -55,6 +55,9 @@ Hardware iteration 27 completed those operations and released its critical
 section. Iteration 28 serves GetModuleFileNameA for the original executable.
 Hardware iteration 28 returned that path and reached the extensionless kernel32
 query. Iteration 29 resolves that alias and the CRT's processor erratum query.
+Hardware iteration 29 passed both and reached SetUnhandledExceptionFilter.
+Iteration 30 implements filter registration state; exception dispatch remains
+an independent missing subsystem.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

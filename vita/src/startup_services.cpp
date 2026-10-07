@@ -56,6 +56,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool command_line = import.name == "GetCommandLineA";
     const bool module_filename = import.name == "GetModuleFileNameA";
     const bool processor_feature = import.name == "IsProcessorFeaturePresent";
+    const bool exception_filter = import.name == "SetUnhandledExceptionFilter";
     const bool std_handle = import.name == "GetStdHandle";
     const bool file_type = import.name == "GetFileType";
     const bool handle_count = import.name == "SetHandleCount";
@@ -70,7 +71,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool code_page_info = import.name == "GetCPInfo";
     const bool string_type = import.name == "GetStringTypeW";
     const bool case_map = import.name == "LCMapStringW";
-    const bool process = startup_info || command_line || std_handle || file_type || handle_count || module_filename || processor_feature;
+    const bool process = startup_info || command_line || std_handle || file_type || handle_count || module_filename || processor_feature || exception_filter;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
@@ -88,7 +89,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : string_type ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature) ? 1u :
+        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -662,7 +663,23 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (process) {
-        if (processor_feature) {
+        if (exception_filter) {
+            // Store guest callback state only. Fault dispatch remains a separate boundary.
+            if (arg) {
+                uint8_t first = 0;
+                if (arg < image_.load_base() || uint64_t(arg) >= uint64_t(image_.load_base()) + image_.image_size() ||
+                    !cpu_.read(arg, &first, 1)) {
+                    fprintf(log_, "startup_exception_filter_boundary=callback_outside_loaded_image\n");
+                    return StartupServiceResult::Unsupported;
+                }
+            }
+            expected_eax = unhandled_filter_;
+            unhandled_filter_ = arg;
+            fprintf(log_, "startup_exception_filter_previous_va=0x%08X\n", expected_eax);
+            fprintf(log_, "startup_exception_filter_registered_va=0x%08X\n", unhandled_filter_);
+            fprintf(log_, "startup_exception_filter_scope=registration_only\n");
+            fprintf(log_, "startup_exception_dispatch=not_implemented\n");
+        } else if (processor_feature) {
             fprintf(log_, "startup_processor_feature_requested=%u\n", arg);
             if (arg != 0) {
                 fprintf(log_, "startup_processor_feature_boundary=unimplemented_feature\n");

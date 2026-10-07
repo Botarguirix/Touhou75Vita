@@ -53,4 +53,5 @@ private:
     std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
+    uint32_t unhandled_filter_ = 0;
 };
