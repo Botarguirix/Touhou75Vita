@@ -22,7 +22,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration33-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration34-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -49,7 +49,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration33\n");
+        fprintf(report_, "watchdog_revision=iteration34\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -249,6 +249,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_text_patch=none\n");
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
+    bool game_entry_chain_verified = false;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
@@ -309,6 +310,22 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
             fprintf(log, "startup_stop_import=%s\n", tag.c_str());
             return false;
+        }
+        // The original game entry calls 0x4239F0; its timer import returns to
+        // 0x423A23. Validate both saved return addresses before recording entry.
+        if (imp.dll == "WINMM.dll" && imp.name == "timeBeginPeriod" && ret == 0x00423A23) {
+            const uint32_t timer_frame = c.reg(d2rt::R_EBP);
+            uint32_t game_frame = 0, timer_caller = 0, game_caller = 0;
+            const bool chain = stack_range(timer_frame, 8) &&
+                c.read(timer_frame, &game_frame, 4) &&
+                c.read(timer_frame + 4, &timer_caller, 4) &&
+                game_frame > timer_frame && stack_range(game_frame, 8) &&
+                c.read(game_frame + 4, &game_caller, 4) &&
+                timer_caller == 0x00602A7C && game_caller == 0x006424B0;
+            fprintf(log, "startup_game_entry_call_chain=%s\n", chain ? "verified" : "unverified");
+            fprintf(log, "startup_game_timer_caller_va=0x%08X\n", timer_caller);
+            fprintf(log, "startup_game_crt_caller_va=0x%08X\n", game_caller);
+            if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = services.call(imp);
         if (service == StartupServiceResult::Serviced) return true;
@@ -383,7 +400,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
-    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls());
+    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls());
     fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
     fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
     fprintf(log, "startup_heap_other_calls=%u\n", services.heap_other_calls());
@@ -393,6 +410,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_unavailable_export_calls=%u\n", services.unavailable_export_calls());
     fprintf(log, "startup_process_calls=%u\n", services.process_calls());
     fprintf(log, "startup_clock_calls=%u\n", services.clock_calls());
+    fprintf(log, "startup_multimedia_calls=%u\n", services.multimedia_calls());
+    fprintf(log, "startup_game_entry_verified=%s\n", game_entry_chain_verified ? "yes" : "no");
     fprintf(log, "startup_environment_calls=%u\n", services.environment_calls());
     fprintf(log, "startup_conversion_calls=%u\n", services.conversion_calls());
     fprintf(log, "startup_code_page_calls=%u\n", services.code_page_calls());

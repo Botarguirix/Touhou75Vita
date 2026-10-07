@@ -69,7 +69,10 @@ Hardware iteration 32 passed the observed clocks and reached the repeated
 GetModuleHandleA(NULL) query just before the call to 0x00602A60. Iteration 33
 corrects that query contract; reaching its return site alone is not proof that
 the game function executed or that the game booted.
-The next major milestone is completing CRT startup
-and reaching game initialization. Then record actual game asset requests and
+Hardware iteration 33 reached timeBeginPeriod(1) in the helper called from the
+game's main function, providing evidence of game initialization execution.
+Iteration 34 serves that timer request and checks its saved caller chain.
+The next major milestone is returning from game initialization's synchronization
+and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
 No reliable iteration count or completion percentage is available yet.

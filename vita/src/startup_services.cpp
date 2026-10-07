@@ -35,7 +35,12 @@ bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
 }
 
 StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
-    if (import.dll != "KERNEL32.dll") return StartupServiceResult::Unsupported;
+    const bool winmm = import.dll == "WINMM.dll";
+    const bool timer_begin = winmm && import.name == "timeBeginPeriod";
+    const bool timer_end = winmm && import.name == "timeEndPeriod";
+    const bool timer_time = winmm && import.name == "timeGetTime";
+    const bool multimedia_timer = timer_begin || timer_end || timer_time;
+    if (import.dll != "KERNEL32.dll" && !multimedia_timer) return StartupServiceResult::Unsupported;
     const bool version = import.name == "GetVersionExA";
     const bool module = import.name == "GetModuleHandleA";
     const bool proc_address = import.name == "GetProcAddress";
@@ -88,7 +93,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -97,8 +102,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc) ? 4u :
-        ((tls_alloc || get_error || thread_id || process_id || tick_count || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
+        ((version || module || tls_get || tls_free || set_error || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -106,7 +111,39 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (case_map) {
+    if (multimedia_timer) {
+        if (timer_time) {
+            expected_eax = uint32_t(sceKernelGetProcessTimeWide() / 1000);
+            fprintf(log_, "startup_timer_time_ms=%u\n", expected_eax);
+            fprintf(log_, "startup_timer_clock_source=vita_process_uptime\n");
+        } else {
+            fprintf(log_, "startup_timer_requested_period_ms=%u\n", arg);
+            // Bounded profile for the observed 1 ms request. The existing
+            // microsecond clock needs no resolution switch; this does not
+            // implement periodic callbacks or certify scheduling precision.
+            if (arg != 1) {
+                fprintf(log_, "startup_timer_boundary=unsupported_period\n");
+                return StartupServiceResult::Unsupported;
+            }
+            if (timer_begin) {
+                if (timer_period_requests_ == 0xFFFFFFFFu)
+                    return StartupServiceResult::ContractFailure;
+                ++timer_period_requests_;
+            } else {
+                if (!timer_period_requests_) {
+                    fprintf(log_, "startup_service_error=unmatched_timer_period_release\n");
+                    return StartupServiceResult::ContractFailure;
+                }
+                --timer_period_requests_;
+            }
+            fprintf(log_, "startup_timer_period_requests=%u\n", timer_period_requests_);
+            fprintf(log_, "startup_timer_profile=1ms_clock_no_periodic_callbacks\n");
+            expected_eax = 0; // TIMERR_NOERROR for the supported period.
+        }
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++multimedia_calls_;
+        fprintf(log_, "startup_serviced_import=WINMM.dll!%s\n", import.name.c_str());
+    } else if (case_map) {
         uint32_t args[6] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t locale = args[0], flags = args[1], source = args[2];

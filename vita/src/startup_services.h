@@ -24,6 +24,7 @@ public:
     unsigned unavailable_export_calls() const { return unavailable_export_calls_; }
     unsigned process_calls() const { return process_calls_; }
     unsigned clock_calls() const { return clock_calls_; }
+    unsigned multimedia_calls() const { return multimedia_calls_; }
     unsigned environment_calls() const { return environment_calls_; }
     unsigned conversion_calls() const { return conversion_calls_; }
     unsigned sync_calls() const { return sync_calls_; }
@@ -49,6 +50,7 @@ private:
     unsigned tls_calls_ = 0, unavailable_export_calls_ = 0;
     unsigned process_calls_ = 0;
     unsigned clock_calls_ = 0;
+    unsigned multimedia_calls_ = 0, timer_period_requests_ = 0;
     unsigned environment_calls_ = 0;
     unsigned conversion_calls_ = 0;
     unsigned sync_calls_ = 0;
