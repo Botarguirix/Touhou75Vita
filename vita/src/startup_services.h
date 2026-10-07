@@ -29,6 +29,7 @@ public:
     unsigned string_type_calls() const { return string_type_calls_; }
     unsigned case_map_calls() const { return case_map_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
+    static constexpr uint32_t processor_feature_trap = 0x00BFFFD0;
     bool heap_ready() const { return heap_ready_; }
     bool version_globals_match();
 private:

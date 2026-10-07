@@ -55,6 +55,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool startup_info = import.name == "GetStartupInfoA";
     const bool command_line = import.name == "GetCommandLineA";
     const bool module_filename = import.name == "GetModuleFileNameA";
+    const bool processor_feature = import.name == "IsProcessorFeaturePresent";
     const bool std_handle = import.name == "GetStdHandle";
     const bool file_type = import.name == "GetFileType";
     const bool handle_count = import.name == "SetHandleCount";
@@ -69,7 +70,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool code_page_info = import.name == "GetCPInfo";
     const bool string_type = import.name == "GetStringTypeW";
     const bool case_map = import.name == "LCMapStringW";
-    const bool process = startup_info || command_line || std_handle || file_type || handle_count || module_filename;
+    const bool process = startup_info || command_line || std_handle || file_type || handle_count || module_filename || processor_feature;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
@@ -87,7 +88,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : string_type ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
+        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -370,7 +371,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
             if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
             fprintf(log_, "startup_module_requested=%s\n", name);
-            if (std::string(name) != "kernel32.dll") return StartupServiceResult::Unsupported;
+            const std::string module_name(name);
+            if (module_name != "kernel32.dll" && module_name != "kernel32") return StartupServiceResult::Unsupported;
             const uint32_t handle = 0x00AB1000;
             cpu_.trap_epilogue(handle, 8, ret);
             expected_eax = handle;
@@ -428,6 +430,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             fprintf(log_, "startup_export_availability=not_available_xp_profile\n");
         } else if (symbol_name == "InitializeCriticalSectionAndSpinCount") {
             expected_eax = critical_init_trap;
+        } else if (symbol_name == "IsProcessorFeaturePresent") {
+            expected_eax = processor_feature_trap;
         } else return StartupServiceResult::Unsupported;
         cpu_.trap_epilogue(expected_eax, 12, ret);
         ++proc_address_calls_;
@@ -658,7 +662,17 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (process) {
-        if (startup_info) {
+        if (processor_feature) {
+            fprintf(log_, "startup_processor_feature_requested=%u\n", arg);
+            if (arg != 0) {
+                fprintf(log_, "startup_processor_feature_boundary=unimplemented_feature\n");
+                return StartupServiceResult::Unsupported;
+            }
+            // PF_FLOATING_POINT_PRECISION_ERRATA: no Pentium FDIV erratum is
+            // advertised by this translated CPU profile. This does not certify x87.
+            expected_eax = 0;
+            fprintf(log_, "startup_processor_feature_profile=no_pentium_precision_erratum\n");
+        } else if (startup_info) {
             // GUI process without inherited CRT handles or reserved startup data.
             const uint32_t info[17] = {68};
             uint32_t old[17] = {}, copy[17] = {};
