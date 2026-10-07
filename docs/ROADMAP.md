@@ -127,3 +127,10 @@ and continues only that loop under slice/progress/time bounds. CPU-limit
 screens identify the final EIP instead of an earlier import. Synthetic
 batch cases remain disabled; actual resource loading and Direct3D rendering
 are still needed before claiming original title-screen boot.
+
+Hardware iteration 47 advanced through the original cosine initializer and
+read th075.dat's header and 215-entry directory through the original EXE.
+The next slice expired at the CRT SEH setup helper after 62 HeapAlloc calls.
+Iteration 48 extends bounded continuation to verified executable sections,
+logging sampled CPU/stack state and import/allocation counts while retaining
+the 16-slice cap, elapsed-time bound and independent watchdog.

@@ -24,7 +24,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration47-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration48-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -55,6 +55,27 @@ bool file_u32(const std::vector<uint8_t>& file, uint64_t offset, uint32_t& out) 
     return true;
 }
 
+bool original_code_address(const std::vector<uint8_t>& exe, uint32_t nt,
+                           const d2rt::PeImage& image, uint32_t ip) {
+    uint32_t header = 0, optional = 0;
+    if (!file_u32(exe, uint64_t(nt) + 4, header) ||
+        !file_u32(exe, uint64_t(nt) + 20, optional)) return false;
+    const unsigned sections = header >> 16;
+    if (!sections || sections > 96 || ip < image.load_base() ||
+        uint64_t(ip) >= uint64_t(image.load_base()) + image.image_size()) return false;
+    const uint64_t table = uint64_t(nt) + 24 + (optional & 0xFFFF);
+    for (unsigned i = 0; i < sections; ++i) {
+        const uint64_t section = table + i * 40;
+        uint32_t size = 0, rva = 0, raw = 0, flags = 0;
+        if (!file_u32(exe, section + 8, size) || !file_u32(exe, section + 12, rva) ||
+            !file_u32(exe, section + 16, raw) || !file_u32(exe, section + 36, flags)) return false;
+        const uint64_t begin = uint64_t(image.load_base()) + rva;
+        const uint64_t end = begin + (size > raw ? size : raw);
+        if ((flags & 0x20000000) && ip >= begin && ip < end) return true;
+    }
+    return false;
+}
+
 // Owns a separate, unbuffered file. It never acquires runtime/CPU locks or
 // mutates guest state. A dynablock's internal loop can evade the block budget;
 // in that case this native thread ends the process instead of unsafe unwinding.
@@ -69,7 +90,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration47\n");
+        fprintf(report_, "watchdog_revision=iteration48\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -270,6 +291,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;
+    unsigned main_import_calls = 0;
     uint32_t worker_create_frame = 0;
     StartupWorker worker;
     bool priority_dispatch_requested = false;
@@ -291,6 +313,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             (dynamic ? dynamic_critical : image.imports()[(trap - kTrap) / 16]);
         if (dynamic) fprintf(log, "startup_dynamic_export_called=yes\n");
         const bool first = !import_hit;
+        ++main_import_calls;
         import_hit = true;
         const std::string tag = imp.dll + "!" +
             (imp.name.empty() ? ("#" + std::to_string(imp.ordinal)) : imp.name);
@@ -432,36 +455,65 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
     bool stopped = false, limit = false;
-    unsigned cosine_slices = 0;
+    unsigned cosine_slices = 0, resume_slices = 0;
     auto run_main = [&](uint32_t entry, uint64_t budget) {
         cpu.take_limit_hit(); cpu.set_run_limit(budget);
         stopped = cpu.run(entry, &fault);
         limit = cpu.take_limit_hit();
         uint32_t previous = 0;
         bool have_previous = false;
-        unsigned unchanged = 0;
+        unsigned unchanged = 0, repeated_state = 0;
+        uint32_t previous_state = 0;
+        bool have_state = false;
         while (stopped && limit && !service_failed) {
             uint32_t index = 0;
-            if (!cosine_progress(cpu, index)) break;
+            const bool cosine = cosine_progress(cpu, index);
             const uint64_t elapsed = sceKernelGetProcessTimeWide() - start;
-            uint32_t first = 0, last = 0;
-            const bool samples = index > 0 && cpu.read(0x006884C0, &first, 4) &&
-                cpu.read(0x006884C0 + (index - 1) * 4, &last, 4);
-            fprintf(log, "startup_cosine_progress=%u/3600 eip=0x%08X elapsed_us=%llu\n",
-                index, cpu.reg(d2rt::R_EIP), (unsigned long long)elapsed);
-            if (samples) fprintf(log, "startup_cosine_samples=first:0x%08X last_completed:0x%08X\n", first, last);
-            if (have_previous && index < previous) {
-                fprintf(log, "startup_cosine_resume_stop=index_regressed\n"); break;
+            const uint32_t ip = cpu.reg(d2rt::R_EIP), esp = cpu.reg(d2rt::R_ESP);
+            uint8_t stack[128] = {};
+            if (!original_code_address(exe, nt, image, ip) || !cpu.mapped(ip) ||
+                wx86_cur_tib() != kDiagnosticTeb || !stack_range(esp, sizeof(stack)) ||
+                !cpu.read(esp, stack, sizeof(stack))) {
+                fprintf(log, "startup_resume_stop=invalid_code_stack_or_tib\n"); break;
             }
-            unchanged = have_previous && index == previous ? unchanged + 1 : 0;
-            if (unchanged >= 2 || cosine_slices >= 16 || elapsed >= 45000000) {
-                fprintf(log, "startup_cosine_resume_stop=%s\n", unchanged >= 2 ?
-                    "no_index_progress" : cosine_slices >= 16 ? "slice_cap" : "time_cap"); break;
+            uint32_t hash = 2166136261u;
+            auto hash_word = [&](uint32_t word) { hash = (hash ^ word) * 16777619u; };
+            const char* registers[] = {"eax","ecx","edx","ebx","esp","ebp","esi","edi","eip","eflags"};
+            for (int r = d2rt::R_EAX; r <= d2rt::R_EFLAGS; ++r) {
+                const uint32_t value = cpu.reg(r);
+                hash_word(value);
+                fprintf(log, "startup_slice_%s=0x%08X\n", registers[r], value);
             }
-            previous = index; have_previous = true;
-            ++cosine_slices;
-            fprintf(log, "startup_cosine_resume_slice=%u budget=%llu\n",
-                cosine_slices, (unsigned long long)kRunBudget);
+            for (uint8_t byte : stack) hash = (hash ^ byte) * 16777619u;
+            hash_word(main_import_calls); hash_word(services.heap_alloc_calls());
+            repeated_state = have_state && hash == previous_state ? repeated_state + 1 : 0;
+            previous_state = hash; have_state = true;
+            uint32_t stack_top = 0; std::memcpy(&stack_top, stack, 4);
+            fprintf(log, "startup_slice_progress=state:0x%08X imports:%u allocations:%u stack_top:0x%08X elapsed_us:%llu\n",
+                hash, main_import_calls, services.heap_alloc_calls(), stack_top, (unsigned long long)elapsed);
+            if (cosine) {
+                uint32_t first = 0, last = 0;
+                const bool samples = index > 0 && cpu.read(0x006884C0, &first, 4) &&
+                    cpu.read(0x006884C0 + (index - 1) * 4, &last, 4);
+                fprintf(log, "startup_cosine_progress=%u/3600 eip=0x%08X elapsed_us=%llu\n",
+                    index, ip, (unsigned long long)elapsed);
+                if (samples) fprintf(log, "startup_cosine_samples=first:0x%08X last_completed:0x%08X\n", first, last);
+                if (have_previous && index < previous) {
+                    fprintf(log, "startup_resume_stop=cosine_index_regressed\n"); break;
+                }
+                unchanged = have_previous && index == previous ? unchanged + 1 : 0;
+                previous = index; have_previous = true;
+            } else {
+                have_previous = false; unchanged = 0;
+            }
+            if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= 16 || elapsed >= 45000000) {
+                fprintf(log, "startup_resume_stop=%s\n", unchanged >= 2 ? "cosine_no_index_progress" :
+                    repeated_state >= 3 ? "repeated_sampled_state" : resume_slices >= 16 ? "slice_cap" : "time_cap"); break;
+            }
+            ++resume_slices;
+            if (cosine) ++cosine_slices;
+            fprintf(log, "startup_resume_slice=%u scope=%s budget=%llu\n",
+                resume_slices, cosine ? "original_cosine" : "original_executable_section", (unsigned long long)kRunBudget);
             fflush(log);
             // run() recharges its block budget on the same emulator. All
             // registers, stack, flags and x87 state remain owned by it.
@@ -532,6 +584,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     }
     fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
     fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
+    fprintf(log, "startup_resume_slices=%u\nstartup_main_import_calls=%u\n", resume_slices, main_import_calls);
     if (limit || !stopped) fprintf(log, "startup_stop_import=%s EIP 0x%08X\n",
         limit ? "CPU BUDGET" : "CPU FAULT", cpu.reg(d2rt::R_EIP));
     watchdog.finish();
