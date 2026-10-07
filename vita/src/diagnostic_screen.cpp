@@ -8,6 +8,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include "pe_resources.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -74,7 +75,15 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 42 - BATCH CHECKS",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 43 - BATCH CHECKS",0xFFE9C975);
+    if(th075::icon_preview.size()==1024) {
+        for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
+            const uint32_t color=th075::icon_preview[y*32+x];
+            if(color>>24)for(unsigned dy=0;dy<2;++dy)for(unsigned dx=0;dx<2;++dx)
+                pixels[(48+y*2+dy)*960+850+x*2+dx]=color;
+        }
+        fprintf(log,"screen_original_exe_icon=decoded_resource_presented\n");
+    }
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
     text(pixels,40,137,result==0?"RESULT: STARTUP CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};

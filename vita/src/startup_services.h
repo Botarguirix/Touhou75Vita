@@ -5,6 +5,7 @@
 #include <array>
 #include <map>
 #include <vector>
+#include <string>
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure };
 struct StartupWorker;
@@ -76,4 +77,9 @@ private:
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
     uint32_t unhandled_filter_ = 0;
+    struct IconObject { uint32_t handle; std::vector<uint32_t> pixels; };
+    std::map<std::string,IconObject> icons_;
+    std::vector<uint32_t> arrow_cursor_;
+    struct WindowClass { uint16_t atom; std::array<uint32_t,12> fields; };
+    std::map<std::string,WindowClass> window_classes_;
 };

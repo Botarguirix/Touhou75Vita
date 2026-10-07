@@ -20,12 +20,12 @@ constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
 // Allow the original entrypoint to traverse the post-HeapCreate allocator
-// setup while retaining the 15-second watchdog as the hard safety bound.
+// setup while retaining the 30-second watchdog as the hard safety bound.
 constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration42-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration43-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -52,7 +52,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration42\n");
+        fprintf(report_, "watchdog_revision=iteration43\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -334,6 +334,14 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = services.call(imp);
+        if(service==StartupServiceResult::Unsupported && imp.dll=="USER32.dll" && imp.name=="CreateWindowExA") {
+            uint32_t args[12]{};
+            if(stack_range(esp,52) && c.read(esp+4,args,sizeof(args))) {
+                fprintf(log,"startup_window_requested_width=%u\nstartup_window_requested_height=%u\n",args[6],args[7]);
+                fprintf(log,"startup_window_requested_style=0x%08X\nstartup_window_requested_exstyle=0x%08X\n",args[3],args[0]);
+                fprintf(log,"startup_window_creation_boundary=synchronous_guest_messages_and_renderer_required\n");
+            }
+        }
         if (service == StartupServiceResult::Unsupported && imp.dll == "KERNEL32.dll" &&
             imp.name == "CreateThread" && ret == 0x00423A58) worker_create_frame = esp;
         if (service == StartupServiceResult::Serviced) {

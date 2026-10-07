@@ -108,3 +108,8 @@ original directory setup and seven window metric queries. Iteration 42 adds
 200 cases (300 total) while preserving this original EXE boundary. The next
 implementation priority is real PE icon/resource loading, followed by window
 registration/creation and the graphics backend for an original game frame.
+Hardware iteration 42 passed 300 cases and remained at LoadIconA. Iteration 43
+loads and decodes real PE icon resources and records the guest window class,
+retaining an explicit CreateWindowExA boundary until synchronous callbacks
+exist. Windows D3D8 trace and archive inventory now provide concrete texture,
+draw, render-target and shader requirements for the graphics implementation.

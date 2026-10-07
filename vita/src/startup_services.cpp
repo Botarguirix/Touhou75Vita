@@ -1,6 +1,7 @@
 #include "startup_services.h"
 #include "worker_probe.h"
 #include "cp932_data.h"
+#include "pe_resources.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread_ctx.h"
@@ -40,12 +41,17 @@ bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
 
 StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool metrics = import.dll == "USER32.dll" && import.name == "GetSystemMetrics";
+    const bool icon_load = import.dll == "USER32.dll" && import.name == "LoadIconA";
+    const bool cursor_load = import.dll == "USER32.dll" && import.name == "LoadCursorA";
+    const bool class_register = import.dll == "USER32.dll" && import.name == "RegisterClassExA";
+    const bool stock = import.dll == "GDI32.dll" && import.name == "GetStockObject";
+    const bool gui = icon_load || cursor_load || class_register || stock;
     const bool winmm = import.dll == "WINMM.dll";
     const bool timer_begin = winmm && import.name == "timeBeginPeriod";
     const bool timer_end = winmm && import.name == "timeEndPeriod";
     const bool timer_time = winmm && import.name == "timeGetTime";
     const bool multimedia_timer = timer_begin || timer_end || timer_time;
-    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics) return StartupServiceResult::Unsupported;
+    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics && !gui) return StartupServiceResult::Unsupported;
     const bool cwd_set = import.name == "SetCurrentDirectoryA";
     const bool cwd_get = import.name == "GetCurrentDirectoryA";
     const bool cwd = cwd_set || cwd_get;
@@ -110,7 +116,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics && !gui)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -120,15 +126,109 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc || event_create) ? 4u :
         ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
-        ((cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
+        ((class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (cwd) {
+    if(gui) {
+        auto guest_string=[&](uint32_t pointer,std::string& text) {
+            text.clear();if(!pointer)return false;
+            for(unsigned i=0;i<128;++i) {char ch=0;
+                if(uint64_t(pointer)+i>0xFFFFFFFFull || !cpu_.read(pointer+i,&ch,1))return false;
+                if(!ch)return !text.empty();
+                text.push_back(ch);
+            }
+            return false;
+        };
+        if(icon_load) {
+            uint32_t identifier=0;
+            if(!cpu_.read(esp+8,&identifier,4))return StartupServiceResult::ContractFailure;
+            if(arg!=image_.load_base())return StartupServiceResult::Unsupported;
+            std::string name;
+            if(identifier>0xFFFF && !guest_string(identifier,name))return StartupServiceResult::ContractFailure;
+            const std::string key=name.empty() ? "#"+std::to_string(identifier):name;
+            fprintf(log_,"startup_icon_requested=%s\n",key.c_str());
+            const auto existing=icons_.find(key);
+            if(existing!=icons_.end())expected_eax=existing->second.handle;
+            else {
+                th075::ResourceBlob group{},bitmap{};
+                const auto& bytes=image_.image();
+                if(!th075::resource(bytes,14,name,uint16_t(identifier),group)) {
+                    wx86_set_lasterr(cpu_,1814);
+                    fprintf(log_,"startup_icon_error=group_missing_or_invalid\n");
+                } else {
+                    const uint8_t* data=bytes.data()+group.rva;uint16_t reserved=0,type=0,count=0;
+                    if(group.size<6)return StartupServiceResult::ContractFailure;
+                    std::memcpy(&reserved,data,2);std::memcpy(&type,data+2,2);std::memcpy(&count,data+4,2);
+                    if(reserved || type!=1 || !count || count>64 || group.size!=6u+14u*count)
+                        return StartupServiceResult::ContractFailure;
+                    uint16_t id=0;uint32_t declared=0;
+                    for(unsigned i=0;i<count;++i) {
+                        const uint8_t* entry=data+6+14*i;uint16_t bpp=0;
+                        std::memcpy(&bpp,entry+6,2);
+                        if(entry[0]==32 && entry[1]==32 && bpp==8) {
+                            std::memcpy(&declared,entry+8,4);std::memcpy(&id,entry+12,2);break;
+                        }
+                    }
+                    if(!id || !th075::resource(bytes,3,"",id,bitmap) || bitmap.size!=declared)
+                        return StartupServiceResult::Unsupported;
+                    std::vector<uint32_t> pixels;
+                    if(!th075::decode_icon(bytes,bitmap,pixels))return StartupServiceResult::Unsupported;
+                    if(icons_.size()>=16)return StartupServiceResult::Unsupported;
+                    expected_eax=0x00AB5000+4*uint32_t(icons_.size());
+                    icons_.emplace(key,IconObject{expected_eax,pixels});
+                    th075::icon_preview=pixels;
+                    fprintf(log_,"startup_icon_resource_id=%u\nstartup_icon_language=%u\n",id,bitmap.language);
+                    fprintf(log_,"startup_icon_decoded_pixels=%u\nstartup_icon_resource=validated_and_decoded\n",unsigned(pixels.size()));
+                }
+            }
+            fprintf(log_,"startup_icon_handle=0x%08X\n",expected_eax);
+        } else if(cursor_load) {
+            uint32_t id=0;if(!cpu_.read(esp+8,&id,4))return StartupServiceResult::ContractFailure;
+            if(arg || id!=32512)return StartupServiceResult::Unsupported;
+            if(arrow_cursor_.empty()) {
+                arrow_cursor_.resize(1024,0);
+                for(unsigned y=0;y<20;++y)for(unsigned x=0;x<=y/2;++x)
+                    arrow_cursor_[y*32+x]=(x==0 || x==y/2 || y==19) ? 0xFF000000:0xFFFFFFFF;
+            }
+            expected_eax=0x00AB5800;
+            fprintf(log_,"startup_cursor_object=bounded_system_arrow_32x32_hotspot_0_0\n");
+        } else if(stock) {
+            if(arg!=0)return StartupServiceResult::Unsupported;
+            expected_eax=0x00AB6000;
+            fprintf(log_,"startup_stock_object=white_solid_brush\n");
+        } else {
+            std::array<uint32_t,12> fields{};std::string name;
+            if(!cpu_.read(arg,fields.data(),sizeof(fields)) || fields[0]!=48 ||
+               !guest_string(fields[10],name))return StartupServiceResult::ContractFailure;
+            uint8_t first=0;
+            const bool procedure=fields[2]>=image_.load_base() &&
+                uint64_t(fields[2])<uint64_t(image_.load_base())+image_.image_size() && cpu_.read(fields[2],&first,1);
+            auto valid_icon=[&](uint32_t handle) {
+                if(!handle)return true;
+                for(const auto& icon:icons_)if(icon.second.handle==handle)return true;
+                return false;
+            };
+            if(!procedure || fields[3] || fields[4] || fields[5]!=image_.load_base() ||
+               !valid_icon(fields[6]) || !valid_icon(fields[11]) ||
+               fields[7]!=0x00AB5800 || arrow_cursor_.empty() || fields[8]!=0x00AB6000 || fields[9])
+                return StartupServiceResult::Unsupported;
+            if(window_classes_.count(name))wx86_set_lasterr(cpu_,1410);
+            else {
+                if(window_classes_.size()>=16)return StartupServiceResult::Unsupported;
+                expected_eax=0xC001+uint32_t(window_classes_.size());
+                window_classes_.emplace(name,WindowClass{uint16_t(expected_eax),fields});
+                fprintf(log_,"startup_window_class_registered=yes\nstartup_window_class_atom=0x%04X\n",expected_eax);
+                fprintf(log_,"startup_window_procedure=0x%08X\nstartup_window_class_scope=guest_registry_window_creation_pending\n",fields[2]);
+            }
+        }
+        ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_serviced_import=%s!%s\n",import.dll.c_str(),import.name.c_str());
+    } else if (cwd) {
         // The only mounted guest directory is the application's data directory.
         // Never change the native process CWD or accept an unmounted guest path.
         constexpr char directory[] = "C:\\TH075";
@@ -184,6 +284,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         switch(arg) {
             case 0: expected_eax=640;break;
             case 1: expected_eax=480;break;
+            case 11: case 12: case 13: case 14: expected_eax=32;break;
             case 4: case 5: case 6: case 7: case 8: case 45: case 46: expected_eax=0;break;
             default:
                 fprintf(log_,"startup_metrics_boundary=unimplemented_index_%u\n",arg);
