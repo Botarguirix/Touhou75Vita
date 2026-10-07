@@ -1,15 +1,13 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 52, version 01.56
+## Current checkpoint — iteration 53, version 01.57
 
-Physical iteration 51 created the REF/software device, color/depth buffers
-and a 1024x1024 texture, then failed at a misdispatched SetTextureStageState
-after 5.77 seconds. Iteration 52 corrects that dispatch and another depth
-surface index; physical validation of the fix is pending. Texture uploads,
-Draw/Present and original visual boot are not hardware-confirmed. See
-[latest scope/evidence](STATUS_ITERATION52.md) and the
-[Spanish progress report](INFORME_ROADMAP_ITERACION51.md).
+Physical iteration 52 confirmed the corrected graphics-state dispatch and
+reached DirectInput8Create in 6.018 seconds after 30 Direct3D8 calls.
+Iteration 53 introduces native pad capture and a TH075 DirectInput8 keyboard
+adapter. Physical validation of 53 is pending. Texture uploads, Draw/Present,
+audio and the original menu remain pending. See [scope/evidence](STATUS_ITERATION53.md)
+and [reviewed reference patterns](REFERENCE_REPENTOGXM.md).
 Historical observations follow below.
-
 
 ## Phase 0 — reproducible diagnostic shell (complete)
 

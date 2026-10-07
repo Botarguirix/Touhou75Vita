@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 52 Graphics State")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 53 Native Input")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.56")
+set(VITA_VERSION "01.57")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)

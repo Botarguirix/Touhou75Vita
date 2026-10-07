@@ -2,12 +2,15 @@
 
 Fecha: 7 de octubre de 2026. Nueva entrega: iteración 51, versión 01.55.
 
-Actualización tras la prueba física 51: se crearon el dispositivo REF/software
-y la textura de 1024×1024, pero hubo un fallo de índices del puente en
-SetTextureStageState. La iteración 52/01.56 corrige ese despacho y el índice
-de profundidad. Sus resultados físicos siguen pendientes. Detalles y evidencia:
-[STATUS_ITERATION52.md](STATUS_ITERATION52.md). El resto del informe conserva
-la fotografía del proyecto al entregar la versión 51.
+Actualización tras la prueba física 52: se confirmó la corrección de
+SetTextureStageState; el EXE completó 30 llamadas gráficas y alcanzó
+DirectInput8Create en 6.018 segundos. La nueva entrega 53/01.57 incorpora
+captura nativa del mando y un adaptador de teclado DirectInput8 para TH075.
+Su ejecución física está pendiente. El primer frame del EXE todavía requiere
+uploads, Draw y Present. Detalles y roadmap inmediato:
+[STATUS_ITERATION53.md](STATUS_ITERATION53.md). Referencias evaluadas:
+[REFERENCE_REPENTOGXM.md](REFERENCE_REPENTOGXM.md). El resto conserva
+la fotografía histórica del proyecto al entregar la versión 51.
 
 ## Dónde estamos
 
