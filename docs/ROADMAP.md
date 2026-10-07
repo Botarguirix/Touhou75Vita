@@ -1,4 +1,12 @@
 # Touhou 7.5 Vita port roadmap
+## Current checkpoint — iteration 51, version 01.55
+
+Last physical confirmation: iteration 50 reached GetDeviceCaps in 5.5 seconds.
+Iteration 51 adds partial software device/resource storage and texture uploads;
+physical validation is pending. Draw/Present and original visual boot remain
+unimplemented. See [Spanish progress report](INFORME_ROADMAP_ITERACION51.md)
+and [scope](STATUS_ITERATION51.md). Historical observations follow below.
+
 
 ## Phase 0 — reproducible diagnostic shell (complete)
 
@@ -19,13 +27,13 @@ Hardware iteration 23 reached GetACP after HeapCreate, three HeapAlloc calls
 and critical-section acquisition. Entry and import interception work, but
 complete HeapFree/HeapSize behavior and instruction-level tracing remain work.
 
-## Phase 2 — Win32 startup surface (current)
+## Phase 2 — Win32 startup surface (partially implemented)
 
 - Implement the small KERNEL32/USER32 contracts observed by the Japanese executable.
 - Add file, timing, window, input and thread shims only when the log proves they are needed.
 - Keep each service independently testable on Vita.
 
-## Phase 3 — graphics and audio replacement
+## Phase 3 — graphics and audio replacement (current)
 
 - Replace Direct3D 8 with a Vita renderer while preserving the game's resource and draw semantics.
 - Replace DirectSound/MIDI paths with Vita audio services.

@@ -4,18 +4,20 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include "d3d8_storage.h"
 
-// Owned x86 COM root, not a graphics device. Slot order/signatures follow
-// IDirect3D8. Unsupported capabilities/device methods stop before mutation.
+// Owned x86 COM root and partial software device/resource bridge.
 class D3D8Bootstrap {
 public:
     static constexpr uint32_t trap_base=0x00BFE000, object=0x00AB9000, vtable=object+0x100;
     static constexpr unsigned slots=16;
-    D3D8Bootstrap(d2rt::Cpu& cpu, FILE* log):cpu_(cpu),log_(log) {}
+    D3D8Bootstrap(d2rt::Cpu& cpu, FILE* log):cpu_(cpu),log_(log),storage_(cpu,log,references_) {}
     unsigned serviced_calls() const { return serviced_calls_; }
     bool owns_trap(uint32_t trap) const {
-        return trap>=trap_base && trap<trap_base+slots*16 && (trap-trap_base)%16==0;
+        return storage_.owns(trap) || (trap>=trap_base && trap<trap_base+slots*16 && (trap-trap_base)%16==0);
     }
+    const char* interface_name(uint32_t trap) const {return storage_.owns(trap)?D3D8Storage::interface_name(trap):"IDirect3D8";}
+    const char* method_name(uint32_t trap) const {return storage_.owns(trap)?D3D8Storage::method(trap):name((trap-trap_base)/16);}
     static const char* name(unsigned slot) {
         static const char* names[]={"QueryInterface","AddRef","Release","RegisterSoftwareDevice",
             "GetAdapterCount","GetAdapterIdentifier","GetAdapterModeCount","EnumAdapterModes",
@@ -30,7 +32,7 @@ public:
         if(sdk!=220 || references_) return StartupServiceResult::Unsupported;
         std::array<uint32_t,slots> methods{};
         for(unsigned i=0;i<slots;++i)methods[i]=trap_base+i*16;
-        if(!cpu_.map(object,0x1000,nullptr,d2rt::P_RW) || !cpu_.write(object,&vtable,4) ||
+        if(!cpu_.map(object,0x10000,nullptr,d2rt::P_RW) || !cpu_.write(object,&vtable,4) ||
             !cpu_.write(vtable,methods.data(),sizeof(methods)))return StartupServiceResult::ContractFailure;
         uint32_t copy=0;
         if(!cpu_.read(object,&copy,4) || copy!=vtable)return StartupServiceResult::ContractFailure;
@@ -39,10 +41,15 @@ public:
             return StartupServiceResult::ContractFailure;
         references_=1;
         fprintf(log_,"startup_d3d8_root=owned sdk=%u object=0x%08X vtable=0x%08X slots=%u\n",sdk,object,vtable,slots);
-        fprintf(log_,"startup_d3d8_vtable_readback=passed\nstartup_d3d8_renderer=not_implemented\n");
+        fprintf(log_,"startup_d3d8_vtable_readback=passed\nstartup_d3d8_renderer=software_storage_partial\n");
         return finish(object,8,ret,esp);
     }
     StartupServiceResult call(uint32_t trap) {
+        if(storage_.owns(trap)) {
+            const auto result=storage_.call(trap);
+            if(result==StartupServiceResult::Serviced)++serviced_calls_;
+            return result;
+        }
         const unsigned slot=(trap-trap_base)/16;
         const unsigned args[]={3,1,1,2,1,4,2,4,3,6,7,6,6,4,2,7};
         const uint32_t esp=cpu_.reg(d2rt::R_ESP), cleanup=(args[slot]+1)*4;
@@ -72,18 +79,34 @@ public:
         } else if(slot==2) {
             value=--references_;
             if(!references_) {uint32_t zero=0;if(!cpu_.write(object,&zero,4))return StartupServiceResult::ContractFailure;}
-        } else {
-            if(slot==13) {
-                // D3DCAPS8 is 212 bytes. Capture the original frame, but do
-                // not advertise HAL, texture/shader limits or return D3D_OK
-                // until a renderer implements those capabilities.
-                std::array<uint8_t,212> caps{};
-                const bool readable=words[4] && cpu_.read(words[4],caps.data(),caps.size());
-                fprintf(log_,"startup_d3d8_caps_request=adapter:%u device_type:%u output:0x%08X readable:%s\n",
-                    words[2],words[3],words[4],readable ? "yes":"no");
-                if(!readable)return StartupServiceResult::ContractFailure;
-                fprintf(log_,"startup_d3d8_caps_policy=stop_before_advertising_unimplemented_renderer\n");
+        } else if(slot==4) {
+            value=1;
+        } else if(slot==6) {
+            value=words[2]?0:1;
+        } else if(slot==7 || slot==8) {
+            if(words[2] || (slot==7 && words[3]))value=0x8876086C;
+            else {
+                const auto mode=D3D8Storage::mode();
+                if(!words[slot==7?4:3] || !cpu_.write(words[slot==7?4:3],mode.data(),sizeof(mode)))return StartupServiceResult::ContractFailure;
+                fprintf(log_,"startup_d3d8_display_mode=logical_640x480_60_X8R8G8B8\n");
             }
+        } else if(slot==10) {
+            // Storage formats only; draw and shader capabilities remain zero.
+            const bool valid=words[2]==0 && (words[3]==1 || words[3]==2) && words[4]==22 &&
+                ((words[6]==3 && ((words[5]==0 && (words[7]==21 || words[7]==25)) ||
+                   (words[5]==1 && words[7]==21))) || (words[6]==1 && words[5]==2 && words[7]==80));
+            value=valid?0:0x8876086A;
+        } else if(slot==13) {
+            if(words[2] || (words[3]!=1 && words[3]!=2))value=0x8876086C;
+            else {
+                const auto caps=D3D8Storage::caps(words[3]);
+                if(!words[4] || !cpu_.write(words[4],caps.data(),sizeof(caps)))return StartupServiceResult::ContractFailure;
+                fprintf(log_,"startup_d3d8_caps=resource_limits_1024 raster_caps:0 shader_versions:0 bytes:212\n");
+            }
+        } else if(slot==15) {
+            const auto result=storage_.create(words,value);
+            if(result!=StartupServiceResult::Serviced)return result;
+        } else {
             fprintf(log_,"startup_d3d8_method_executed=no\n");
             return StartupServiceResult::Unsupported;
         }
@@ -105,4 +128,5 @@ private:
         return valid ? StartupServiceResult::Serviced:StartupServiceResult::ContractFailure;
     }
     d2rt::Cpu& cpu_; FILE* log_; uint32_t references_=0; unsigned serviced_calls_=0;
+    D3D8Storage storage_;
 };

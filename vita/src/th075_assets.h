@@ -49,7 +49,10 @@ inline bool load_title_asset(FILE* log) {
         if(!read(pair,8)) {title_preview.clear();return false;}
         const uint32_t run=u32(pair);
         if(!run || run>title_preview.size()-pixel) {title_preview.clear();return false;}
-        const uint32_t color=(header[13]==32 ? uint32_t(pair[7])<<24:0xFF000000u)|
+        // Fresh original upload confirms RGB black is transparent in 24-bit frames.
+        const uint32_t alpha=header[13]==32 ? uint32_t(pair[7])<<24:
+            ((pair[4]|pair[5]|pair[6])?0xFF000000u:0u);
+        const uint32_t color=alpha|
             uint32_t(pair[4])<<16|uint32_t(pair[5])<<8|pair[6];
         for(uint32_t n=0;n<run;++n)title_preview[pixel++]=color;
     }
@@ -59,6 +62,7 @@ inline bool load_title_asset(FILE* log) {
     fprintf(log,"dat_title_compressed_bytes=%u\ndat_title_pixels=%u\n",compressed,pixel);
     fprintf(log,"dat_title_result=decoded_original_archive_frame\n");
     fprintf(log,"dat_title_scope=asset_preview_not_exe_renderer\n");
+    fprintf(log,"dat_title_alpha_policy=%s\n",header[13]==24?"verified_black_color_key":"stored_alpha");
     return true;
 }
 }
