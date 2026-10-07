@@ -61,6 +61,10 @@ an independent missing subsystem.
 Hardware iteration 30 R2 registered the filter and reached HeapReAlloc.
 Iteration 31 tracks allocations, corrects HeapSize/HeapFree and preserves
 contents on resizing. Free-space recycling remains needed for sustained play.
+Hardware iteration 31 returned HeapSize=128 and reached GetSystemTimeAsFileTime
+without a limit hit. Its changed path did not exercise HeapReAlloc.
+Iteration 32 adds UTC time, guest process identity and monotonic clocks for
+the CRT initialization routine, with output readback and explicit clock sources.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

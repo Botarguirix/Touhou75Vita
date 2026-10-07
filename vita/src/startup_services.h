@@ -23,6 +23,7 @@ public:
     unsigned tls_calls() const { return tls_calls_; }
     unsigned unavailable_export_calls() const { return unavailable_export_calls_; }
     unsigned process_calls() const { return process_calls_; }
+    unsigned clock_calls() const { return clock_calls_; }
     unsigned environment_calls() const { return environment_calls_; }
     unsigned conversion_calls() const { return conversion_calls_; }
     unsigned sync_calls() const { return sync_calls_; }
@@ -47,6 +48,7 @@ private:
     std::array<bool,64> tls_allocated_{};
     unsigned tls_calls_ = 0, unavailable_export_calls_ = 0;
     unsigned process_calls_ = 0;
+    unsigned clock_calls_ = 0;
     unsigned environment_calls_ = 0;
     unsigned conversion_calls_ = 0;
     unsigned sync_calls_ = 0;

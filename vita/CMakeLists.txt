@@ -16,9 +16,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 31 Heap Resize")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 32 Clock Startup")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.35")
+set(VITA_VERSION "01.36")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
@@ -66,6 +66,7 @@ target_link_libraries(${PROJECT_NAME}
   SceSysmem_stub
   SceDisplay_stub
   SceCtrl_stub
+  SceRtc_stub
 )
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})

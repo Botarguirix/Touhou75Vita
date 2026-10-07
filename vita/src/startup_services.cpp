@@ -3,6 +3,8 @@
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread_ctx.h"
+#include <psp2/rtc.h>
+#include <psp2/kernel/processmgr.h>
 #include <array>
 #include <vector>
 #include <string>
@@ -52,6 +54,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool get_error = import.name == "GetLastError";
     const bool set_error = import.name == "SetLastError";
     const bool thread_id = import.name == "GetCurrentThreadId";
+    const bool process_id = import.name == "GetCurrentProcessId";
+    const bool file_time = import.name == "GetSystemTimeAsFileTime";
+    const bool tick_count = import.name == "GetTickCount";
+    const bool performance_counter = import.name == "QueryPerformanceCounter";
+    const bool performance_frequency = import.name == "QueryPerformanceFrequency";
+    const bool clock = file_time || tick_count || performance_counter || performance_frequency;
     const bool startup_info = import.name == "GetStartupInfoA";
     const bool command_line = import.name == "GetCommandLineA";
     const bool module_filename = import.name == "GetModuleFileNameA";
@@ -78,7 +86,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_size = import.name == "HeapSize";
     const bool heap_realloc = import.name == "HeapReAlloc";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
-        !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
+        !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
         !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc)
         return StartupServiceResult::Unsupported;
@@ -89,8 +97,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc) ? 4u :
-        ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((tls_alloc || get_error || thread_id || process_id || tick_count || command_line || environment_get || code_page_query) ? 0u :
+        ((version || module || tls_get || tls_free || set_error || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -551,11 +559,59 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         ++tls_calls_;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
-    } else if (get_error || set_error || thread_id) {
+    } else if (clock) {
+        uint64_t value = 0;
+        if (file_time) {
+            SceRtcTick tick{};
+            SceDateTime date{};
+            SceUInt64 filetime = 0;
+            const int tick_rc = sceRtcGetCurrentTick(&tick);
+            const int date_rc = tick_rc < 0 ? tick_rc : sceRtcSetTick(&date, &tick);
+            const int file_rc = date_rc < 0 ? date_rc : sceRtcGetWin32FileTime(&date, &filetime);
+            fprintf(log_, "startup_clock_rtc_rc=0x%08X\n", unsigned(file_rc));
+            if (file_rc < 0) {
+                fprintf(log_, "startup_service_error=rtc_filetime_unavailable\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            value = filetime;
+            // VOID API: EAX is unspecified; do not advertise a success BOOL.
+            fprintf(log_, "startup_clock_source=vita_rtc_utc_win32_filetime\n");
+        } else {
+            // A virtual uptime starting at native process creation. The same
+            // monotonic microsecond clock feeds QPC and its 1 MHz frequency.
+            value = performance_frequency ? 1000000ull : sceKernelGetProcessTimeWide();
+            expected_eax = tick_count ? uint32_t(value / 1000) : 1;
+            fprintf(log_, "startup_clock_source=%s\n", performance_frequency ?
+                "fixed_1000000_hz" : "vita_process_uptime_us");
+        }
+        if (!tick_count) {
+            uint8_t bytes[8] = {}, readback[8] = {};
+            put32(bytes, uint32_t(value));
+            put32(bytes + 4, uint32_t(value >> 32));
+            if (!arg || uint64_t(arg) + 8 > 0x100000000ull ||
+                !cpu_.read(arg, readback, 8) || !cpu_.write(arg, bytes, 8) ||
+                !cpu_.read(arg, readback, 8) ||
+                !std::equal(std::begin(bytes), std::end(bytes), std::begin(readback))) {
+                fprintf(log_, "startup_service_error=invalid_clock_output_buffer\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            fprintf(log_, "startup_clock_output_readback=passed\n");
+        }
+        fprintf(log_, "startup_clock_value=%llu\n", static_cast<unsigned long long>(value));
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++clock_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (get_error || set_error || thread_id || process_id) {
         if (get_error) expected_eax = wx86_get_lasterr(cpu_);
         if (set_error) wx86_set_lasterr(cpu_, arg);
         if (thread_id && (!wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x24, &expected_eax, 4)))
             return StartupServiceResult::ContractFailure;
+        if (process_id) {
+            if (!wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x20, &expected_eax, 4) || !expected_eax)
+                return StartupServiceResult::ContractFailure;
+            fprintf(log_, "startup_guest_process_id=%u\n", expected_eax);
+            ++process_calls_;
+        }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (wide_to_bytes) {
