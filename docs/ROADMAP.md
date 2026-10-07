@@ -72,6 +72,9 @@ the game function executed or that the game booted.
 Hardware iteration 33 reached timeBeginPeriod(1) in the helper called from the
 game's main function, providing evidence of game initialization execution.
 Iteration 34 serves that timer request and checks its saved caller chain.
+Hardware iteration 34 verified the saved game-entry caller chain, returned the
+timer request and reached CreateEventA. Iteration 35 tracks unnamed events;
+blocking waits and actual guest workers remain scheduler work.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

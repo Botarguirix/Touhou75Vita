@@ -90,10 +90,16 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
     const bool heap_realloc = import.name == "HeapReAlloc";
+    const bool event_create = import.name == "CreateEventA";
+    const bool event_set = import.name == "SetEvent";
+    const bool event_reset = import.name == "ResetEvent";
+    const bool event_close = import.name == "CloseHandle";
+    const bool event_wait = import.name == "WaitForSingleObject";
+    const bool event = event_create || event_set || event_reset || event_close || event_wait;
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -101,17 +107,80 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc) ? 4u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc || event_create) ? 4u :
         ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
-        ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
+        ((version || module || tls_get || tls_free || set_error || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((proc_address || critical_init || tls_set || code_page_info || event_wait) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (multimedia_timer) {
+    if (event) {
+        if (event_create) {
+            uint32_t args[4] = {};
+            if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
+            fprintf(log_, "startup_event_security_va=0x%08X\n", args[0]);
+            fprintf(log_, "startup_event_manual_reset=%s\n", args[1] ? "yes" : "no");
+            fprintf(log_, "startup_event_initial_signaled=%s\n", args[2] ? "yes" : "no");
+            fprintf(log_, "startup_event_name_va=0x%08X\n", args[3]);
+            if (args[0] || args[3]) {
+                fprintf(log_, "startup_event_boundary=security_or_named_event\n");
+                return StartupServiceResult::Unsupported;
+            }
+            if (events_.size() >= 64 || next_event_handle_ >= 0x00AB3000) {
+                wx86_set_lasterr(cpu_, 8);
+            } else {
+                expected_eax = next_event_handle_;
+                next_event_handle_ += 4; // Never recycle stale handles in this run.
+                events_.emplace(expected_eax, EventState{args[1] != 0, args[2] != 0});
+                fprintf(log_, "startup_event_handle=0x%08X\n", expected_eax);
+                fprintf(log_, "startup_event_handle_kind=tracked_unnamed_event\n");
+            }
+        } else {
+            const auto found = events_.find(arg);
+            uint32_t timeout = 0;
+            if (event_wait && !cpu_.read(esp + 8, &timeout, 4)) return StartupServiceResult::ContractFailure;
+            fprintf(log_, "startup_event_handle=0x%08X\n", arg);
+            if (found == events_.end()) {
+                // Handles from other subsystems need their own wait/close dispatch.
+                if (arg < 0x00AB2000 || arg >= next_event_handle_ || (arg & 3)) {
+                    fprintf(log_, "startup_event_boundary=foreign_handle_type\n");
+                    return StartupServiceResult::Unsupported;
+                }
+                wx86_set_lasterr(cpu_, 6);
+                expected_eax = event_wait ? 0xFFFFFFFFu : 0;
+                fprintf(log_, "startup_event_error=closed_handle\n");
+            } else if (event_wait) {
+                fprintf(log_, "startup_event_wait_timeout_ms=%u\n", timeout);
+                if (found->second.signaled) {
+                    expected_eax = 0; // WAIT_OBJECT_0
+                    if (!found->second.manual_reset) found->second.signaled = false;
+                } else if (!timeout) {
+                    expected_eax = 0x102; // Immediate WAIT_TIMEOUT.
+                } else {
+                    fprintf(log_, "startup_event_boundary=blocking_wait_requires_guest_scheduler\n");
+                    return StartupServiceResult::Unsupported;
+                }
+                fprintf(log_, "startup_event_wait_result=0x%08X\n", expected_eax);
+            } else if (event_close) {
+                events_.erase(found);
+                expected_eax = 1;
+                fprintf(log_, "startup_event_closed=yes\n");
+            } else {
+                found->second.signaled = event_set;
+                expected_eax = 1;
+            }
+            const auto current = events_.find(arg);
+            if (current != events_.end())
+                fprintf(log_, "startup_event_signaled=%s\n", current->second.signaled ? "yes" : "no");
+        }
+        fprintf(log_, "startup_event_live_count=%u\n", unsigned(events_.size()));
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++event_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (multimedia_timer) {
         if (timer_time) {
             expected_eax = uint32_t(sceKernelGetProcessTimeWide() / 1000);
             fprintf(log_, "startup_timer_time_ms=%u\n", expected_eax);
