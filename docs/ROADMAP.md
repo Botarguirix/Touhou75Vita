@@ -58,6 +58,9 @@ query. Iteration 29 resolves that alias and the CRT's processor erratum query.
 Hardware iteration 29 passed both and reached SetUnhandledExceptionFilter.
 Iteration 30 implements filter registration state; exception dispatch remains
 an independent missing subsystem.
+Hardware iteration 30 R2 registered the filter and reached HeapReAlloc.
+Iteration 31 tracks allocations, corrects HeapSize/HeapFree and preserves
+contents on resizing. Free-space recycling remains needed for sustained play.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

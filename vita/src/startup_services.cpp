@@ -76,10 +76,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
     const bool heap_size = import.name == "HeapSize";
+    const bool heap_realloc = import.name == "HeapReAlloc";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -87,7 +88,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : string_type ? 4u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc) ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
@@ -784,42 +785,88 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_heap_created_handle=0x00AB0000\n");
         fprintf(log_, "startup_heap_initial_bytes=%u\n", initial);
         fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapCreate\n");
-    } else if (heap_alloc) {
-        uint32_t flags = 0, size = 0;
-        if (!heap_ready_ || !in_stack(esp, 16) || !cpu_.read(esp + 4, &arg, 4) ||
-            !cpu_.read(esp + 8, &flags, 4) || !cpu_.read(esp + 12, &size, 4) ||
-            arg != 0x00AB0000 || size > 0x007FF000) {
-            fprintf(log_, "startup_service_error=unsupported_heap_alloc_call\n");
+    } else if (heap_alloc || heap_free || heap_size || heap_realloc) {
+        uint32_t flags = 0, pointer_or_size = 0, new_size = 0;
+        if (!heap_ready_ || arg != 0x00AB0000 || !cpu_.read(esp + 8, &flags, 4) ||
+            !cpu_.read(esp + 12, &pointer_or_size, 4) ||
+            (heap_realloc && !cpu_.read(esp + 16, &new_size, 4)))
             return StartupServiceResult::ContractFailure;
+        const uint32_t allowed_flags = heap_realloc ? 0x19u : heap_alloc ? 9u : 1u;
+        if (flags & ~allowed_flags) {
+            fprintf(log_, "startup_heap_boundary=unsupported_flags\n");
+            return StartupServiceResult::Unsupported;
         }
-        uint32_t bytes = (size + 15u) & ~15u;
-        if (!bytes || heap_next_ + bytes > 0x01400000) {
-            cpu_.trap_epilogue(0, 16, ret);
-            expected_eax = 0;
-        } else {
-            const uint32_t result = heap_next_;
-            heap_next_ += bytes;
-            if (flags & 8u) {
-                std::vector<uint8_t> zero(bytes, 0);
-                cpu_.write(result, zero.data(), bytes);
+        fprintf(log_, "startup_heap_flags=0x%08X\n", flags);
+        if (heap_alloc) {
+            const uint32_t size = pointer_or_size;
+            const uint64_t capacity64 = std::max<uint64_t>(16, (uint64_t(size) + 15) & ~15ull);
+            if (uint64_t(heap_next_) + capacity64 <= 0x01400000ull) {
+                const uint32_t capacity = uint32_t(capacity64), address = heap_next_;
+                if (flags & 8u) {
+                    std::vector<uint8_t> zero(capacity), readback(capacity);
+                    if (!cpu_.write(address, zero.data(), capacity) ||
+                        !cpu_.read(address, readback.data(), capacity) || readback != zero)
+                        return StartupServiceResult::ContractFailure;
+                }
+                heap_blocks_.emplace(address, HeapBlock{size, capacity});
+                heap_next_ += capacity;
+                expected_eax = address;
             }
             ++heap_alloc_calls_;
-            cpu_.trap_epilogue(result, 16, ret);
-            expected_eax = result;
-            fprintf(log_, "startup_heap_alloc_va=0x%08X\n", result);
+            fprintf(log_, "startup_heap_alloc_va=0x%08X\n", expected_eax);
+            fprintf(log_, "startup_heap_alloc_size=%u\n", size);
+        } else {
+            const auto block = heap_blocks_.find(pointer_or_size);
+            if (block == heap_blocks_.end()) {
+                fprintf(log_, "startup_heap_invalid_block_va=0x%08X\n", pointer_or_size);
+                // An invalid/double-freed guest pointer is a runtime contract error.
+                return StartupServiceResult::ContractFailure;
+            }
+            const HeapBlock old = block->second;
+            fprintf(log_, "startup_heap_block_va=0x%08X\n", pointer_or_size);
+            fprintf(log_, "startup_heap_block_size=%u\n", old.size);
+            if (heap_size) expected_eax = old.size;
+            else if (heap_free) {
+                heap_blocks_.erase(block);
+                expected_eax = 1;
+            } else {
+                const uint64_t capacity64 = std::max<uint64_t>(16, (uint64_t(new_size) + 15) & ~15ull);
+                const bool in_place = new_size <= old.capacity;
+                const bool can_move = !(flags & 0x10u) && uint64_t(heap_next_) + capacity64 <= 0x01400000ull;
+                if (in_place || can_move) {
+                    const uint32_t address = in_place ? pointer_or_size : heap_next_;
+                    const uint32_t capacity = in_place ? old.capacity : uint32_t(capacity64);
+                    const uint32_t preserved_size = std::min(old.size, new_size);
+                    std::vector<uint8_t> preserved_bytes(preserved_size), readback(preserved_size);
+                    if (preserved_size && (!cpu_.read(pointer_or_size, preserved_bytes.data(), preserved_size) ||
+                        (!in_place && !cpu_.write(address, preserved_bytes.data(), preserved_size))))
+                        return StartupServiceResult::ContractFailure;
+                    if ((flags & 8u) && new_size > old.size) {
+                        std::vector<uint8_t> zero(new_size - old.size), check(zero.size());
+                        if (!cpu_.write(address + old.size, zero.data(), uint32_t(zero.size())) ||
+                            !cpu_.read(address + old.size, check.data(), uint32_t(check.size())) || check != zero)
+                            return StartupServiceResult::ContractFailure;
+                    }
+                    if (preserved_size && (!cpu_.read(address, readback.data(), preserved_size) || readback != preserved_bytes))
+                        return StartupServiceResult::ContractFailure;
+                    if (in_place) block->second.size = new_size;
+                    else {
+                        heap_blocks_.emplace(address, HeapBlock{new_size, capacity});
+                        heap_blocks_.erase(block);
+                        heap_next_ += capacity;
+                    }
+                    expected_eax = address;
+                    fprintf(log_, "startup_heap_realloc_preserved_readback=passed\n");
+                    fprintf(log_, "startup_heap_realloc_mode=%s\n", in_place ? "in_place" : "moved");
+                } else fprintf(log_, "startup_heap_realloc_mode=failed_original_retained\n");
+                fprintf(log_, "startup_heap_realloc_new_size=%u\n", new_size);
+                fprintf(log_, "startup_heap_realloc_result_va=0x%08X\n", expected_eax);
+            }
+            ++heap_other_calls_;
         }
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapAlloc\n");
-    } else if (heap_free) {
-        if (!heap_ready_ || import.iat_va != 0x00657098 || !in_stack(esp, 16))
-            return StartupServiceResult::ContractFailure;
-        cpu_.trap_epilogue(1, 16, ret);
-        expected_eax = 1;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapFree\n");
-    } else if (heap_size) {
-        if (!heap_ready_ || !in_stack(esp, 16)) return StartupServiceResult::ContractFailure;
-        cpu_.trap_epilogue(0, 16, ret);
-        expected_eax = 0;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapSize\n");
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        fprintf(log_, "startup_heap_live_blocks=%u\n", unsigned(heap_blocks_.size()));
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     }
     // Check the bridge ABI on each returned API, before another guest block.
     fprintf(log_, "startup_service_stack_bytes=%u\n", cleanup);

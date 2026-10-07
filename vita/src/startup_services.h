@@ -17,6 +17,7 @@ public:
     unsigned module_calls() const { return module_calls_; }
     unsigned heap_create_calls() const { return heap_create_calls_; }
     unsigned heap_alloc_calls() const { return heap_alloc_calls_; }
+    unsigned heap_other_calls() const { return heap_other_calls_; }
     unsigned proc_address_calls() const { return proc_address_calls_; }
     unsigned critical_init_calls() const { return critical_init_calls_; }
     unsigned tls_calls() const { return tls_calls_; }
@@ -38,6 +39,9 @@ private:
     FILE* log_;
     unsigned version_calls_ = 0, module_calls_ = 0;
     unsigned heap_create_calls_ = 0, heap_alloc_calls_ = 0;
+    unsigned heap_other_calls_ = 0;
+    struct HeapBlock { uint32_t size, capacity; };
+    std::map<uint32_t, HeapBlock> heap_blocks_;
     unsigned proc_address_calls_ = 0, critical_init_calls_ = 0;
     std::set<uint32_t> critical_sections_;
     std::array<bool,64> tls_allocated_{};
