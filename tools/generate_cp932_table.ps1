@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
 public static class Cp932Types {
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     public static extern bool GetStringTypeW(uint kind, string text, int count, [Out] ushort[] types);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int LCMapStringW(uint locale, uint flags, string text, int count, [Out] char[] output, int capacity);
 }
 '@
 $single = [Collections.Generic.List[UInt16]]::new()
@@ -50,9 +52,23 @@ function Append-Array($name, $values) {
 }
 Append-Array 'kCp932Single' $single
 Append-Array 'kCp932Pairs' $pairs
-[void]$out.AppendLine('struct Cp932Type { uint16_t unit, flags; };')
+[void]$out.AppendLine('struct Cp932Type { uint16_t unit, flags, lower, upper, encoded; };')
 [void]$out.AppendLine('inline constexpr Cp932Type kCp932Types[] = {')
-for ($i=0; $i -lt $chars.Length; $i++) { [void]$out.AppendLine(('    {{0x{0:X4}, 0x{1:X4}}},' -f [UInt16]$chars[$i], $types[$i])) }
+for ($i=0; $i -lt $chars.Length; $i++) {
+    $lower = [char[]]::new(3); $upper = [char[]]::new(3)
+    $text = [string]$chars[$i]
+    $lowerCount = [Cp932Types]::LCMapStringW(0x411, 0x100, $text, 1, $lower, 3)
+    $upperCount = [Cp932Types]::LCMapStringW(0x411, 0x200, $text, 1, $upper, 3)
+    $lo = if ($lowerCount -eq 1) { [UInt16]$lower[0] } else { [UInt16]0xFFFF }
+    $up = if ($upperCount -eq 1) { [UInt16]$upper[0] } else { [UInt16]0xFFFF }
+    $encoded = [UInt16]0xFFFF
+    try {
+        $bytes = $codec.GetBytes($text)
+        if ($bytes.Length -eq 1) { $encoded = [UInt16]$bytes[0] }
+        elseif ($bytes.Length -eq 2) { $encoded = [UInt16](([int]$bytes[0] -shl 8) -bor $bytes[1]) }
+    } catch [Text.EncoderFallbackException] { }
+    [void]$out.AppendLine(('    {{0x{0:X4}, 0x{1:X4}, 0x{2:X4}, 0x{3:X4}, 0x{4:X4}}},' -f [UInt16]$chars[$i], $types[$i], $lo, $up, $encoded))
+}
 [void]$out.AppendLine('};')
 $target = Join-Path $PSScriptRoot '../vita/src/cp932_data.h'
 [IO.File]::WriteAllText($target, $out.ToString().Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))

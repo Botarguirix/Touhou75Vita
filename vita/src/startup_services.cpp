@@ -18,11 +18,15 @@ bool in_stack(uint32_t p, uint32_t size) {
 void put32(uint8_t* out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = uint8_t(value >> (8 * i));
 }
-bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
+const Cp932Type* cp932_entry(uint16_t unit) {
     const auto* end = std::end(kCp932Types);
     const auto* entry = std::lower_bound(std::begin(kCp932Types), end, unit,
         [](const Cp932Type& item, uint16_t value) { return item.unit < value; });
-    if (entry == end || entry->unit != unit) return false;
+    return entry == end || entry->unit != unit ? nullptr : entry;
+}
+bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
+    const auto* entry = cp932_entry(unit);
+    if (!entry) return false;
     flags = entry->flags;
     return true;
 }
@@ -63,6 +67,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool code_page_query = import.name == "GetACP" || import.name == "GetOEMCP";
     const bool code_page_info = import.name == "GetCPInfo";
     const bool string_type = import.name == "GetStringTypeW";
+    const bool case_map = import.name == "LCMapStringW";
     const bool process = startup_info || command_line || std_handle || file_type || handle_count;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
@@ -70,7 +75,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool heap_size = import.name == "HeapSize";
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process && !environment && !wide_to_bytes &&
-        !code_page_query && !code_page_info && !string_type && !bytes_to_wide &&
+        !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
         !heap_create && !heap_alloc && !heap_free && !heap_size)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
@@ -79,7 +84,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u : bytes_to_wide ? 6u : string_type ? 4u :
+    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : string_type ? 4u :
         ((tls_alloc || get_error || thread_id || command_line || environment_get || code_page_query) ? 0u :
         ((version || module || tls_get || tls_free || set_error || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op) ? 1u :
         ((proc_address || critical_init || tls_set || code_page_info) ? 2u : 3u)));
@@ -89,7 +94,70 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (bytes_to_wide) {
+    if (case_map) {
+        uint32_t args[6] = {};
+        if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
+        const uint32_t locale = args[0], flags = args[1], source = args[2];
+        const uint32_t count = args[3], dest = args[4], capacity = args[5];
+        fprintf(log_, "startup_case_locale=0x%08X\n", locale);
+        fprintf(log_, "startup_case_flags=0x%08X\n", flags);
+        fprintf(log_, "startup_case_input_units=%u\n", count);
+        // Explicit Japanese profile, including default locale aliases and CRT probe 0.
+        if (locale != 0 && locale != 0x411 && locale != 0x400 && locale != 0x800) {
+            fprintf(log_, "startup_case_boundary=unsupported_locale\n");
+            return StartupServiceResult::Unsupported;
+        }
+        if (flags != 0x100 && flags != 0x200) {
+            fprintf(log_, "startup_case_boundary=unsupported_mapping_flags\n");
+            return StartupServiceResult::Unsupported;
+        }
+        uint32_t error = (!source || !count || capacity > 0x7FFFFFFFu || (capacity && !dest)) ? 87 : 0;
+        std::vector<uint16_t> output;
+        if (!error) {
+            const bool terminated_input = count > 0x7FFFFFFFu;
+            constexpr uint32_t max_units = 16384;
+            if (!terminated_input && count > max_units) return StartupServiceResult::Unsupported;
+            const uint32_t limit = terminated_input ? max_units : count;
+            bool terminated = false;
+            for (uint32_t i = 0; i < limit; ++i) {
+                uint16_t unit = 0;
+                if (uint64_t(source) + 2ull*i + 2 > 0x100000000ull ||
+                    !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
+                const auto* entry = cp932_entry(unit);
+                const uint16_t mapped = entry ? (flags == 0x100 ? entry->lower : entry->upper) : 0xFFFF;
+                if (mapped == 0xFFFF) {
+                    fprintf(log_, "startup_case_boundary=unmapped_or_expanding_character\n");
+                    fprintf(log_, "startup_case_unsupported_unit=0x%04X\n", unsigned(unit));
+                    return StartupServiceResult::Unsupported;
+                }
+                output.push_back(mapped);
+                if (!unit && terminated_input) { terminated = true; break; }
+            }
+            if (terminated_input && !terminated) return StartupServiceResult::Unsupported;
+            if (capacity && capacity < output.size()) error = 122;
+            const uint32_t size = uint32_t(output.size()) * 2;
+            if (!error && capacity) {
+                if (uint64_t(dest) + size > 0x100000000ull ||
+                    (dest != source && uint64_t(source) < uint64_t(dest) + size && uint64_t(dest) < uint64_t(source) + size)) error = 87;
+                else {
+                    std::vector<uint16_t> readback(output.size());
+                    if (!cpu_.read(dest, readback.data(), size) ||
+                        !cpu_.write(dest, output.data(), size) ||
+                        !cpu_.read(dest, readback.data(), size) || readback != output)
+                        return StartupServiceResult::ContractFailure;
+                    fprintf(log_, "startup_case_readback=passed\n");
+                }
+            }
+            if (!error) expected_eax = uint32_t(output.size());
+        }
+        if (error) wx86_set_lasterr(cpu_, error);
+        fprintf(log_, "startup_case_error=%u\n", error);
+        fprintf(log_, "startup_case_mode=%s\n", capacity ? "write" : "size_query");
+        fprintf(log_, "startup_case_output_units=%u\n", expected_eax);
+        cpu_.trap_epilogue(expected_eax, cleanup, ret);
+        ++case_map_calls_;
+        fprintf(log_, "startup_serviced_import=KERNEL32.dll!LCMapStringW\n");
+    } else if (bytes_to_wide) {
         uint32_t args[6] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t page = args[0], flags = args[1], source = args[2];
@@ -510,11 +578,18 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 uint16_t unit = 0;
                 if (uint64_t(source) + 2ull*i + 2 > 0x100000000ull ||
                     !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
-                if (unit > 127) {
+                if (page == 0 || page == 1 || page == 932) {
+                    const auto* entry = cp932_entry(unit);
+                    if (!entry || entry->encoded == 0xFFFF) {
+                        fprintf(log_, "startup_conversion_scope=cp932_unmappable_character\n");
+                        return StartupServiceResult::Unsupported;
+                    }
+                    if (entry->encoded > 0xFF) bytes.push_back(uint8_t(entry->encoded >> 8));
+                    bytes.push_back(uint8_t(entry->encoded));
+                } else if (unit > 127) {
                     fprintf(log_, "startup_conversion_scope=non_ascii_not_implemented\n");
                     return StartupServiceResult::Unsupported;
-                }
-                bytes.push_back(uint8_t(unit));
+                } else bytes.push_back(uint8_t(unit));
                 if (count == 0xFFFFFFFFu && unit == 0) { terminated = true; break; }
             }
             if (count == 0xFFFFFFFFu && !terminated) return StartupServiceResult::Unsupported;
