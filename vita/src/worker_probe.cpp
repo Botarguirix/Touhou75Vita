@@ -5,6 +5,7 @@
 #include "runtime/guest_thread.h"
 #include "runtime/guest_thread_ctx.h"
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <array>
 
 bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame,
@@ -85,5 +86,68 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
     const bool passed = stopped && hit && valid && !limit && state.blocked;
     fprintf(log, "worker_probe_result=%s\n", passed ? "blocked_context_saved" : "failed");
     fprintf(log, "worker_scheduler=bounded_initial_handoff\n");
+    return passed;
+}
+
+bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices& services,
+                       StartupWorker& worker,FILE* log) {
+    if(!worker.blocked || worker.timeout_ms!=16 || !services.event_unsignaled(worker.event)) {
+        fprintf(log,"worker_wake_result=unsupported_wait_state\n"); return false;
+    }
+    const uint64_t deadline=worker.wait_started_us+uint64_t(worker.timeout_ms)*1000;
+    uint64_t now=sceKernelGetProcessTimeWide();
+    if(now<deadline) sceKernelDelayThread(uint32_t(deadline-now));
+    now=sceKernelGetProcessTimeWide();
+    if(now<deadline) return false;
+    d2rt::X86Context main{}; cpu.save_context(main);
+    const uint32_t main_tib=wx86_cur_tib();
+    struct Restore {
+        d2rt::Cpu& cpu; const d2rt::X86Context& ctx; uint32_t tib;
+        ~Restore(){cpu.load_context(ctx);wx86_set_main_tib(tib);}
+    } restore{cpu,main,main_tib};
+    cpu.load_context(worker.context); wx86_set_main_tib(worker.context.fs_base);
+    uint32_t ret=0;
+    const uint32_t esp=cpu.reg(d2rt::R_ESP);
+    if(esp<0x00A00000 || uint64_t(esp)+12>0x00A20000 || !cpu.read(esp,&ret,4)) return false;
+    cpu.trap_epilogue(0x102,12,ret); // Actual elapsed timeout, not an invented signal.
+    worker.blocked=false;
+    fprintf(log,"worker_wake_elapsed_us=%llu\n",(unsigned long long)(now-worker.wait_started_us));
+    fprintf(log,"worker_wake_reason=real_16ms_timeout\nworker_wait_result=0x00000102\n");
+    fprintf(log,"worker_dispatch_priority=%d\n",worker.priority);
+    bool boundary=false,failed=false;
+    unsigned calls=0;
+    cpu.set_trap(0x00B00000,0x00C00000,[&](d2rt::Cpu& c,uint32_t trap){
+        if(trap<0x00B00000 || (trap-0x00B00000)%16 || (trap-0x00B00000)/16>=image.imports().size()) {failed=true;return false;}
+        const auto& imp=image.imports()[(trap-0x00B00000)/16];
+        const uint32_t sp=c.reg(d2rt::R_ESP);
+        uint32_t return_va=0;
+        if(sp<0x00A00000 || uint64_t(sp)+12>0x00A20000 || !c.read(sp,&return_va,4) ||
+           return_va<image.load_base() || uint64_t(return_va)>=uint64_t(image.load_base())+image.image_size()) {failed=true;return false;}
+        fprintf(log,"worker_resumed_import=%s!%s\n",imp.dll.c_str(),imp.name.c_str());
+        fprintf(log,"worker_resumed_return_va=0x%08X\n",return_va);
+        if(imp.dll=="KERNEL32.dll" && imp.name=="WaitForSingleObject") {
+            uint32_t args[2]={}; if(!c.read(sp+4,args,8)){failed=true;return false;}
+            if(args[1] && services.event_unsignaled(args[0])) {
+                worker.event=args[0];worker.timeout_ms=args[1];worker.wait_started_us=sceKernelGetProcessTimeWide();
+                worker.blocked=true;c.save_context(worker.context);boundary=true;
+                fprintf(log,"worker_wait_state=reblocked_saved_context\n");return false;
+            }
+        }
+        if(++calls>32){failed=true;return false;}
+        const auto result=services.call(imp);
+        if(result==StartupServiceResult::Serviced)return true;
+        if(result==StartupServiceResult::ContractFailure){failed=true;return false;}
+        worker.unsupported_boundary=true;c.save_context(worker.context);boundary=true;
+        fprintf(log,"worker_stop_import=%s!%s\nstartup_stop_import=%s!%s\n",
+            imp.dll.c_str(),imp.name.c_str(),imp.dll.c_str(),imp.name.c_str());
+        fprintf(log,"startup_stop_thread=worker\n");return false;
+    });
+    cpu.take_limit_hit();cpu.set_run_limit(4096);
+    const char* fault=nullptr;
+    const bool stopped=cpu.run(ret,&fault);
+    const bool limit=cpu.take_limit_hit();
+    if(fault)fprintf(log,"worker_wake_fault=%s\n",fault);
+    const bool passed=stopped&&!limit&&!failed&&boundary;
+    fprintf(log,"worker_wake_result=%s\n",passed?"next_boundary_reached":"failed");
     return passed;
 }

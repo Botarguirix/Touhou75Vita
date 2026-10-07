@@ -1,4 +1,5 @@
 #include "startup_services.h"
+#include "worker_probe.h"
 #include "cp932_data.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
@@ -15,7 +16,8 @@ namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kMajor = 5, kMinor = 1, kBuild = 2600, kPlatform = 2;
 bool in_stack(uint32_t p, uint32_t size) {
-    return p >= kStack && uint64_t(p) + size <= kStackEnd;
+    return (p >= kStack && uint64_t(p) + size <= kStackEnd) ||
+        (p >= 0x00A00000 && uint64_t(p)+size <= 0x00A20000);
 }
 void put32(uint8_t* out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = uint8_t(value >> (8 * i));
@@ -96,10 +98,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool event_close = import.name == "CloseHandle";
     const bool event_wait = import.name == "WaitForSingleObject";
     const bool event = event_create || event_set || event_reset || event_close || event_wait;
+    const bool priority_set = import.name == "SetThreadPriority";
+    const bool priority_get = import.name == "GetThreadPriority";
+    const bool priority = priority_set || priority_get;
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -109,15 +114,33 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc || event_create) ? 4u :
         ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
-        ((proc_address || critical_init || tls_set || code_page_info || event_wait) ? 2u : 3u)));
+        ((version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (event) {
+    if (priority) {
+        if (!worker_ || arg != worker_->handle) {
+            wx86_set_lasterr(cpu_,6);
+            expected_eax = priority_get ? 0x7FFFFFFFu : 0;
+        } else if (priority_get) expected_eax = uint32_t(worker_->priority);
+        else {
+            int32_t requested=0;
+            if(!cpu_.read(esp+8,&requested,4)) return StartupServiceResult::ContractFailure;
+            if(requested != -15 && requested != 15 && (requested < -2 || requested > 2)) {
+                wx86_set_lasterr(cpu_,87); expected_eax=0;
+            } else { worker_->priority=requested; expected_eax=1; }
+            fprintf(log_,"startup_thread_requested_priority=%d\n",requested);
+        }
+        if(worker_) fprintf(log_,"startup_thread_priority=%d\n",worker_->priority);
+        fprintf(log_,"startup_priority_scope=bounded_guest_worker_dispatch\n");
+        cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        ++priority_calls_;
+        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+    } else if (event) {
         if (event_create) {
             uint32_t args[4] = {};
             if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;

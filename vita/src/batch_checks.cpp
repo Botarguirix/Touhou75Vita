@@ -26,7 +26,7 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         }
     } restore{cpu,saved,old_frame,old_error,setup};
     fprintf(log,"batch_scope=independent_synthetic_service_checks_on_vita\n");
-    constexpr unsigned total = 10;
+    constexpr unsigned total = 20;
     fprintf(log,"batch_total=%u\n",total);
     unsigned passed = 0;
     const char* step = "setup";
@@ -172,6 +172,96 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         cpu.read(scratch+256,filename.data(),filename.size()) &&
         !std::memcmp(filename.data(),path,sizeof(path));
     report(10,"module_path_truncation_guard_and_nul",path_ok,"module_path_length_guard_or_nul");
+    fprintf(log,"batch_test_begin=11\n");
+    uint32_t original_priority=0;
+    bool priorities=setup && call("GetThreadPriority",{0x00AB4000},original_priority) && original_priority!=0x7FFFFFFF;
+    const bool priority_known=priorities;
+    for(int32_t level : {-15,-2,-1,0,1,2,15}) {
+        uint32_t got=0;
+        const bool ok=priorities && call("SetThreadPriority",{0x00AB4000,uint32_t(level)},value) && value==1 &&
+            call("GetThreadPriority",{0x00AB4000},got) && got==uint32_t(level);
+        priorities=priorities&&ok;
+    }
+    if(priority_known) { const bool restored=call("SetThreadPriority",{0x00AB4000,original_priority},value)&&value==1; priorities=priorities&&restored; }
+    report(11,"worker_supported_priority_roundtrip",priorities,"priority_value_or_restore");
+    fprintf(log,"batch_test_begin=12\n");
+    uint32_t unchanged=0;
+    const bool invalid_priority=setup && priority_known &&
+        call("SetThreadPriority",{0x00AB4000,13},value) && !value && wx86_get_lasterr(cpu)==87 &&
+        call("GetThreadPriority",{0x00AB4000},unchanged) && unchanged==original_priority;
+    report(12,"invalid_priority_preserves_worker_state",invalid_priority,"priority_error_or_state_changed");
+    fprintf(log,"batch_test_begin=13\n");
+    const bool foreign_priority=setup && call("GetThreadPriority",{0x00AB4990},value) &&
+        value==0x7FFFFFFF && wx86_get_lasterr(cpu)==6 &&
+        call("SetThreadPriority",{0x00AB4990,0},value) && !value && wx86_get_lasterr(cpu)==6;
+    report(13,"foreign_thread_priority_handle_rejected",foreign_priority,"invalid_thread_handle_error");
+
+    fprintf(log,"batch_test_begin=14\n");
+    const uint32_t main_tib=wx86_cur_tib();
+    uint32_t worker_error=0;
+    bool isolation=setup && cpu.read(0x00760034,&worker_error,4);
+    wx86_set_lasterr(cpu,0xAA55);
+    cpu.set_fs_base(0x00760000);wx86_set_main_tib(0x00760000);
+    isolation=isolation && call("SetLastError",{0x55AA},value) &&
+        call("GetLastError",{},value) && value==0x55AA &&
+        call("GetCurrentThreadId",{},value) && value==12;
+    cpu.set_fs_base(saved.fs_base);wx86_set_main_tib(main_tib);
+    isolation=isolation && call("GetLastError",{},value) && value==0xAA55;
+    const bool error_restored=cpu.write(0x00760034,&worker_error,4);
+    report(14,"worker_main_teb_last_error_isolation",isolation&&error_restored,"teb_binding_or_isolation");
+
+    fprintf(log,"batch_test_begin=15\n");
+    uint32_t shared_slot=0xFFFFFFFFu,worker_slot=0;
+    bool tls_isolation=setup && call("TlsAlloc",{},shared_slot) && shared_slot<64 &&
+        cpu.read(0x00760E10+4*shared_slot,&worker_slot,4) &&
+        call("TlsSetValue",{shared_slot,0xAAAAAAAA},value) && value==1;
+    cpu.set_fs_base(0x00760000);wx86_set_main_tib(0x00760000);
+    tls_isolation=tls_isolation && call("TlsSetValue",{shared_slot,0xBBBBBBBB},value) && value==1 &&
+        call("TlsGetValue",{shared_slot},value) && value==0xBBBBBBBB;
+    cpu.set_fs_base(saved.fs_base);wx86_set_main_tib(main_tib);
+    tls_isolation=tls_isolation && call("TlsGetValue",{shared_slot},value) && value==0xAAAAAAAA;
+    if(shared_slot<64) {
+        const bool slot_restored=cpu.write(0x00760E10+4*shared_slot,&worker_slot,4);
+        const bool freed=call("TlsFree",{shared_slot},value)&&value==1;
+        tls_isolation=tls_isolation&&slot_restored&&freed;
+    }
+    report(15,"tls_slot_values_isolated_between_tebs",tls_isolation,"per_thread_tls_or_cleanup");
+
+    fprintf(log,"batch_test_begin=16\n");
+    const uint8_t malformed[2]={0x82,0};
+    std::array<uint8_t,8> guard{};guard.fill(0xCD);
+    std::array<uint8_t,8> guard_copy{};
+    const bool strict=setup && cpu.write(scratch+320,malformed,2) && cpu.write(scratch+352,guard.data(),8) &&
+        call("MultiByteToWideChar",{932,8,scratch+320,0xFFFFFFFFu,scratch+352,4},value) &&
+        !value && wx86_get_lasterr(cpu)==1113 && cpu.read(scratch+352,guard_copy.data(),8) && guard_copy==guard;
+    report(16,"cp932_invalid_lead_strict_error_no_write",strict,"strict_error_or_output_modified");
+    fprintf(log,"batch_test_begin=17\n");
+    const bool short_conversion=setup && cpu.write(scratch+128,encoded.data(),encoded.size()) && cpu.write(scratch+352,guard.data(),8) &&
+        call("MultiByteToWideChar",{932,8,scratch+128,0xFFFFFFFFu,scratch+352,2},value) &&
+        !value && wx86_get_lasterr(cpu)==122 && cpu.read(scratch+352,guard_copy.data(),8) && guard_copy==guard;
+    report(17,"cp932_small_output_error122_no_write",short_conversion,"capacity_error_or_output_modified");
+
+    fprintf(log,"batch_test_begin=18\n");
+    uint32_t zero_block=0;
+    bool zero_heap=setup && call("HeapAlloc",{0x00AB0000,0,0},zero_block) && zero_block &&
+        call("HeapSize",{0x00AB0000,0,zero_block},value) && !value;
+    if(zero_block) {const bool freed=call("HeapFree",{0x00AB0000,0,zero_block},value)&&value==1;zero_heap=zero_heap&&freed;}
+    report(18,"zero_size_heap_valid_pointer_and_size",zero_heap,"zero_size_allocation_contract");
+    fprintf(log,"batch_test_begin=19\n");
+    uint32_t aligned=0;
+    std::array<uint8_t,15> grown{};
+    bool grow=setup && call("HeapAlloc",{0x00AB0000,0,9},aligned) && aligned &&
+        cpu.write(aligned,pattern.data(),9) &&
+        call("HeapReAlloc",{0x00AB0000,8,aligned,15},value) && value==aligned &&
+        cpu.read(aligned,grown.data(),grown.size());
+    if(grow)for(unsigned i=0;i<grown.size();++i)grow=grow&&(grown[i]==(i<9?pattern[i]:0));
+    if(aligned){const bool freed=call("HeapFree",{0x00AB0000,0,aligned},value)&&value==1;grow=grow&&freed;}
+    report(19,"heap_inplace_growth_preserve_and_zero_tail",grow,"aligned_growth_pointer_or_data");
+    fprintf(log,"batch_test_begin=20\n");
+    const bool zero_path=setup && cpu.write(scratch+352,guard.data(),8) &&
+        call("GetModuleFileNameA",{0,scratch+352,0},value) && !value && wx86_get_lasterr(cpu)==0 &&
+        cpu.read(scratch+352,guard_copy.data(),8) && guard_copy==guard;
+    report(20,"module_path_zero_capacity_preserves_guard",zero_path,"zero_capacity_return_error_or_write");
     fprintf(log,"batch_passed=%u\nbatch_failed=%u\nbatch_result=%s\n",passed,total-passed,passed==total?"passed":"failed");
     return passed==total;
 }

@@ -25,7 +25,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration39-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration40-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -52,7 +52,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration39\n");
+        fprintf(report_, "watchdog_revision=iteration40\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -254,6 +254,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;
     uint32_t worker_create_frame = 0;
+    StartupWorker worker;
+    bool priority_dispatch_requested = false;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
@@ -334,7 +336,14 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         const StartupServiceResult service = services.call(imp);
         if (service == StartupServiceResult::Unsupported && imp.dll == "KERNEL32.dll" &&
             imp.name == "CreateThread" && ret == 0x00423A58) worker_create_frame = esp;
-        if (service == StartupServiceResult::Serviced) return true;
+        if (service == StartupServiceResult::Serviced) {
+            if(imp.dll=="KERNEL32.dll" && imp.name=="SetThreadPriority" && ret==0x00423A6C &&
+               c.reg(d2rt::R_EAX)==1 && worker.blocked && worker.priority>0) {
+                priority_dispatch_requested=true;
+                fprintf(log,"startup_scheduler_yield=dispatch_priority_worker\n");return false;
+            }
+            return true;
+        }
         if (service == StartupServiceResult::ContractFailure) {
             service_failed = true;
             fprintf(log, "startup_stop_import=%s\n", tag.c_str());
@@ -393,7 +402,6 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const char* fault = nullptr;
     bool stopped = cpu.run(kEntry, &fault);
     bool limit = cpu.take_limit_hit();
-    StartupWorker worker;
     bool worker_ok = true;
     bool thread_created = false;
     if (worker_create_frame && stopped && !limit && !service_failed) {
@@ -421,6 +429,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             }
             if (worker_ok) {
                 thread_created = true;
+                services.attach_worker(&worker);
                 fprintf(log, "startup_serviced_import=KERNEL32.dll!CreateThread\n");
                 fprintf(log, "startup_thread_handle=0x%08X\n", worker.handle);
                 fprintf(log, "startup_thread_id=%u\n", worker.id);
@@ -433,6 +442,18 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 stopped = cpu.run(ret,&fault);
                 limit = cpu.take_limit_hit();
             }
+        }
+    }
+    if(priority_dispatch_requested && stopped && !limit && worker_ok) {
+        worker_ok=wake_worker_slice(cpu,image,services,worker,log);
+        cpu.set_trap(kTrap,kTrapEnd,startup_trap);
+        if(worker_ok && worker.unsupported_boundary) expected_boundary=true;
+        else if(worker_ok) {
+            priority_dispatch_requested=false;
+            expected_boundary=false;
+            cpu.take_limit_hit();cpu.set_run_limit(4096);
+            stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
+            limit=cpu.take_limit_hit();
         }
     }
     fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
@@ -450,7 +471,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
-    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls() + (thread_created ? 1u : 0u));
+    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls() + services.priority_calls() + (thread_created ? 1u : 0u));
     fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
     fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
     fprintf(log, "startup_heap_other_calls=%u\n", services.heap_other_calls());
@@ -462,6 +483,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_clock_calls=%u\n", services.clock_calls());
     fprintf(log, "startup_multimedia_calls=%u\n", services.multimedia_calls());
     fprintf(log, "startup_event_calls=%u\n", services.event_calls());
+    fprintf(log, "startup_priority_calls=%u\n", services.priority_calls());
     fprintf(log, "startup_game_entry_verified=%s\n", game_entry_chain_verified ? "yes" : "no");
     fprintf(log, "startup_environment_calls=%u\n", services.environment_calls());
     fprintf(log, "startup_conversion_calls=%u\n", services.conversion_calls());

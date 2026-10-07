@@ -89,6 +89,9 @@ Hardware iteration 38 passed all four service checks. Iteration 39 expands
 coverage to ten checks, including closed handles, failure preservation, TLS,
 Japanese conversion, LastError and pathname buffer boundaries. These checks
 retain the original SetThreadPriority startup boundary.
+Hardware iteration 39 passed ten service checks. Iteration 40 adds ten more,
+serves worker priority state and dispatches one real timed wake, recording the
+next worker/main boundary. Continuous scheduling and rendering remain pending.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
