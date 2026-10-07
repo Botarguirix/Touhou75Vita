@@ -54,6 +54,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool thread_id = import.name == "GetCurrentThreadId";
     const bool startup_info = import.name == "GetStartupInfoA";
     const bool command_line = import.name == "GetCommandLineA";
+    const bool module_filename = import.name == "GetModuleFileNameA";
     const bool std_handle = import.name == "GetStdHandle";
     const bool file_type = import.name == "GetFileType";
     const bool handle_count = import.name == "SetHandleCount";
@@ -68,7 +69,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool code_page_info = import.name == "GetCPInfo";
     const bool string_type = import.name == "GetStringTypeW";
     const bool case_map = import.name == "LCMapStringW";
-    const bool process = startup_info || command_line || std_handle || file_type || handle_count;
+    const bool process = startup_info || command_line || std_handle || file_type || handle_count || module_filename;
     const bool heap_create = import.name == "HeapCreate";
     const bool heap_alloc = import.name == "HeapAlloc";
     const bool heap_free = import.name == "HeapFree";
@@ -670,6 +671,38 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
             fprintf(log_, "startup_info_bytes=68\n");
             fprintf(log_, "startup_info_readback=passed\n");
+        } else if (module_filename) {
+            uint32_t dest = 0, capacity = 0;
+            if (!cpu_.read(esp + 8, &dest, 4) || !cpu_.read(esp + 12, &capacity, 4))
+                return StartupServiceResult::ContractFailure;
+            fprintf(log_, "startup_module_filename_handle=0x%08X\n", arg);
+            fprintf(log_, "startup_module_filename_capacity=%u\n", capacity);
+            if (arg != 0 && arg != image_.load_base()) {
+                fprintf(log_, "startup_module_filename_boundary=other_module\n");
+                return StartupServiceResult::Unsupported;
+            }
+            // Same virtual Windows pathname used by ThreadSmoke's process parameters.
+            const std::string path = "C:\\TH075\\TH075.exe";
+            const bool truncated = capacity <= path.size();
+            const uint32_t size = uint32_t(std::min<size_t>(capacity, path.size() + 1));
+            if (!capacity) wx86_set_lasterr(cpu_, 0); // Explicit XP zero-size behavior.
+            else if (!dest || uint64_t(dest) + size > 0x100000000ull) {
+                wx86_set_lasterr(cpu_, 87);
+            } else {
+                std::vector<uint8_t> bytes(path.begin(), path.end());
+                bytes.push_back(0);
+                bytes.resize(size); // XP truncation excludes NUL if capacity <= length.
+                std::vector<uint8_t> readback(size);
+                if (!cpu_.read(dest, readback.data(), size) ||
+                    !cpu_.write(dest, bytes.data(), size) ||
+                    !cpu_.read(dest, readback.data(), size) || readback != bytes)
+                    return StartupServiceResult::ContractFailure;
+                expected_eax = truncated ? capacity : uint32_t(path.size());
+                if (truncated) wx86_set_lasterr(cpu_, 0);
+                fprintf(log_, "startup_module_filename_virtual_path=%s\n", path.c_str());
+                fprintf(log_, "startup_module_filename_truncated=%s\n", truncated ? "yes" : "no");
+                fprintf(log_, "startup_module_filename_readback=passed\n");
+            }
         } else if (command_line) {
             // ThreadSmoke owns the persistent, NUL-terminated ANSI command line.
             expected_eax = 0x00732000;

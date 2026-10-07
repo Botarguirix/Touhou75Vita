@@ -51,6 +51,8 @@ probe and reached MultiByteToWideChar. Iteration 26 adds CP932 decoding and
 classification of its character repertoire to continue CRT initialization.
 Hardware iteration 26 decoded and classified a 256-character block and reached
 LCMapStringW. Iteration 27 adds case mapping and reverse CP932 encoding.
+Hardware iteration 27 completed those operations and released its critical
+section. Iteration 28 serves GetModuleFileNameA for the original executable.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
