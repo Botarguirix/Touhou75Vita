@@ -1,14 +1,13 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 54, version 01.58
+## Current checkpoint — iteration 55, version 01.59
 
-Physical iteration 53 confirmed DirectInput8Create and a native pad sample,
-then reached DirectSound activation in 6.190499 seconds. Keyboard polling
-remains unexercised. Iteration 54 adds restricted DirectSound8 COM activation,
-a native audio port with configuration readback and window cooperation.
-Physical validation of 54 is pending. Buffers/playback, texture uploads,
-Draw/Present and the original menu remain pending. See [scope/evidence](STATUS_ITERATION54.md)
-and [reviewed references](REFERENCE_REPENTOGXM.md).
-Historical observations follow below.
+Physical iteration 54 confirmed DirectSound8 COM activation, native audio
+port configuration and release. The EXE reached primary CreateSoundBuffer.
+Iteration 55 adds an audible native probe reading an original effect from
+the user's DAT. Its hardware audibility is pending; the EXE boundary is
+unchanged. Next: implement primary-buffer/format contracts, then native
+playback and the texture upload/Draw/Present path for a real title frame.
+See [scope/evidence](STATUS_ITERATION55.md). Historical observations follow.
 
 ## Phase 0 — reproducible diagnostic shell (complete)
 

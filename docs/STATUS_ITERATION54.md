@@ -1,5 +1,10 @@
 # Iteración 54 — Native Audio / 01.58
 
+Actualización física: la Vita confirmó COM, apertura/configuración del
+puerto, cooperación con la ventana y liberación. Se alcanzó el buffer
+primario esperado. La [iteración 55](STATUS_ITERATION55.md) añade la prueba
+audible con un efecto original; sigue pendiente el contrato de buffers del EXE.
+
 ## Evidencia física de la 53
 
 Los logs del usuario confirman una llamada atendida a DirectInput8Create:

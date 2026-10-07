@@ -10,6 +10,7 @@
 #include <string>
 #include "pe_resources.h"
 #include "th075_assets.h"
+#include "audio_probe.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -76,7 +77,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 54 - NATIVE AUDIO",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 55 - DAT AUDIO",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -117,6 +118,8 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             (values.count("startup_final_eip")?values["startup_final_eip"]:"SEE LOG");
     text(pixels,40,408,"STOP: "+boundary,neutral,2);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
+    text(pixels,700,420,th075::audio_probe_pcm.empty()?"DAT AUDIO: UNAVAILABLE":"SOUND 002 / SQUARE",neutral,2);
+    if(!th075::audio_probe_pcm.empty())text(pixels,700,444,"REPLAY DAT AUDIO",neutral,2);
     std::string displayed_log=log_path;
     for(char& ch:displayed_log)if(ch>='a' && ch<='z')ch=char(ch-'a'+'A');
     text(pixels,40,467,"LOG: "+displayed_log,neutral,2);
@@ -140,13 +143,18 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         fprintf(log,"screen_result=%s\n",wait_rc>=0&&matches?"presented":"confirmation_failed");
     } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
+        th075::play_audio_probe(log,"automatic_result_screen");
         const uint64_t deadline=sceKernelGetProcessTimeWide()+120000000ull;
-        bool released=false;const char* exit_reason="timeout";
+        bool released=false,square_released=false;const char* exit_reason="timeout";
         while(sceKernelGetProcessTimeWide()<deadline) {
             SceCtrlData pad={};
             if(sceCtrlPeekBufferPositive(0,&pad,1)<0) { exit_reason="controller_error";break; }
             if(!(pad.buttons&SCE_CTRL_CROSS)) released=true;
             if(released&&(pad.buttons&SCE_CTRL_CROSS)) { exit_reason="cross";break; }
+            if(!(pad.buttons&SCE_CTRL_SQUARE))square_released=true;
+            if(square_released&&(pad.buttons&SCE_CTRL_SQUARE)){
+                square_released=false;th075::play_audio_probe(log,"square_replay");
+            }
             sceKernelDelayThread(16000);
         }
         fprintf(log,"screen_exit=%s\n",exit_reason);
