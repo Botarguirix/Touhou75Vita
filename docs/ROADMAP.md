@@ -103,3 +103,8 @@ the application directory and serves the observed logical window dimensions,
 with 100 individual service cases per installation. Next priorities are the
 actual resource/window boundary, guest window creation, then a real game frame
 through the graphics backend. The diagnostic screen is not a game title screen.
+Hardware iteration 41 passed 100 service cases and reached LoadIconA after the
+original directory setup and seven window metric queries. Iteration 42 adds
+200 cases (300 total) while preserving this original EXE boundary. The next
+implementation priority is real PE icon/resource loading, followed by window
+registration/creation and the graphics backend for an original game frame.

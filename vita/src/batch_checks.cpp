@@ -8,6 +8,7 @@
 #include <vector>
 #include <initializer_list>
 #include <cstring>
+#include <algorithm>
 
 bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
     constexpr uint32_t frame = 0x00800100, scratch = 0x00A30000, ret = 0x0064232C;
@@ -26,7 +27,7 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         }
     } restore{cpu,saved,old_frame,old_error,setup};
     fprintf(log,"batch_scope=independent_synthetic_service_checks_on_vita\n");
-    constexpr unsigned total = 100;
+    constexpr unsigned total = 300;
     fprintf(log,"batch_total=%u\n",total);
     unsigned passed = 0;
     const char* step = "setup";
@@ -347,6 +348,108 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         if(handle){const bool closed=call("CloseHandle",{handle},value)&&value==1;ok=ok&&closed;}
         char name[80];std::snprintf(name,sizeof(name),"event_%s_reset_%u_cycles",manual ? "manual":"auto",cycles);
         report(id,name,ok,"event_cycle_state_wait_result_or_cleanup");
+    }
+    // 100 further strings: varying explicit lengths, NUL accounting and guards.
+    for(unsigned index=0;index<100;++index) {
+        const unsigned id=101+index,repetitions=1+index%4;
+        const uint8_t byte=index<95 ? uint8_t(32+index):uint8_t(0xA6+index-95);
+        const uint16_t unit=index<95 ? uint16_t(byte):uint16_t(0xFF66+index-95);
+        std::vector<uint8_t> input(repetitions+1,byte);input.back()=0;
+        std::vector<uint16_t> expected(repetitions+1,unit),decoded(repetitions+1,0xCCCC);expected.back()=0;
+        std::array<uint8_t,8> guard_output{},actual_output{};guard_output.fill(0xCC);
+        fprintf(log,"batch_test_begin=%03u\nbatch_input_unicode=0x%04X\nbatch_input_repetitions=%u\n",id,unit,repetitions);
+        uint32_t default_used=1;
+        bool ok=setup && cpu.write(scratch+512,input.data(),uint32_t(input.size())) &&
+            call("MultiByteToWideChar",{932,8,scratch+512,uint32_t(input.size()),0,0},value) && value==input.size() &&
+            call("MultiByteToWideChar",{932,8,scratch+512,uint32_t(input.size()),scratch+544,uint32_t(expected.size())},value) && value==expected.size() &&
+            cpu.read(scratch+544,decoded.data(),uint32_t(decoded.size()*2)) && decoded==expected &&
+            call("WideCharToMultiByte",{932,0,scratch+544,uint32_t(expected.size()),0,0,0,0},value) && value==input.size() &&
+            cpu.write(scratch+576,guard_output.data(),guard_output.size()) && cpu.write(scratch+608,&default_used,4) &&
+            call("WideCharToMultiByte",{932,0,scratch+544,uint32_t(expected.size()),scratch+576,uint32_t(input.size()),0,scratch+608},value) && value==input.size() &&
+            cpu.read(scratch+576,actual_output.data(),actual_output.size()) && cpu.read(scratch+608,&default_used,4) && !default_used;
+        std::memcpy(guard_output.data(),input.data(),input.size());ok=ok && actual_output==guard_output;
+        char name[96];std::snprintf(name,sizeof(name),"cp932_string_U%04X_repeat_%u_explicit_nul_query_roundtrip",unit,repetitions);
+        report(id,name,ok,"string_query_length_nul_unicode_roundtrip_or_guard");
+    }
+    for(unsigned size=1;size<=32;++size) {
+        const unsigned id=200+size,new_size=size+33;
+        fprintf(log,"batch_test_begin=%03u\nbatch_input_old_size=%u\nbatch_input_new_size=%u\n",id,size,new_size);
+        uint32_t block=0,resized=0;
+        std::vector<uint8_t> pattern(size),expected(new_size,0),actual(new_size,0xCC);
+        for(unsigned i=0;i<size;++i)pattern[i]=uint8_t(size*3+i*11);
+        std::copy(pattern.begin(),pattern.end(),expected.begin());
+        bool ok=setup && call("HeapAlloc",{0x00AB0000,0,size},block) && block && cpu.write(block,pattern.data(),size);
+        wx86_set_lasterr(cpu,0xCAFE);
+        ok=ok && call("HeapReAlloc",{0x00AB0000,8,block,new_size},resized) && resized && resized!=block &&
+            wx86_get_lasterr(cpu)==0xCAFE && call("HeapSize",{0x00AB0000,0,resized},value) && value==new_size &&
+            cpu.read(resized,actual.data(),new_size) && actual==expected;
+        const uint32_t live=resized ? resized:block;
+        if(live){const bool freed=call("HeapFree",{0x00AB0000,0,live},value)&&value==1;ok=ok&&freed;}
+        char name[96];std::snprintf(name,sizeof(name),"heap_move_%u_to_%u_pattern_zero_tail_last_error",size,new_size);
+        report(id,name,ok,"heap_move_data_size_zero_tail_error_or_cleanup");
+    }
+    for(unsigned bit=0;bit<32;++bit) {
+        const unsigned id=233+bit;const uint32_t bits=uint32_t(1)<<bit;
+        fprintf(log,"batch_test_begin=%03u\nbatch_input_tls_bits=0x%08X\n",id,bits);
+        uint32_t slot=0xFFFFFFFFu;
+        bool ok=setup && call("TlsAlloc",{},slot) && slot!=0xFFFFFFFFu &&
+            call("TlsGetValue",{slot},value) && !value && wx86_get_lasterr(cpu)==0 &&
+            call("TlsSetValue",{slot,bits},value) && value==1 &&
+            call("TlsGetValue",{slot},value) && value==bits && wx86_get_lasterr(cpu)==0 &&
+            call("TlsSetValue",{slot,~bits},value) && value==1 &&
+            call("TlsGetValue",{slot},value) && value==~bits;
+        if(slot!=0xFFFFFFFFu){const bool freed=call("TlsFree",{slot},value)&&value==1;ok=ok&&freed;
+            if(freed)ok=ok && call("TlsGetValue",{slot},value) && !value && wx86_get_lasterr(cpu)==87;}
+        char name[96];std::snprintf(name,sizeof(name),"tls_walking_bit_%u_complement_and_free",bit);
+        report(id,name,ok,"tls_bit_pattern_complement_last_error_or_lifecycle");
+    }
+    for(unsigned capacity=0;capacity<20;++capacity) {
+        const unsigned id=265+capacity;
+        fprintf(log,"batch_test_begin=%03u\nbatch_input_module_capacity=%u\n",id,capacity);
+        constexpr char path[]="C:\\TH075\\TH075.exe";
+        std::array<uint8_t,32> expected{},actual{};expected.fill(0xCC);
+        const unsigned copied=capacity<sizeof(path) ? capacity:unsigned(sizeof(path));
+        std::memcpy(expected.data(),path,copied);wx86_set_lasterr(cpu,0x4242);
+        std::array<uint8_t,32> guard{};guard.fill(0xCC);
+        const bool ok=setup && cpu.write(scratch+512,guard.data(),guard.size()) &&
+            call("GetModuleFileNameA",{0x00400000,scratch+512,capacity},value) &&
+            value==(capacity<sizeof(path) ? capacity:unsigned(sizeof(path)-1)) &&
+            wx86_get_lasterr(cpu)==(capacity<sizeof(path) ? 0u:0x4242u) &&
+            cpu.read(scratch+512,actual.data(),actual.size()) && actual==expected;
+        char name[96];std::snprintf(name,sizeof(name),"explicit_module_handle_capacity_%u_xp_truncation_guard",capacity);
+        report(id,name,ok,"module_handle_length_truncation_nul_guard_or_error");
+    }
+    for(unsigned depth=1;depth<=16;++depth) {
+        const unsigned id=284+depth,address=scratch+1024+32*(depth-1),spin=depth%2 ? 0:depth*16;
+        fprintf(log,"batch_test_begin=%03u\nbatch_input_recursion_depth=%u\nbatch_input_spin=%u\n",id,depth,spin);
+        std::array<uint32_t,6> state{};unsigned acquired=0;
+        wx86_set_lasterr(cpu,0x5151);
+        const bool initialized=setup && cpu.write(address,state.data(),sizeof(state)) &&
+            (depth%2 ? call("InitializeCriticalSection",{address},value):
+                (call("InitializeCriticalSectionAndSpinCount",{address,spin},value)&&value==1));
+        bool ok=initialized;
+        for(unsigned entry=0;entry<depth && ok;++entry) {
+            const bool entered=entry%2 ? (call("TryEnterCriticalSection",{address},value)&&value==1):
+                call("EnterCriticalSection",{address},value);
+            if(entered)++acquired;
+            ok=entered && cpu.read(address,state.data(),sizeof(state)) && state[1]==acquired-1 &&
+                state[2]==acquired && state[3]==8 && state[5]==spin;
+        }
+        while(acquired) {
+            const bool left=call("LeaveCriticalSection",{address},value);
+            if(!left){ok=false;break;}
+            --acquired;
+            const bool state_ok=cpu.read(address,state.data(),sizeof(state)) && state[1]==acquired-1u &&
+                state[2]==acquired && state[3]==(acquired ? 8u:0u);ok=ok&&state_ok;
+        }
+        if(initialized && !acquired) {
+            const bool deleted=call("DeleteCriticalSection",{address},value);
+            ok=ok&&deleted && cpu.read(address,state.data(),sizeof(state));
+            for(const auto word:state)ok=ok && !word;
+        }
+        ok=ok && wx86_get_lasterr(cpu)==0x5151;
+        char name[96];std::snprintf(name,sizeof(name),"critical_recursion_%u_mixed_enter_try_spin_%u_cleanup",depth,spin);
+        report(id,name,ok,"critical_owner_recursion_spin_error_or_cleanup");
     }
     fprintf(log,"batch_passed=%u\nbatch_failed=%u\nbatch_result=%s\n",passed,total-passed,passed==total?"passed":"failed");
     return passed==total;
