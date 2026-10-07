@@ -82,6 +82,9 @@ Hardware iteration 36 executed the worker to its first WaitForSingleObject.
 Iteration 37 saves that wait context and resumes main after the observed
 CreateThread. Continuous scheduling, event/time wakeups and priority handling
 are still required; this is only the initial context handoff.
+Hardware iteration 37 passed the initial handoff and reached SetThreadPriority.
+Iteration 38 batches four independent event/heap/clock service checks to improve
+hardware coverage per install; it retains that original startup boundary.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.

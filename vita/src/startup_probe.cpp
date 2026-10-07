@@ -1,6 +1,7 @@
 #include "startup_probe.h"
 #include "startup_services.h"
 #include "worker_probe.h"
+#include "batch_checks.h"
 #include "seh_chain.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
@@ -24,7 +25,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration37-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration38-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -51,7 +52,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration37\n");
+        fprintf(report_, "watchdog_revision=iteration38\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -479,5 +480,6 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         (!worker_ok ? "worker_probe_failed" : !stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
         (service_failed ? "service_contract_failed" :
         (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
-    return passed;
+    const bool batch_passed = run_batch_checks(cpu, services, log);
+    return passed && batch_passed;
 }
