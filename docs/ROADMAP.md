@@ -147,3 +147,11 @@ lifetime methods, with an explicit GetDeviceCaps boundary. Original static
 control flow includes that query even though the existing apitrace dump
 omits it. Native device/rendering and truthful capability reporting remain
 the next graphics milestones.
+
+Hardware iteration 50 validated the owned D3D8 root and original GetDeviceCaps
+dispatch. Reference pass 51 ran the original Windows EXE again to the menu,
+extracted and verified 286 archive entries and compared actual upload blobs
+against effective system PNGs: 225/226 uploads matched, including all title
+layers after applying the original 24-bit black color key. The remaining
+upload is a verified black rectangle, with no DAT source match. This pass
+improves the renderer's asset contract but does not provide a new Vita VPK.

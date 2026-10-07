@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Hardware iteration 49 completed original SystemDataCreate and reached Direct3DCreate8 in 5.3 seconds. Iteration 50 introduces an owned x86 IDirect3D8 COM root with a validated 16-slot vtable and IUnknown lifetime methods. It stops at unimplemented graphics methods, capturing the expected GetDeviceCaps request without advertising capabilities or returning a dummy device. The native renderer and original visual game boot remain pending. Bounded execution and the independent watchdog remain active; the 300-case batch stays disabled. See [Iteration 50 scope](docs/STATUS_ITERATION50.md) and [roadmap](docs/ROADMAP.md).
+Hardware iteration 50 validated the owned x86 IDirect3D8 COM root and reached the original GetDeviceCaps query in 5.5 seconds. The native renderer and original visual game boot remain pending. A fresh original Windows run reached the complete menu, and the new reference pass extracted/verified all 286 archive entries and matched 225 of 226 recorded texture uploads to decoded system resources. It also verified the original 24-bit black color key. See [reference pass 51](docs/ORIGINAL_REFERENCE_PASS_51.md), [Iteration 50 scope](docs/STATUS_ITERATION50.md) and [roadmap](docs/ROADMAP.md). The current Vita package remains iteration50/version01.54; reference pass 51 produces research artifacts and improved extraction/verification tools.
 
 ## Build
 
