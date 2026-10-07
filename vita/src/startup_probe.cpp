@@ -4,6 +4,7 @@
 #include "seh_chain.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
+#include "runtime/guest_thread_ctx.h"
 #include "runtime/pe_image.h"
 #include "platform/vita_host.h"
 #include <psp2/kernel/error.h>
@@ -23,7 +24,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration36-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration37-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -50,7 +51,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration36\n");
+        fprintf(report_, "watchdog_revision=iteration37\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -256,7 +257,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
         "KERNEL32.dll", "IsProcessorFeaturePresent", 0, 0, 0};
-    cpu.set_trap(kTrap, kTrapEnd, [&](d2rt::Cpu& c, uint32_t trap) {
+    auto startup_trap = [&](d2rt::Cpu& c, uint32_t trap) {
         if (trap == kSentinel) {
             fprintf(log, "startup_stop=entrypoint_returned\n"); return false;
         }
@@ -360,7 +361,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log, "startup_heap_call_frame=%s\n", expected_boundary ? "passed" : "failed");
         }
         return false;
-    });
+    };
+    cpu.set_trap(kTrap, kTrapEnd, startup_trap);
     for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r) cpu.set_reg(r, 0);
     const uint32_t initial_esp = kStackEnd - 0x1000 - 4;
     if (!cpu.write(initial_esp, &kSentinel, 4)) {
@@ -388,9 +390,51 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fflush(log);
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
-    const bool stopped = cpu.run(kEntry, &fault);
-    const bool limit = cpu.take_limit_hit();
-    const bool worker_ok = !worker_create_frame || run_worker_probe(cpu, image, worker_create_frame, log);
+    bool stopped = cpu.run(kEntry, &fault);
+    bool limit = cpu.take_limit_hit();
+    StartupWorker worker;
+    bool worker_ok = true;
+    bool thread_created = false;
+    if (worker_create_frame && stopped && !limit && !service_failed) {
+        const uint32_t create_frame = worker_create_frame;
+        d2rt::X86Context saved_main{}, restored_main{};
+        cpu.save_context(saved_main);
+        worker_ok = run_worker_probe(cpu, image, create_frame, services, worker, log);
+        cpu.save_context(restored_main);
+        const bool main_restored = !std::memcmp(saved_main.gpr,restored_main.gpr,sizeof(saved_main.gpr)) &&
+            saved_main.eip == restored_main.eip && saved_main.eflags == restored_main.eflags &&
+            saved_main.fs_base == restored_main.fs_base && wx86_cur_tib() == kDiagnosticTeb;
+        fprintf(log, "startup_main_context_readback=%s\n", main_restored ? "passed" : "failed");
+        worker_ok = worker_ok && main_restored;
+        cpu.set_trap(kTrap, kTrapEnd, startup_trap);
+        if (worker_ok) {
+            uint32_t ret = 0, output = 0, copy = 0;
+            worker_ok = cpu.reg(d2rt::R_ESP) == create_frame &&
+                cpu.read(create_frame,&ret,4) && ret == 0x00423A58 &&
+                cpu.read(create_frame+24,&output,4) && output == 0x0068BE3C &&
+                cpu.write(output,&worker.id,4) && cpu.read(output,&copy,4) && copy == worker.id;
+            if (worker_ok) {
+                cpu.trap_epilogue(worker.handle,28,ret);
+                worker_ok = cpu.reg(d2rt::R_EIP) == ret && cpu.reg(d2rt::R_ESP) == create_frame+28 &&
+                    cpu.reg(d2rt::R_EAX) == worker.handle;
+            }
+            if (worker_ok) {
+                thread_created = true;
+                fprintf(log, "startup_serviced_import=KERNEL32.dll!CreateThread\n");
+                fprintf(log, "startup_thread_handle=0x%08X\n", worker.handle);
+                fprintf(log, "startup_thread_id=%u\n", worker.id);
+                fprintf(log, "startup_thread_id_readback=passed\n");
+                fprintf(log, "startup_thread_stack_bytes=28\n");
+                fprintf(log, "startup_thread_handoff=worker_blocked_main_resumed\n");
+                worker_create_frame = 0;
+                expected_boundary = false;
+                cpu.take_limit_hit(); cpu.set_run_limit(4096);
+                stopped = cpu.run(ret,&fault);
+                limit = cpu.take_limit_hit();
+            }
+        }
+    }
+    fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
     watchdog.finish();
     fprintf(log, "startup_elapsed_us=%llu\n",
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
@@ -405,7 +449,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
     fprintf(log, "startup_module_calls=%u\n", services.module_calls());
-    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls());
+    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls() + (thread_created ? 1u : 0u));
     fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
     fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
     fprintf(log, "startup_heap_other_calls=%u\n", services.heap_other_calls());

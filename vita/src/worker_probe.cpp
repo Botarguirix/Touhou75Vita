@@ -1,4 +1,5 @@
 #include "worker_probe.h"
+#include "startup_services.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread.h"
@@ -6,12 +7,12 @@
 #include <psp2/kernel/processmgr.h>
 #include <array>
 
-bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame, FILE* log) {
+bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame,
+                      StartupServices& services, StartupWorker& state, FILE* log) {
     constexpr uint32_t stack = 0x00A00000, top = 0x00A20000, teb = 0x00760000;
     constexpr uint32_t sentinel = 0x00BFFFC0, traps = 0x00B00000;
     uint32_t args[6] = {};
-    fprintf(log, "worker_probe_scope=original_worker_to_first_import_only\n");
-    fprintf(log, "worker_create_thread_serviced=no\n");
+    fprintf(log, "worker_probe_scope=original_worker_to_first_blocking_wait\n");
     if (frame < 0x00800000 || uint64_t(frame) + 28 > 0x00A00000 ||
         !cpu.read(frame + 4, args, sizeof(args))) return false;
     for (unsigned i = 0; i < 6; ++i) fprintf(log, "worker_create_arg%u=0x%08X\n", i, args[i]);
@@ -56,6 +57,21 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
         fprintf(log, "worker_probe_esp=0x%08X\n", sp);
         fprintf(log, "worker_probe_frame=%s\n", valid ? "valid" : "invalid");
         fprintf(log, "worker_probe_import_executed=no\n");
+        uint32_t wait_args[2] = {};
+        uint32_t tls_slot = 1;
+        if (valid && imp.dll == "KERNEL32.dll" && imp.name == "WaitForSingleObject" &&
+            ret == 0x00423B8C && uint64_t(sp)+12 <= top && c.read(sp+4,wait_args,8) &&
+            wait_args[1] && services.event_unsignaled(wait_args[0]) &&
+            c.read(teb+0xE10,&tls_slot,4) && !tls_slot) {
+            state.event = wait_args[0]; state.timeout_ms = wait_args[1];
+            state.wait_started_us = sceKernelGetProcessTimeWide();
+            state.blocked = true;
+            c.save_context(state.context); // Preserve the unexecuted wait frame.
+            fprintf(log, "worker_wait_handle=0x%08X\n", state.event);
+            fprintf(log, "worker_wait_timeout_ms=%u\n", state.timeout_ms);
+            fprintf(log, "worker_wait_state=blocked_saved_context\n");
+            fprintf(log, "worker_tls_slot0=zero\n");
+        }
         return false;
     });
     cpu.take_limit_hit(); cpu.set_run_limit(4096);
@@ -66,8 +82,8 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
     fprintf(log, "worker_probe_elapsed_us=%llu\n", (unsigned long long)(sceKernelGetProcessTimeWide()-start));
     fprintf(log, "worker_probe_limit_hit=%s\n", limit ? "yes" : "no");
     if (!stopped) fprintf(log, "worker_probe_fault=%s\n", fault ? fault : "unknown");
-    const bool passed = stopped && hit && valid && !limit;
-    fprintf(log, "worker_probe_result=%s\n", passed ? "reached_first_import" : "failed");
-    fprintf(log, "worker_scheduler=not_implemented\n");
+    const bool passed = stopped && hit && valid && !limit && state.blocked;
+    fprintf(log, "worker_probe_result=%s\n", passed ? "blocked_context_saved" : "failed");
+    fprintf(log, "worker_scheduler=bounded_initial_handoff\n");
     return passed;
 }

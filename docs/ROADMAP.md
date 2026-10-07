@@ -78,6 +78,10 @@ blocking waits and actual guest workers remain scheduler work.
 Hardware iteration 35 created the event and reached CreateThread. Iteration 36
 diagnoses the original worker's first import with its own stack/TEB while the
 main remains stopped. Full scheduling and thread creation remain required.
+Hardware iteration 36 executed the worker to its first WaitForSingleObject.
+Iteration 37 saves that wait context and resumes main after the observed
+CreateThread. Continuous scheduling, event/time wakeups and priority handling
+are still required; this is only the initial context handoff.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
