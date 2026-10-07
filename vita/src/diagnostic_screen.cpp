@@ -9,6 +9,7 @@
 #include <map>
 #include <string>
 #include "pe_resources.h"
+#include "th075_assets.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -75,7 +76,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 44 - BATCH CHECKS",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 45 - BATCH CHECKS",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -85,6 +86,12 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         fprintf(log,"screen_original_exe_icon=decoded_resource_presented\n");
     }
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
+    if(th075::title_preview.size()==640u*480u) {
+        text(pixels,700,205,"DAT RESOURCE",neutral,2);
+        for(unsigned y=0;y<180;++y)for(unsigned x=0;x<240;++x)
+            pixels[(228+y)*960+700+x]=th075::title_preview[(y*480/180)*640+x*640/240];
+        fprintf(log,"screen_original_dat_title=decoded_frame_preview_presented\n");
+    }
     text(pixels,40,137,result==0?"RESULT: STARTUP CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};
     const char* keys[]={"game_sha256_result","dynarec_smoke_result","import_smoke_result",

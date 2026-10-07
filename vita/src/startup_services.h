@@ -88,8 +88,10 @@ private:
         uint32_t handle=0, procedure=0, frame=0, return_address=0;
         std::array<uint32_t,12> args{};
         std::vector<uint32_t> surface;
-        bool created=false;
+        bool created=false, visible=false;
     } window_;
     bool window_pending_=false;
     uint32_t window_callback_message_=0, window_callback_parameter_=0;
+    uint32_t window_callback_wparam_=0;
+    bool window_show_pending_=false, window_was_visible_=false;
 };

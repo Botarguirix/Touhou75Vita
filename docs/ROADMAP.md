@@ -115,3 +115,5 @@ exist. Windows D3D8 trace and archive inventory now provide concrete texture,
 draw, render-target and shader requirements for the graphics implementation.
 
 Hardware iteration 43 decoded and displayed the EXE icon and registered its window class, then stopped at CreateWindowExA with 300/300 cases passing. Iteration 44 adds synchronous WM_NCCREATE, WM_NCCALCSIZE and WM_CREATE execution in the original WndProc, an owned logical window surface and verification of the original create flag. Hardware callback validation, visibility/message handling and Direct3D rendering are the next milestones.
+
+Hardware iteration 44 validated all three original window creation callbacks and stopped at ShowWindow. Iteration 45 extracts 272 system images on the host, adds a direct DAT title-frame reader/preview on Vita, adds visibility callbacks and packages local LiveArea identity art. Next priorities are UpdateWindow/message processing, original file-access/texture upload integration and the D3D8 renderer. Resource previews and LiveArea art do not establish game boot.
