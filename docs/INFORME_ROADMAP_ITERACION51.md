@@ -2,6 +2,13 @@
 
 Fecha: 7 de octubre de 2026. Nueva entrega: iteración 51, versión 01.55.
 
+Actualización tras la prueba física 51: se crearon el dispositivo REF/software
+y la textura de 1024×1024, pero hubo un fallo de índices del puente en
+SetTextureStageState. La iteración 52/01.56 corrige ese despacho y el índice
+de profundidad. Sus resultados físicos siguen pendientes. Detalles y evidencia:
+[STATUS_ITERATION52.md](STATUS_ITERATION52.md). El resto del informe conserva
+la fotografía del proyecto al entregar la versión 51.
+
 ## Dónde estamos
 
 El EXE original ya ejecuta su entrada y parte de la inicialización en la Vita

@@ -18,6 +18,12 @@ public:
         handles=0x00ABC000, staging=0x01400000, staging_size=0x00400000,
         budget=32u*1024u*1024u;
     static constexpr unsigned capacity=512;
+    // Slots counted from IUnknown in the primary IDirect3DDevice8 declaration.
+    enum DeviceSlot : unsigned {
+        CreateRenderTarget=25, CreateDepthStencilSurface=26,
+        GetTexture=60, SetTexture=61, GetTextureStageState=62,
+        SetTextureStageState=63, ValidateDevice=64
+    };
     D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs) {}
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
     bool owns(uint32_t t) const {return range(t,device_trap,97)||range(t,texture_trap,19)||range(t,surface_trap,11);}
@@ -39,13 +45,15 @@ public:
         case 6:return "GetDirect3D";case 7:return "GetDeviceCaps";case 8:return "GetDisplayMode";
         case 9:return "GetCreationParameters";case 15:return "Present";case 16:return "GetBackBuffer";
         case 20:return "CreateTexture";case 31:return "SetRenderTarget";case 32:return "GetRenderTarget";
-        case 25:return "CreateDepthStencilSurface";
+        case CreateRenderTarget:return "CreateRenderTarget";
+        case CreateDepthStencilSurface:return "CreateDepthStencilSurface";
         case 33:return "GetDepthStencilSurface";case 34:return "BeginScene";case 35:return "EndScene";
         case 36:return "Clear";case 50:return "SetRenderState";case 51:return "GetRenderState";
         case 52:return "BeginStateBlock";case 53:return "EndStateBlock";case 54:return "ApplyStateBlock";
         case 55:return "CaptureStateBlock";case 56:return "DeleteStateBlock";case 57:return "CreateStateBlock";
-        case 61:return "GetTexture";case 62:return "SetTexture";case 63:return "GetTextureStageState";
-        case 64:return "SetTextureStageState";case 72:return "DrawPrimitiveUP";case 76:return "SetVertexShader";
+        case GetTexture:return "GetTexture";case SetTexture:return "SetTexture";case GetTextureStageState:return "GetTextureStageState";
+        case SetTextureStageState:return "SetTextureStageState";case ValidateDevice:return "ValidateDevice";
+        case 72:return "DrawPrimitiveUP";case 76:return "SetVertexShader";
         case 77:return "GetVertexShader";case 88:return "CreatePixelShader";case 89:return "SetPixelShader";
         default:return "UnimplementedSlot";
         }
@@ -126,7 +134,15 @@ private:
     static StartupServiceResult serviced(){return StartupServiceResult::Serviced;}
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
     StartupServiceResult unsupported(){fprintf(log_,"startup_d3d8_method_executed=no\n");return StartupServiceResult::Unsupported;}
-    template<class T> bool put(uint32_t address,const T& value){return address && cpu_.write(address,&value,sizeof(value));}
+    template<class T> bool put(uint32_t address,const T& value){
+        // Reject low integer values before Cpu::write: the emulated zero page
+        // may be mapped for FS/SEH, but is not a COM output buffer.
+        if(address<0x10000 || uint64_t(address)+sizeof(value)>0x02000000) {
+            fprintf(log_,"startup_d3d8_output_rejected=address:0x%08X bytes:%u\n",address,unsigned(sizeof(value)));
+            return false;
+        }
+        return cpu_.write(address,&value,sizeof(value));
+    }
     bool table(uint32_t address,uint32_t traps,unsigned count) {
         std::array<uint32_t,97> a{},b{};for(unsigned i=0;i<count;++i)a[i]=traps+i*16;
         return cpu_.write(address,a.data(),count*4) && cpu_.read(address,b.data(),count*4) && a==b;
@@ -159,8 +175,8 @@ private:
         }
         switch(s){case 3:case 4:case 34:case 35:return 1;
         case 6:case 7:case 8:case 9:case 32:case 33:case 76:case 77:return 2;
-        case 16:return 4;case 20:return 8;case 25:return 6;case 36:return 7;
-        case 50:case 51:return 3;case 63:case 64:return 4;default:return 0;}
+        case 16:return 4;case 20:return 8;case CreateDepthStencilSurface:return 6;case 36:return 7;
+        case 50:case 51:return 3;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
     }
     StartupServiceResult device_call(unsigned s,const uint32_t* w,uint32_t& value) {
         switch(s) {
@@ -173,7 +189,7 @@ private:
         case 16:if(w[2] || w[3])return unsupported();return surface_output(back_,w[4]);
         case 32:return surface_output(target_,w[2]);
         case 33:return surface_output(depth_,w[2]);
-        case 25: {
+        case CreateDepthStencilSurface: {
             if(!w[6] || !put(w[6],0u))return failure();
             if(!w[2] || !w[3] || w[2]>1024 || w[3]>1024 || w[4]!=80 || w[5])return unsupported();
             uint32_t h=0;if(!allocate(w[2],w[3],80,2,0,false,h)){value=0x8876017C;return serviced();}
@@ -194,8 +210,15 @@ private:
         }
         case 50:if(w[2]>=render_.size() || !render_state(w[2],w[3]))return unsupported();render_[w[2]]=w[3];return serviced();
         case 51:if(w[2]>=render_.size())return unsupported();return put(w[3],render_[w[2]])?serviced():failure();
-        case 63:if(w[2] || w[3]>=stage_.size())return unsupported();return put(w[4],stage_[w[3]])?serviced():failure();
-        case 64:if(w[2] || w[3]>=stage_.size() || !stage_state(w[3],w[4]))return unsupported();stage_[w[3]]=w[4];return serviced();
+        case GetTextureStageState:
+            if(w[2] || w[3]>=stage_.size() || !stage_valid_[w[3]])return unsupported();
+            fprintf(log_,"startup_d3d8_stage_get=stage:%u type:%u output:0x%08X value:%u\n",w[2],w[3],w[4],stage_[w[3]]);
+            return put(w[4],stage_[w[3]])?serviced():failure();
+        case SetTextureStageState:
+            if(w[2] || w[3]>=stage_.size() || !stage_state(w[3],w[4]))return unsupported();
+            stage_[w[3]]=w[4];stage_valid_[w[3]]=true;
+            fprintf(log_,"startup_d3d8_stage_set=stage:%u type:%u value:%u output_write:none\n",w[2],w[3],w[4]);
+            return serviced();
         case 76:if(w[2]!=0x144)return unsupported();fvf_=w[2];return serviced();
         case 77:return put(w[2],fvf_)?serviced():failure();
         case 34:if(scene_)return failure();scene_=true;return serviced();
@@ -279,6 +302,7 @@ private:
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
     std::array<Resource,capacity> resources_{};
     std::array<uint32_t,256> render_{};std::array<uint32_t,32> stage_{};
+    std::array<bool,32> stage_valid_{};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     bool scene_=false;
 };

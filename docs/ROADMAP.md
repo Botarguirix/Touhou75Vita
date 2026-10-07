@@ -1,11 +1,14 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 51, version 01.55
+## Current checkpoint — iteration 52, version 01.56
 
-Last physical confirmation: iteration 50 reached GetDeviceCaps in 5.5 seconds.
-Iteration 51 adds partial software device/resource storage and texture uploads;
-physical validation is pending. Draw/Present and original visual boot remain
-unimplemented. See [Spanish progress report](INFORME_ROADMAP_ITERACION51.md)
-and [scope](STATUS_ITERATION51.md). Historical observations follow below.
+Physical iteration 51 created the REF/software device, color/depth buffers
+and a 1024x1024 texture, then failed at a misdispatched SetTextureStageState
+after 5.77 seconds. Iteration 52 corrects that dispatch and another depth
+surface index; physical validation of the fix is pending. Texture uploads,
+Draw/Present and original visual boot are not hardware-confirmed. See
+[latest scope/evidence](STATUS_ITERATION52.md) and the
+[Spanish progress report](INFORME_ROADMAP_ITERACION51.md).
+Historical observations follow below.
 
 
 ## Phase 0 — reproducible diagnostic shell (complete)
