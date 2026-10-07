@@ -24,15 +24,15 @@
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration48.log"
-#define BUILD_ID "iteration48-boot-startup-r1"
+#define LOG_PATH APP_DIR "/iteration49.log"
+#define BUILD_ID "iteration49-boot-startup-r1"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration48-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration49-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -189,10 +189,10 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 
 static int run(FILE* log) {
     if(!th075::load_title_asset(log))fprintf(log,"dat_title_preview=unavailable\n");
-    fprintf(log, "Touhou 7.5 Vita - Iteration 48 original EXE process startup\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 49 original EXE process startup\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     errno = 0;
-    const int old_watchdog = remove(APP_DIR "/iteration48-watchdog.log");
+    const int old_watchdog = remove(APP_DIR "/iteration49-watchdog.log");
     const int watchdog_errno = errno;
     fprintf(log, "watchdog_previous_log_cleared=%s\n",
         old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");
@@ -287,9 +287,13 @@ int main(void) {
     if (log == NULL) {
         return 2;
     }
-    setvbuf(log, nullptr, _IONBF, 0);
+    // Group each import's diagnostic lines into one native write. The
+    // startup trap flushes at every boundary; the watchdog has its own file.
+    static char diagnostic_buffer[8192];
+    setvbuf(log, diagnostic_buffer, _IOFBF, sizeof(diagnostic_buffer));
 
     const int result = run(log);
+    fflush(log); // The results screen reopens this file to read final status.
     show_diagnostic_screen(LOG_PATH, result, log);
     fflush(log);
     fclose(log);

@@ -98,5 +98,6 @@ private:
     bool window_paint_pending_=false;
     std::map<uint32_t,unsigned> com_apartments_;
     std::map<uint32_t,FILE*> files_;
+    std::set<uint32_t> writable_files_;
     uint32_t next_file_handle_=0x00AB8000;
 };

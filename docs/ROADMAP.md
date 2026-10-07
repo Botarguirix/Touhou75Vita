@@ -134,3 +134,9 @@ The next slice expired at the CRT SEH setup helper after 62 HeapAlloc calls.
 Iteration 48 extends bounded continuation to verified executable sections,
 logging sampled CPU/stack state and import/allocation counts while retaining
 the 16-slice cap, elapsed-time bound and independent watchdog.
+
+Hardware iteration 48 read all three archive directories and reached the
+game's write-only log.txt creation without a CPU limit. Iteration 49 adds
+the observed log creation/reopening and synchronous write path, and groups
+diagnostic writes by import boundary. The next milestone is returning from
+original logging and reaching actual resource/graphics initialization.

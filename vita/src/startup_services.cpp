@@ -96,9 +96,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool file_open = import.name == "CreateFileA";
     const bool file_size = import.name == "GetFileSize";
     const bool file_read = import.name == "ReadFile";
+    const bool file_write = import.name == "WriteFile";
     const bool file_seek = import.name == "SetFilePointer";
     const bool file_attributes = import.name == "GetFileAttributesA";
-    const bool file_io = file_open || file_size || file_read || file_seek || file_attributes;
+    const bool file_io = file_open || file_size || file_read || file_write || file_seek || file_attributes;
     const bool handle_count = import.name == "SetHandleCount";
     const bool environment_get = import.name == "GetEnvironmentStringsW" ||
         import.name == "GetEnvironmentStringsA" || import.name == "GetEnvironmentStrings";
@@ -137,7 +138,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : file_read ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
+    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
         ((com_uninit || tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
         ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((file_size || window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
@@ -178,20 +179,39 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             } else {
                 uint32_t args[7]{};
                 if(!cpu_.read(esp+4,args,28))return StartupServiceResult::ContractFailure;
-                if(args[1]!=0x80000000u || args[2]>7 || args[3] || args[4]!=3 ||
+                fprintf(log_,"startup_file_open_access=0x%08X disposition=%u share=%u flags=0x%08X\n",args[1],args[4],args[2],args[5]);
+                const bool readonly=args[1]==0x80000000u && args[4]==3;
+                const bool game_log=args[1]==0x40000000u && args[2]==0 &&
+                    (args[4]==2 || args[4]==3) && args[5]==0x80 && native=="ux0:data/TH075Vita/log.txt";
+                if((!readonly && !game_log) || args[2]>7 || args[3] ||
                    (args[5]&~0x08000080u) || args[6])return StartupServiceResult::Unsupported;
                 if(files_.size()>=32)wx86_set_lasterr(cpu_,4);
                 else {
-                    FILE* file=fopen(native.c_str(),"rb");
-                    if(!file)wx86_set_lasterr(cpu_,2);
-                    else {expected_eax=next_file_handle_;next_file_handle_+=4;files_.emplace(expected_eax,file);}
+                    SceIoStat info{};
+                    const bool existed=sceIoGetstat(native.c_str(),&info)>=0;
+                    FILE* file=fopen(native.c_str(),readonly ? "rb" : args[4]==2 ? "wb" : "r+b");
+                    if(!file)wx86_set_lasterr(cpu_,existed || args[4]==2 ? 5:2);
+                    else {expected_eax=next_file_handle_;next_file_handle_+=4;files_.emplace(expected_eax,file);
+                        if(game_log) {
+                            writable_files_.insert(expected_eax);
+                            if(args[4]==2)wx86_set_lasterr(cpu_,existed ? 183:0);
+                            fprintf(log_,"startup_file_write_scope=original_game_log_txt\n");
+                        }
+                    }
                 }
             }
         } else {
+            uint32_t write_args[5]{};
+            if(file_write) {
+                uint32_t zero=0;
+                if(!cpu_.read(esp+4,write_args,20))return StartupServiceResult::ContractFailure;
+                if(write_args[4] || write_args[2]>4u*1024u*1024u)return StartupServiceResult::Unsupported;
+                if(!write_args[3] || !cpu_.write(write_args[3],&zero,4))return StartupServiceResult::ContractFailure;
+            }
             const auto it=files_.find(arg);
             if(it==files_.end()) {wx86_set_lasterr(cpu_,6);expected_eax=file_size || file_seek ? 0xFFFFFFFFu:0u;}
             else if(event_close) {
-                const int rc=fclose(it->second);files_.erase(it);expected_eax=rc==0 ? 1u:0u;
+                const int rc=fclose(it->second);writable_files_.erase(arg);files_.erase(it);expected_eax=rc==0 ? 1u:0u;
                 if(rc)wx86_set_lasterr(cpu_,5);
             } else if(file_type)expected_eax=1;
             else if(file_size) {
@@ -218,6 +238,21 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         wx86_set_lasterr(cpu_,0);
                     }
                 }
+            } else if(file_write) {
+                if(!writable_files_.count(arg)) {expected_eax=0;wx86_set_lasterr(cpu_,5);}
+                else {
+                    std::vector<uint8_t> bytes(write_args[2]);
+                    if(uint64_t(write_args[1])+write_args[2]>0x02000000ull ||
+                        (write_args[2] && !cpu_.read(write_args[1],bytes.data(),write_args[2])))
+                        return StartupServiceResult::ContractFailure;
+                    const uint32_t written=bytes.empty() ? 0u:uint32_t(fwrite(bytes.data(),1,bytes.size(),it->second));
+                    const int flush=fflush(it->second);
+                    if(!cpu_.write(write_args[3],&written,4))return StartupServiceResult::ContractFailure;
+                    expected_eax=written==write_args[2] && flush==0 && !ferror(it->second) ? 1u:0u;
+                    if(!expected_eax)wx86_set_lasterr(cpu_,29);
+                    fprintf(log_,"startup_file_write_bytes=%u requested=%u flushed=%s\n",written,write_args[2],flush==0 ? "yes":"no");
+                }
+            } else if(file_read && writable_files_.count(arg)) {expected_eax=0;wx86_set_lasterr(cpu_,5);
             } else if(file_read) {
                 uint32_t args[5]{};
                 if(!cpu_.read(esp+4,args,20))return StartupServiceResult::ContractFailure;
@@ -239,7 +274,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
         }
         ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_file_scope=owned_readonly_application_mount\n");
+        fprintf(log_,"startup_file_scope=owned_application_mount_readonly_assets_writable_log\n");
         fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
     } else if(com) {
         const uint32_t tib=wx86_cur_tib();
