@@ -52,7 +52,7 @@ decoded art remain in the parent workspace's artifacts/iteration45 directory.
 
 ## Local LiveArea package
 
-Version 01.49, title ID T075VITA1, build_id=iteration45-batch-checks-r1.
+Version 01.49, title ID T075VITA1, build_id=iteration45-batch-checks-r2.
 The delivered local VPK includes the decoded original ICON1 for its bubble,
 a title-screen-based annotated LiveArea background with ITERACION 45 and
 VERSION 01.49 at bottom left, a startup image and loading picture.
@@ -73,6 +73,17 @@ download for the requested artwork; no EXE or DAT is bundled in either VPK.
 Hardware acceptance is still pending: inspect dat_title_result,
 screen_original_dat_title, startup_window_show and final startup_stop_import.
 Keep TH075.exe and th075.dat in ux0:data/TH075Vita and send all iteration45 logs.
+
+### R2 installation repair
+
+The first package failed installation with 0x8010113D. Inspection of its actual
+PNG IHDR found icon0.png encoded at 4 bits per palette index, while the other
+images were 8-bit. Pillow automatically reduced the icon because it has few
+colors. R2 explicitly saves all images with bits=8, disables the optimization
+and validates each generated IHDR. XML is written with ordinary LF newlines.
+The packaged PNG headers, XML parsing and ZIP CRC are inspected after rebuild;
+installation still requires confirmation on the user's Vita. Runtime services,
+LiveArea labels and APP_VER 01.49 remain those of iteration 45.
 
 ## References
 

@@ -23,7 +23,7 @@ The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes *
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
 3. Launch **Touhou 7.5 Vita - Iteration 45 Batch Checks**, package version 01.49, on the same Vita used previously. The screen must show ITERATION 45.
 4. Wait for the results screen. Photograph it, then press X to exit; automatic exit after 120 seconds.
-5. Inspect iteration45.log, iteration45-runtime.log and iteration45-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration45-batch-checks-r1, dat_title_result=decoded_original_archive_frame, screen_original_dat_title, startup_window_show=guest_callbacks_completed and the final startup_stop_import/thread. The retained 300 synthetic service cases still report individually. The original EXE icon in the corner is a decoded resource preview; visual game boot remains unverified.
+5. Inspect iteration45.log, iteration45-runtime.log and iteration45-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration45-batch-checks-r2, dat_title_result=decoded_original_archive_frame, screen_original_dat_title, startup_window_show=guest_callbacks_completed and the final startup_stop_import/thread. The retained 300 synthetic service cases still report individually. The original EXE icon in the corner is a decoded resource preview; visual game boot remains unverified.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 

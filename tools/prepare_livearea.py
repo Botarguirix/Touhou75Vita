@@ -43,7 +43,13 @@ def original_icon(exe):
 def encode(image, dimensions, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     image.convert('RGB').resize(dimensions, Image.Resampling.LANCZOS).quantize(
-        colors=256, method=Image.Quantize.MEDIANCUT).save(destination, optimize=True)
+        colors=256, method=Image.Quantize.MEDIANCUT).save(destination, bits=8, optimize=False)
+    # Small palettes otherwise cause Pillow to select 1/2/4-bit PNGs. Vita's
+    # LiveArea loader requires the 8-bit indexed profile even for tiny icons.
+    header = destination.read_bytes()[16:29]
+    width, height, bits, color, compression, filtering, interlace = struct.unpack('>IIBBBBB', header)
+    if (width, height) != dimensions or (bits, color, compression, filtering, interlace) != (8, 3, 0, 0, 0):
+        raise ValueError(f'incompatible LiveArea PNG: {destination}')
 
 
 if __name__ == '__main__':
@@ -64,7 +70,7 @@ if __name__ == '__main__':
   <livearea-background><image>bg0.png</image></livearea-background>
   <gate><startup-image>startup.png</startup-image></gate>
 </livearea>
-''', encoding='utf-8')
+''', encoding='utf-8', newline='\n')
     for path in args.output.rglob('*.png'):
         with Image.open(path) as image:
             print(path.name, image.size, image.mode)
