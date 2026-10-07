@@ -1,5 +1,19 @@
 # Iteración 55 — DAT Audio / 01.59
 
+## Resultado físico recibido de la 55
+
+El efecto se decodificó con 20256 frames, 20222 muestras no nulas y
+FNV-1a32 BC1511DF, idéntico al PCM extraído en Windows. La conversión
+produjo 22048 frames estéreo de 48 kHz. Se registraron nueve ejecuciones:
+una automática y ocho con cuadrado. Cada ejecución entregó y drenó 22
+bloques con rc 0; configuración, volumen y liberación también devolvieron
+éxito. No se registraron errores de la ruta nativa de audio.
+
+El usuario confirmó que escuchó el efecto en la Vita. Queda validada la
+salida audible de esta prueba nativa con el recurso original. El watchdog quedó desarmado.
+La frontera del EXE permanece en IDirectSound8::CreateSoundBuffer.
+El texto siguiente conserva el alcance y comprobaciones de la entrega.
+
 ## Evidencia recibida de la 54
 
 DirectSound8 fue creado por COM. Initialize abrió el puerto nativo 7 y

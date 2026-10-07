@@ -1,13 +1,13 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 55, version 01.59
+## Current checkpoint — iteration 56, version 01.60
 
-Physical iteration 54 confirmed DirectSound8 COM activation, native audio
-port configuration and release. The EXE reached primary CreateSoundBuffer.
-Iteration 55 adds an audible native probe reading an original effect from
-the user's DAT. Its hardware audibility is pending; the EXE boundary is
-unchanged. Next: implement primary-buffer/format contracts, then native
-playback and the texture upload/Draw/Present path for a real title frame.
-See [scope/evidence](STATUS_ITERATION55.md). Historical observations follow.
+The user confirmed audible original-effect output on iteration 55.
+Iteration 56 streams random original DAT music with Triangle/Square/X
+controls and a dedicated native thread. Hardware streaming validation
+is pending. The EXE boundary remains at primary CreateSoundBuffer.
+Next boot work: primary buffers/format and the texture upload/Draw/Present
+path for a real title frame. See [scope/evidence](STATUS_ITERATION56.md).
+Historical observations follow below.
 
 ## Phase 0 — reproducible diagnostic shell (complete)
 
