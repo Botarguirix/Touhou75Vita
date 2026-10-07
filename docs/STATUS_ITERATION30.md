@@ -21,7 +21,8 @@ and startup_exception_dispatch=not_implemented. Native/runtime faults remain
 diagnostic stops. This iteration enables normal startup past registration
 and does not claim a working exception recovery mechanism.
 
-Install 01.33; confirm ITERATION 30 / iteration30-exception-filter-startup-r1.
+Install revision 2, version 01.34; confirm ITERATION 30 R2 /
+iteration30-exception-filter-startup-r2.
 Logs: iteration30.log, iteration30-runtime.log, iteration30-watchdog.log.
 Expected evidence: previous filter zero, registered pointer 0x0064654C,
 SetUnhandledExceptionFilter serviced, and a later boundary. Full game boot
@@ -30,3 +31,16 @@ were added or run.
 
 Reference:
 https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setunhandledexceptionfilter
+
+## Revision 2: packaging repair
+
+The user could not install revision 1 (0x80105A03). Direct inspection of its
+param.sfo found STITLE data length 56 bytes with maximum field size 52; the
+declared data extended into the following field. Iteration 29 had length 51
+and fit its field. This is a concrete metadata defect; the numeric installer
+error alone was not used to infer its meaning.
+
+Revision 2 shortens the title, bumps APP_VER to 01.34 and adds a CMake guard
+rejecting application names over 51 bytes. The runtime service change stays
+the same as revision 1. Rebuilt SFO metadata must fit every declared field;
+physical installation still needs confirmation. Logs remain iteration30*.log.
