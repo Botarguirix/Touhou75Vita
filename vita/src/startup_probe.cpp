@@ -1,5 +1,6 @@
 #include "startup_probe.h"
 #include "startup_services.h"
+#include "worker_probe.h"
 #include "seh_chain.h"
 #include "thread_smoke.h"
 #include "runtime/cpu.h"
@@ -22,7 +23,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration35-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration36-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -49,7 +50,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration35\n");
+        fprintf(report_, "watchdog_revision=iteration36\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -250,6 +251,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;
+    uint32_t worker_create_frame = 0;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
@@ -328,6 +330,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = services.call(imp);
+        if (service == StartupServiceResult::Unsupported && imp.dll == "KERNEL32.dll" &&
+            imp.name == "CreateThread" && ret == 0x00423A58) worker_create_frame = esp;
         if (service == StartupServiceResult::Serviced) return true;
         if (service == StartupServiceResult::ContractFailure) {
             service_failed = true;
@@ -385,8 +389,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
     const bool stopped = cpu.run(kEntry, &fault);
-    watchdog.finish();
     const bool limit = cpu.take_limit_hit();
+    const bool worker_ok = !worker_create_frame || run_worker_probe(cpu, image, worker_create_frame, log);
+    watchdog.finish();
     fprintf(log, "startup_elapsed_us=%llu\n",
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
     fprintf(log, "startup_final_eip=0x%08X\n", cpu.reg(d2rt::R_EIP));
@@ -424,10 +429,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         fprintf(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
         fprintf(log, "startup_fault_code=0x%08X\n", cpu.fault_code());
     }
-    const bool passed = stopped && !limit && !service_failed && expected_boundary;
+    const bool passed = stopped && !limit && !service_failed && expected_boundary && worker_ok;
     fprintf(log, "game_code_executed=%s\n", original_call_valid ? "yes" : "unconfirmed");
     fprintf(log, "startup_result=%s\n", passed ? "reached_next_import_after_heap" :
-        (!stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
+        (!worker_ok ? "worker_probe_failed" : !stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
         (service_failed ? "service_contract_failed" :
         (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
     return passed;

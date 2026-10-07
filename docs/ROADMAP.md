@@ -75,6 +75,9 @@ Iteration 34 serves that timer request and checks its saved caller chain.
 Hardware iteration 34 verified the saved game-entry caller chain, returned the
 timer request and reached CreateEventA. Iteration 35 tracks unnamed events;
 blocking waits and actual guest workers remain scheduler work.
+Hardware iteration 35 created the event and reached CreateThread. Iteration 36
+diagnoses the original worker's first import with its own stack/TEB while the
+main remains stopped. Full scheduling and thread creation remain required.
 The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
