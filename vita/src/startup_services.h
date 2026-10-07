@@ -7,7 +7,7 @@
 #include <vector>
 #include <string>
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
-enum class StartupServiceResult { Unsupported, Serviced, ContractFailure };
+enum class StartupServiceResult { Unsupported, Serviced, ContractFailure, Deferred };
 struct StartupWorker;
 // Bounded Win32 contracts for the observed TH075 startup path.
 class StartupServices {
@@ -15,6 +15,8 @@ public:
     StartupServices(d2rt::Cpu& cpu, const d2rt::PeImage& image, FILE* log)
         : cpu_(cpu), image_(image), log_(log) {}
     StartupServiceResult call(const d2rt::ImportRef& import);
+    bool window_pending() const { return window_pending_; }
+    bool finish_window_creation(); // Call only after Cpu::run has returned.
     void attach_worker(StartupWorker* worker) { worker_ = worker; }
     unsigned priority_calls() const { return priority_calls_; }
     unsigned version_calls() const { return version_calls_; }
@@ -82,4 +84,12 @@ private:
     std::vector<uint32_t> arrow_cursor_;
     struct WindowClass { uint16_t atom; std::array<uint32_t,12> fields; };
     std::map<std::string,WindowClass> window_classes_;
+    struct Window {
+        uint32_t handle=0, procedure=0, frame=0, return_address=0;
+        std::array<uint32_t,12> args{};
+        std::vector<uint32_t> surface;
+        bool created=false;
+    } window_;
+    bool window_pending_=false;
+    uint32_t window_callback_message_=0, window_callback_parameter_=0;
 };

@@ -113,3 +113,5 @@ loads and decodes real PE icon resources and records the guest window class,
 retaining an explicit CreateWindowExA boundary until synchronous callbacks
 exist. Windows D3D8 trace and archive inventory now provide concrete texture,
 draw, render-target and shader requirements for the graphics implementation.
+
+Hardware iteration 43 decoded and displayed the EXE icon and registered its window class, then stopped at CreateWindowExA with 300/300 cases passing. Iteration 44 adds synchronous WM_NCCREATE, WM_NCCALCSIZE and WM_CREATE execution in the original WndProc, an owned logical window surface and verification of the original create flag. Hardware callback validation, visibility/message handling and Direct3D rendering are the next milestones.

@@ -44,8 +44,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool icon_load = import.dll == "USER32.dll" && import.name == "LoadIconA";
     const bool cursor_load = import.dll == "USER32.dll" && import.name == "LoadCursorA";
     const bool class_register = import.dll == "USER32.dll" && import.name == "RegisterClassExA";
+    const bool window_create = import.dll == "USER32.dll" && import.name == "CreateWindowExA";
+    const bool window_default = import.dll == "USER32.dll" && import.name == "DefWindowProcA";
     const bool stock = import.dll == "GDI32.dll" && import.name == "GetStockObject";
-    const bool gui = icon_load || cursor_load || class_register || stock;
+    const bool gui = icon_load || cursor_load || class_register || stock || window_create || window_default;
     const bool winmm = import.dll == "WINMM.dll";
     const bool timer_begin = winmm && import.name == "timeBeginPeriod";
     const bool timer_end = winmm && import.name == "timeEndPeriod";
@@ -124,7 +126,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc || event_create) ? 4u :
+    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (window_default || string_type || heap_realloc || event_create) ? 4u :
         ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
         ((class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
@@ -144,7 +146,48 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
             return false;
         };
-        if(icon_load) {
+        if(window_create) {
+            if(window_pending_ || window_.handle)return StartupServiceResult::Unsupported;
+            std::array<uint32_t,12> args{};
+            if(!cpu_.read(esp+4,args.data(),48))return StartupServiceResult::ContractFailure;
+            std::string name,title;
+            auto cls=window_classes_.end();
+            if(args[1]<=0xFFFF) {
+                for(auto it=window_classes_.begin();it!=window_classes_.end();++it)
+                    if(it->second.atom==args[1]) {cls=it;break;}
+            } else {
+                if(!guest_string(args[1],name))return StartupServiceResult::ContractFailure;
+                cls=window_classes_.find(name);
+            }
+            if(cls==window_classes_.end()) {
+                wx86_set_lasterr(cpu_,1407);
+                cpu_.trap_epilogue(0,cleanup,ret);
+                return StartupServiceResult::Serviced;
+            }
+            if(!guest_string(args[2],title))return StartupServiceResult::ContractFailure;
+            // First observed top-level, hidden window in the borderless desktop.
+            if(args[0]!=0x40000 || args[3]!=0xC80000 || args[4]!=0x80000000 ||
+               args[5]!=0x80000000 || args[6]!=640 || args[7]!=480 || args[8] || args[9] ||
+               args[10]!=cls->second.fields[5] || args[11])return StartupServiceResult::Unsupported;
+            window_.handle=0x00AB7000;window_.procedure=cls->second.fields[2];
+            window_.frame=esp;window_.return_address=ret;window_.args=args;
+            window_.surface.assign(640u*480u,0xFFFFFFFFu);
+            window_pending_=true;
+            fprintf(log_,"startup_window_creation=deferred_guest_callbacks\n");
+            fprintf(log_,"startup_window_surface=owned_640x480_abgr_rendering_pending\n");
+            return StartupServiceResult::Deferred;
+        } else if(window_default) {
+            uint32_t params[4]{};
+            if(!cpu_.read(esp+4,params,16))return StartupServiceResult::ContractFailure;
+            if(!window_pending_ || params[0]!=window_.handle || params[1]!=window_callback_message_ ||
+               params[2] || params[3]!=window_callback_parameter_)return StartupServiceResult::Unsupported;
+            if(params[1]==0x81)expected_eax=1;
+            else if(params[1]==0x83) {
+                const uint32_t rectangle[4]={0,0,640,480};
+                if(!cpu_.write(params[3],rectangle,16))return StartupServiceResult::ContractFailure;
+            } else return StartupServiceResult::Unsupported;
+            fprintf(log_,"startup_window_default_message=0x%04X\n",params[1]);
+        } else if(icon_load) {
             uint32_t identifier=0;
             if(!cpu_.read(esp+8,&identifier,4))return StartupServiceResult::ContractFailure;
             if(arg!=image_.load_base())return StartupServiceResult::Unsupported;
@@ -1242,6 +1285,79 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     }
     fprintf(log_, "startup_service_abi=passed\n");
     return StartupServiceResult::Serviced;
+}
+
+bool StartupServices::finish_window_creation() {
+    if(!window_pending_ || cpu_.reg(d2rt::R_ESP)!=window_.frame ||
+       window_.frame<kStack+0x2000 || window_.procedure!=0x00603650)return false;
+    d2rt::X86Context main{};
+    cpu_.save_context(main);
+    const uint32_t tib=wx86_cur_tib();
+    const uint32_t data=window_.frame-128, frame=window_.frame-512;
+    constexpr uint32_t sentinel=0x00BFFFC0;
+    // CREATESTRUCTA: lpCreateParams, instance, menu, parent, cy, cx, y, x,
+    // style, window name, class name, exstyle. Default desktop origin is 0,0.
+    const auto& a=window_.args;
+    const uint32_t create[12]={a[11],a[10],a[9],a[8],a[7],a[6],0,0,a[3],a[2],a[1],a[0]};
+    const uint32_t rect[4]={0,0,640,480};
+    bool ok=cpu_.write(data,create,48) && cpu_.write(data+48,rect,16);
+    const uint32_t messages[3]={0x81,0x83,1};
+    const int preserved[4]={d2rt::R_EBX,d2rt::R_EBP,d2rt::R_ESI,d2rt::R_EDI};
+    for(unsigned i=0;i<3 && ok;++i) {
+        cpu_.load_context(main);
+        window_callback_message_=messages[i];
+        window_callback_parameter_=messages[i]==0x83 ? data+48:data;
+        const uint32_t args[5]={sentinel,window_.handle,messages[i],0,window_callback_parameter_};
+        ok=cpu_.write(frame,args,20);
+        bool returned=false, import_failed=false;
+        cpu_.set_trap(0x00B00000,0x00C00000,[&](d2rt::Cpu&,uint32_t trap) {
+            if(trap==sentinel) {returned=true;return false;}
+            if(trap<0x00B00000 || (trap-0x00B00000)%16 ||
+               (trap-0x00B00000)/16>=image_.imports().size()) {import_failed=true;return false;}
+            const auto& imp=image_.imports()[(trap-0x00B00000)/16];
+            if(imp.dll!="USER32.dll" || imp.name!="DefWindowProcA" ||
+               call(imp)!=StartupServiceResult::Serviced) {import_failed=true;return false;}
+            return true;
+        });
+        cpu_.set_reg(d2rt::R_ESP,frame);
+        cpu_.set_reg(d2rt::R_EIP,window_.procedure);
+        cpu_.take_limit_hit();cpu_.set_run_limit(4096);
+        const char* fault=nullptr;
+        const bool stopped=ok && cpu_.run(window_.procedure,&fault);
+        const bool limit=cpu_.take_limit_hit();
+        const uint32_t result=cpu_.reg(d2rt::R_EAX);
+        ok=stopped && !limit && returned && !import_failed &&
+           cpu_.reg(d2rt::R_ESP)==frame+20 && wx86_cur_tib()==tib;
+        for(int reg:preserved)ok=ok && cpu_.reg(reg)==main.gpr[reg];
+        ok=ok && (messages[i]==0x81 ? result!=0:messages[i]==1 ? result!=0xFFFFFFFFu:result==0);
+        fprintf(log_,"startup_window_callback_message=0x%04X\n",messages[i]);
+        fprintf(log_,"startup_window_callback_return=0x%08X\n",result);
+        fprintf(log_,"startup_window_callback_result=%s\n",ok ? "passed":"failed");
+        if(!stopped)fprintf(log_,"startup_window_callback_fault=%s\n",fault ? fault:"unknown");
+    }
+    uint8_t created=0;
+    uint32_t calculated[4]{};
+    ok=ok && cpu_.read(0x0068D674,&created,1) && created==1 &&
+       cpu_.read(data+48,calculated,16) && !std::memcmp(calculated,rect,16);
+    fprintf(log_,"startup_window_original_create_flag=%u\n",unsigned(created));
+    cpu_.load_context(main);
+    window_callback_message_=window_callback_parameter_=0;
+    window_pending_=false;
+    // Remove the callback closure before its stack captures go out of scope.
+    cpu_.set_trap(0,0,[](d2rt::Cpu&,uint32_t){return false;});
+    if(!ok) {
+        window_.surface.clear();window_.handle=0;
+        fprintf(log_,"startup_window_creation=callback_contract_failed\n");
+        return false;
+    }
+    window_.created=true;
+    cpu_.trap_epilogue(window_.handle,52,window_.return_address);
+    ok=cpu_.reg(d2rt::R_ESP)==window_.frame+52 &&
+       cpu_.reg(d2rt::R_EIP)==window_.return_address && cpu_.reg(d2rt::R_EAX)==window_.handle;
+    fprintf(log_,"startup_window_handle=0x%08X\n",window_.handle);
+    fprintf(log_,"startup_window_creation=%s\n",ok ? "guest_callbacks_completed":"epilogue_failed");
+    fprintf(log_,"startup_window_rendering=not_yet_connected\n");
+    return ok;
 }
 
 bool StartupServices::version_globals_match() {

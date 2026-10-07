@@ -20,12 +20,12 @@ constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
 // Allow the original entrypoint to traverse the post-HeapCreate allocator
-// setup while retaining the 30-second watchdog as the hard safety bound.
-constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 30000000;
+// setup while retaining the 60-second watchdog as the hard safety bound.
+constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration43-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration44-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -52,7 +52,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration43\n");
+        fprintf(report_, "watchdog_revision=iteration44\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -334,6 +334,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = services.call(imp);
+        if(service==StartupServiceResult::Deferred) {
+            fprintf(log,"startup_scheduler_yield=dispatch_window_creation\n");
+            return false;
+        }
         if(service==StartupServiceResult::Unsupported && imp.dll=="USER32.dll" && imp.name=="CreateWindowExA") {
             uint32_t args[12]{};
             if(stack_range(esp,52) && c.read(esp+4,args,sizeof(args))) {
@@ -458,6 +462,17 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(worker_ok && worker.unsupported_boundary) expected_boundary=true;
         else if(worker_ok) {
             priority_dispatch_requested=false;
+            expected_boundary=false;
+            cpu.take_limit_hit();cpu.set_run_limit(4096);
+            stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
+            limit=cpu.take_limit_hit();
+        }
+    }
+    if(services.window_pending() && stopped && !limit && !service_failed && worker_ok) {
+        const bool window_ok=services.finish_window_creation();
+        cpu.set_trap(kTrap,kTrapEnd,startup_trap);
+        if(!window_ok)service_failed=true;
+        else {
             expected_boundary=false;
             cpu.take_limit_hit();cpu.set_run_limit(4096);
             stopped=cpu.run(cpu.reg(d2rt::R_EIP),&fault);
