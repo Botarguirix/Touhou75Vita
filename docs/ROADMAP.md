@@ -140,3 +140,10 @@ game's write-only log.txt creation without a CPU limit. Iteration 49 adds
 the observed log creation/reopening and synchronous write path, and groups
 diagnostic writes by import boundary. The next milestone is returning from
 original logging and reaching actual resource/graphics initialization.
+
+Hardware iteration 49 completed original logging and reached Direct3DCreate8
+in 5.3 seconds. Iteration 50 adds an owned IDirect3D8 root/vtable and COM
+lifetime methods, with an explicit GetDeviceCaps boundary. Original static
+control flow includes that query even though the existing apitrace dump
+omits it. Native device/rendering and truthful capability reporting remain
+the next graphics milestones.
