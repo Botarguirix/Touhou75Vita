@@ -42,6 +42,10 @@ public:
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     static constexpr uint32_t processor_feature_trap = 0x00BFFFD0;
     bool heap_ready() const { return heap_ready_; }
+    bool com_ready(uint32_t tib) const {
+        const auto it=com_apartments_.find(tib);
+        return it!=com_apartments_.end() && it->second>0;
+    }
     bool event_unsignaled(uint32_t handle) const {
         const auto it = events_.find(handle);
         return it != events_.end() && !it->second.signaled;

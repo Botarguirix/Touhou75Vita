@@ -24,15 +24,15 @@
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration53.log"
-#define BUILD_ID "iteration53-native-input-r1"
+#define LOG_PATH APP_DIR "/iteration54.log"
+#define BUILD_ID "iteration54-native-audio-r1"
 
 static const uint32_t kArenaGuestLimit = 0x01000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration53-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration54-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -189,10 +189,10 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 
 static int run(FILE* log) {
     if(!th075::load_title_asset(log))fprintf(log,"dat_title_preview=unavailable\n");
-    fprintf(log, "Touhou 7.5 Vita - Iteration 53 original EXE process startup\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 54 original EXE process startup\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     errno = 0;
-    const int old_watchdog = remove(APP_DIR "/iteration53-watchdog.log");
+    const int old_watchdog = remove(APP_DIR "/iteration54-watchdog.log");
     const int watchdog_errno = errno;
     fprintf(log, "watchdog_previous_log_cleared=%s\n",
         old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");

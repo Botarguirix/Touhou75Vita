@@ -1,5 +1,10 @@
 # Iteración 53 — Native Input / 01.57
 
+Actualización física: el usuario confirmó DirectInput8Create, captura nativa
+y ABI correctos; el EXE pasó a DirectSoundInit y alcanzó CoCreateInstance
+en 6.190499 segundos. Todavía no ejerció el teclado. Evidencia y continuación:
+[iteración 54](STATUS_ITERATION54.md). El texto siguiente conserva la entrega original.
+
 ## Evidencia física recibida: iteración 52
 
 La Vita atendió 30 llamadas de Direct3D8, incluidas 11 llamadas a

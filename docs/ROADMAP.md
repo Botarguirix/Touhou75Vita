@@ -1,12 +1,13 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 53, version 01.57
+## Current checkpoint — iteration 54, version 01.58
 
-Physical iteration 52 confirmed the corrected graphics-state dispatch and
-reached DirectInput8Create in 6.018 seconds after 30 Direct3D8 calls.
-Iteration 53 introduces native pad capture and a TH075 DirectInput8 keyboard
-adapter. Physical validation of 53 is pending. Texture uploads, Draw/Present,
-audio and the original menu remain pending. See [scope/evidence](STATUS_ITERATION53.md)
-and [reviewed reference patterns](REFERENCE_REPENTOGXM.md).
+Physical iteration 53 confirmed DirectInput8Create and a native pad sample,
+then reached DirectSound activation in 6.190499 seconds. Keyboard polling
+remains unexercised. Iteration 54 adds restricted DirectSound8 COM activation,
+a native audio port with configuration readback and window cooperation.
+Physical validation of 54 is pending. Buffers/playback, texture uploads,
+Draw/Present and the original menu remain pending. See [scope/evidence](STATUS_ITERATION54.md)
+and [reviewed references](REFERENCE_REPENTOGXM.md).
 Historical observations follow below.
 
 ## Phase 0 — reproducible diagnostic shell (complete)

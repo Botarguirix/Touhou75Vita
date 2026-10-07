@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Physical iteration 52 confirmed the graphics-state correction: 30 Direct3D8 calls completed and the original EXE reached DirectInput8Create in 6.018 seconds. Iteration 53/version 01.57 adds a TH075 DirectInput8 bridge backed by native Vita pad snapshots and keyboard state. Its hardware validation is pending. Uploads, Draw/Present and the original game menu remain pending. See [iteration 53 scope](docs/STATUS_ITERATION53.md), [reviewed port references](docs/REFERENCE_REPENTOGXM.md), [original Windows reference](docs/ORIGINAL_REFERENCE_PASS_51.md) and [roadmap](docs/ROADMAP.md).
+Physical iteration 53 confirmed DirectInput8Create and a real native pad snapshot, then reached DirectSound's CoCreateInstance in 6.190499 seconds. Keyboard-device polling has not been exercised yet. Iteration 54/version 01.58 adds restricted DirectSound8 COM activation, default native audio-port initialization with configuration readback, and owned-window cooperation. Hardware validation of 54 is pending. Sound buffers, playback, texture uploads, Draw/Present and the original game menu remain pending. See [iteration 54 scope](docs/STATUS_ITERATION54.md), [reviewed references](docs/REFERENCE_REPENTOGXM.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,15 +15,15 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration53-native-input-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration54-native-audio-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe and th075.dat alongside it for the optional native title-resource preview.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 53 Native Input**, package version 01.57, on the same Vita used previously. The screen must show ITERATION 53.
+3. Launch **Touhou 7.5 Vita - Iteration 54 Native Audio**, package version 01.58, on the same Vita used previously. The screen must show ITERATION 54.
 4. Wait for the results screen. Photograph it, then press X to exit; automatic exit after 120 seconds.
-5. Inspect iteration53.log, iteration53-runtime.log and iteration53-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration53-native-input-r1, inspect startup_dinput_create/native_sample/abi and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
+5. Inspect iteration54.log, iteration54-runtime.log and iteration54-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration54-native-audio-r1, inspect startup_dsound_create/native_port/abi and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 

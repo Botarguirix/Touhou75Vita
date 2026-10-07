@@ -1,5 +1,11 @@
 # Informe de avance — Touhou 7.5 para PS Vita
 
+Última actualización: la prueba física 53 confirmó creación DirectInput8 y
+captura del mando, y alcanzó DirectSoundInit / CoCreateInstance. La 54/01.58
+incorpora activación DirectSound8 y puerto de audio nativo con readback;
+su prueba física está pendiente. Buffers/playback y el primer frame original
+siguen pendientes. Véase [estado y próximos pasos](STATUS_ITERATION54.md).
+
 Fecha: 7 de octubre de 2026. Nueva entrega: iteración 51, versión 01.55.
 
 Actualización tras la prueba física 52: se confirmó la corrección de

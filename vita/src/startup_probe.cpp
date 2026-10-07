@@ -2,6 +2,7 @@
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
 #include "dinput8_bridge.h"
+#include "dsound_bootstrap.h"
 #include "worker_probe.h"
 #include "seh_chain.h"
 #include "thread_smoke.h"
@@ -26,7 +27,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration53-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration54-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -92,7 +93,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration53\n");
+        fprintf(report_, "watchdog_revision=iteration54\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -272,6 +273,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     StartupServices services(cpu, image, log);
     D3D8Bootstrap d3d8(cpu,log);
     DirectInput8Bridge input(cpu,log);
+    DirectSoundBootstrap sound(cpu,log);
     TrapCleanup cleanup{cpu};
     if (image.imports().size() > (StartupServices::processor_feature_trap - kTrap) / 16) {
         fprintf(log, "startup_result=trap_space_exhausted\n"); return false;
@@ -308,6 +310,16 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             FILE* file;
             ~FlushBoundary() { fflush(file); }
         } flush_boundary{log};
+        if(sound.owns(trap)) {
+            ++main_import_calls;import_hit=true;
+            const auto result=sound.call(trap);
+            if(result==StartupServiceResult::Serviced)return true;
+            service_failed=result==StartupServiceResult::ContractFailure;
+            expected_boundary=!service_failed;
+            fprintf(log,"startup_stop_import=IDirectSound8::%s\n",sound.method_name(trap));
+            fprintf(log,"startup_stop_trap_va=0x%08X\n",trap);
+            return false;
+        }
         if(input.owns(trap)) {
             ++main_import_calls;import_hit=true;
             const auto result=input.call(trap);
@@ -401,7 +413,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = imp.dll=="d3d8.dll" && imp.name=="Direct3DCreate8" ? d3d8.create():
-            imp.dll=="DINPUT8.dll" && imp.name=="DirectInput8Create" ? input.create():services.call(imp);
+            imp.dll=="DINPUT8.dll" && imp.name=="DirectInput8Create" ? input.create():
+            imp.dll=="ole32.dll" && imp.name=="CoCreateInstance" ? sound.create(services.com_ready(wx86_cur_tib())):services.call(imp);
         if(service==StartupServiceResult::Deferred) {
             fprintf(log,"startup_scheduler_yield=dispatch_window_creation\n");
             return false;
@@ -614,6 +627,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
     fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
+    fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());
     fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
     fprintf(log, "startup_resume_slices=%u\nstartup_main_import_calls=%u\n", resume_slices, main_import_calls);
     if (limit || !stopped) fprintf(log, "startup_stop_import=%s EIP 0x%08X\n",
