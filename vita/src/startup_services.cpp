@@ -391,10 +391,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             fprintf(log_, "startup_module_handle_kind=runtime_opaque\n");
             fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
         } else {
-            if (version_calls_ != 1 || module_calls_ || import.iat_va != 0x006570A8 || ret != 0x006423A1) {
-                fprintf(log_, "startup_service_error=unsupported_module_call\n");
-                return StartupServiceResult::ContractFailure;
-            }
+            // NULL always identifies the current executable. The CRT queries
+            // it again immediately before passing HINSTANCE to game startup.
+            // This API contract must not depend on call count or return site.
             uint16_t mz = 0;
             uint32_t nt_offset = 0, signature = 0;
             const uint32_t base = image_.load_base();
@@ -408,6 +407,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             fprintf(log_, "startup_module_base_returned=0x%08X\n", base);
             fprintf(log_, "startup_module_headers=passed\n");
             fprintf(log_, "startup_module_return_va=0x%08X\n", ret);
+            fprintf(log_, "startup_module_handle_kind=current_executable\n");
+            if (ret == 0x006424AA) {
+                fprintf(log_, "startup_crt_game_call=next_after_module_return\n");
+                fprintf(log_, "startup_game_function_va=0x00602A60\n");
+                fprintf(log_, "startup_game_function_execution=not_yet_verified\n");
+            }
             cpu_.trap_epilogue(base, 8, ret); // HMODULE; stdcall ret 4
             expected_eax = base;
             ++module_calls_;

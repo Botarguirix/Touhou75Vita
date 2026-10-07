@@ -65,6 +65,10 @@ Hardware iteration 31 returned HeapSize=128 and reached GetSystemTimeAsFileTime
 without a limit hit. Its changed path did not exercise HeapReAlloc.
 Iteration 32 adds UTC time, guest process identity and monotonic clocks for
 the CRT initialization routine, with output readback and explicit clock sources.
+Hardware iteration 32 passed the observed clocks and reached the repeated
+GetModuleHandleA(NULL) query just before the call to 0x00602A60. Iteration 33
+corrects that query contract; reaching its return site alone is not proof that
+the game function executed or that the game booted.
 The next major milestone is completing CRT startup
 and reaching game initialization. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
