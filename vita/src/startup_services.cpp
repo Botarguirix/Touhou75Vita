@@ -6,11 +6,13 @@
 #include "runtime/guest_thread_ctx.h"
 #include <psp2/rtc.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/io/stat.h>
 #include <array>
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <iterator>
+#include <cstring>
 
 namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
@@ -37,12 +39,16 @@ bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
 }
 
 StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
+    const bool metrics = import.dll == "USER32.dll" && import.name == "GetSystemMetrics";
     const bool winmm = import.dll == "WINMM.dll";
     const bool timer_begin = winmm && import.name == "timeBeginPeriod";
     const bool timer_end = winmm && import.name == "timeEndPeriod";
     const bool timer_time = winmm && import.name == "timeGetTime";
     const bool multimedia_timer = timer_begin || timer_end || timer_time;
-    if (import.dll != "KERNEL32.dll" && !multimedia_timer) return StartupServiceResult::Unsupported;
+    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics) return StartupServiceResult::Unsupported;
+    const bool cwd_set = import.name == "SetCurrentDirectoryA";
+    const bool cwd_get = import.name == "GetCurrentDirectoryA";
+    const bool cwd = cwd_set || cwd_get;
     const bool version = import.name == "GetVersionExA";
     const bool module = import.name == "GetModuleHandleA";
     const bool proc_address = import.name == "GetProcAddress";
@@ -104,7 +110,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -114,15 +120,81 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = wide_to_bytes ? 8u : (bytes_to_wide || case_map) ? 6u : (string_type || heap_realloc || event_create) ? 4u :
         ((tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
-        ((proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
+        ((cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
         fprintf(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
-    if (priority) {
+    if (cwd) {
+        // The only mounted guest directory is the application's data directory.
+        // Never change the native process CWD or accept an unmounted guest path.
+        constexpr char directory[] = "C:\\TH075";
+        if(cwd_set) {
+            if(!arg) { wx86_set_lasterr(cpu_,87); }
+            else {
+                char path[260] = {}; bool terminated=false;
+                for(unsigned i=0;i<sizeof(path);++i) {
+                    if(uint64_t(arg)+i>0xFFFFFFFFull || !cpu_.read(arg+i,path+i,1))
+                        return StartupServiceResult::ContractFailure;
+                    if(!path[i]) {terminated=true;break;}
+                }
+                if(!terminated) { wx86_set_lasterr(cpu_,206); }
+                else {
+                    std::string normalized(path);
+                    for(char& ch:normalized) {
+                        if(ch=='/')ch='\\';
+                        if(ch>='a' && ch<='z')ch=char(ch-'a'+'A');
+                    }
+                    if(normalized.size()>3 && normalized.back()=='\\')normalized.pop_back();
+                    fprintf(log_,"startup_cwd_requested=%s\n",path);
+                    if(normalized!=directory && normalized!=".") {
+                        fprintf(log_,"startup_cwd_boundary=unmounted_path\n");
+                        return StartupServiceResult::Unsupported;
+                    }
+                    SceIoStat native{};
+                    const int rc=sceIoGetstat("ux0:data/TH075Vita",&native);
+                    if(rc<0 || !SCE_S_ISDIR(native.st_mode)) wx86_set_lasterr(cpu_,3);
+                    else expected_eax=1;
+                    fprintf(log_,"startup_cwd_native_stat_rc=0x%08X\n",unsigned(rc));
+                }
+            }
+        } else {
+            uint32_t destination=0;
+            if(!cpu_.read(esp+8,&destination,4))return StartupServiceResult::ContractFailure;
+            expected_eax=sizeof(directory);
+            if(arg>=sizeof(directory)) {
+                std::array<char,sizeof(directory)> check{};
+                if(!cpu_.write(destination,directory,sizeof(directory)) ||
+                   !cpu_.read(destination,check.data(),check.size()) ||
+                   std::memcmp(check.data(),directory,sizeof(directory)))
+                    return StartupServiceResult::ContractFailure;
+                expected_eax=sizeof(directory)-1;
+            }
+        }
+        fprintf(log_,"startup_cwd_guest=C:\\TH075\nstartup_cwd_native=ux0:data/TH075Vita\n");
+        fprintf(log_,"startup_cwd_scope=single_mounted_directory\n");
+        ++process_calls_;
+        cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+    } else if(metrics) {
+        // Logical game desktop, borderless. Actual rendering remains pending.
+        switch(arg) {
+            case 0: expected_eax=640;break;
+            case 1: expected_eax=480;break;
+            case 4: case 5: case 6: case 7: case 8: case 45: case 46: expected_eax=0;break;
+            default:
+                fprintf(log_,"startup_metrics_boundary=unimplemented_index_%u\n",arg);
+                return StartupServiceResult::Unsupported;
+        }
+        fprintf(log_,"startup_metrics_index=%u\nstartup_metrics_value=%u\n",arg,expected_eax);
+        fprintf(log_,"startup_metrics_profile=logical_640x480_borderless_rendering_pending\n");
+        ++process_calls_;
+        cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_serviced_import=USER32.dll!GetSystemMetrics\n");
+    } else if (priority) {
         if (!worker_ || arg != worker_->handle) {
             wx86_set_lasterr(cpu_,6);
             expected_eax = priority_get ? 0x7FFFFFFFu : 0;

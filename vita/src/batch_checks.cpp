@@ -26,7 +26,7 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         }
     } restore{cpu,saved,old_frame,old_error,setup};
     fprintf(log,"batch_scope=independent_synthetic_service_checks_on_vita\n");
-    constexpr unsigned total = 20;
+    constexpr unsigned total = 100;
     fprintf(log,"batch_total=%u\n",total);
     unsigned passed = 0;
     const char* step = "setup";
@@ -35,7 +35,7 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         std::vector<uint32_t> words{ret}; words.insert(words.end(),args.begin(),args.end());
         if(!cpu.write(frame,words.data(),uint32_t(words.size()*4))) return false;
         cpu.set_reg(d2rt::R_ESP,frame);
-        const d2rt::ImportRef imp{"KERNEL32.dll",name,0,0,0};
+        const d2rt::ImportRef imp{std::strcmp(name,"GetSystemMetrics")==0 ? "USER32.dll" : "KERNEL32.dll",name,0,0,0};
         const auto status = services.call(imp);
         result = cpu.reg(d2rt::R_EAX);
         fprintf(log,"batch_api=%s result=0x%08X serviced=%s\n",name,result,
@@ -262,6 +262,92 @@ bool run_batch_checks(d2rt::Cpu& cpu, StartupServices& services, FILE* log) {
         call("GetModuleFileNameA",{0,scratch+352,0},value) && !value && wx86_get_lasterr(cpu)==0 &&
         cpu.read(scratch+352,guard_copy.data(),8) && guard_copy==guard;
     report(20,"module_path_zero_capacity_preserves_guard",zero_path,"zero_capacity_return_error_or_write");
+    // Parameterized cases keep their input, expected result and independent ID.
+    for(unsigned capacity=0;capacity<20;++capacity) {
+        const unsigned id=21+capacity;
+        fprintf(log,"batch_test_begin=%02u\nbatch_input_capacity=%u\n",id,capacity);
+        const char* aliases[]={"C:\\TH075","c:\\th075\\","C:/TH075/","."};
+        const char* alias=aliases[capacity%4];
+        std::array<uint8_t,32> output{},actual{};output.fill(0xCC);
+        bool ok=setup && cpu.write(scratch+512,alias,uint32_t(std::strlen(alias)+1)) &&
+            call("SetCurrentDirectoryA",{scratch+512},value) && value==1 &&
+            cpu.write(scratch+576,output.data(),output.size());
+        wx86_set_lasterr(cpu,0x4141);
+        ok=ok && call("GetCurrentDirectoryA",{capacity,scratch+576},value) &&
+            value==(capacity<9 ? 9u : 8u) && wx86_get_lasterr(cpu)==0x4141 &&
+            cpu.read(scratch+576,actual.data(),actual.size());
+        if(capacity>=9)std::memcpy(output.data(),"C:\\TH075",9);
+        ok=ok && actual==output;
+        char name[80];std::snprintf(name,sizeof(name),"cwd_alias_%u_capacity_%u_guard_and_last_error",capacity%4,capacity);
+        report(id,name,ok,"cwd_mount_length_output_guard_or_error");
+    }
+    const unsigned sizes[]={1,2,7,8,15,16,17,31,32,33,63,64,65,127,128,129,255,256,257,1023};
+    for(unsigned index=0;index<20;++index) {
+        const unsigned id=41+index,size=sizes[index];
+        fprintf(log,"batch_test_begin=%02u\nbatch_input_heap_size=%u\n",id,size);
+        uint32_t block=0;
+        std::vector<uint8_t> zero(size,0),check(size,0xCC);
+        bool ok=setup && call("HeapAlloc",{0x00AB0000,8,size},block) && block &&
+            call("HeapSize",{0x00AB0000,0,block},value) && value==size &&
+            cpu.read(block,check.data(),size) && check==zero;
+        if(block){const bool freed=call("HeapFree",{0x00AB0000,0,block},value)&&value==1;ok=ok&&freed;}
+        char name[80];std::snprintf(name,sizeof(name),"heap_zero_init_requested_size_%u",size);
+        report(id,name,ok,"allocation_size_zero_bytes_or_cleanup");
+    }
+    struct EncodingCase {uint8_t first,second,length;uint16_t unit;};
+    const EncodingCase encodings[]={
+        {0,0,1,0},{1,0,1,1},{9,0,1,9},{10,0,1,10},{13,0,1,13},
+        {32,0,1,32},{65,0,1,65},{90,0,1,90},{97,0,1,97},{126,0,1,126},
+        {0xA1,0,1,0xFF61},{0xA2,0,1,0xFF62},{0xA3,0,1,0xFF63},
+        {0xA4,0,1,0xFF64},{0xA5,0,1,0xFF65},
+        {0x82,0xA0,2,0x3042},{0x82,0xA2,2,0x3044},{0x82,0xA4,2,0x3046},
+        {0x82,0xA6,2,0x3048},{0x82,0xA8,2,0x304A}};
+    for(unsigned index=0;index<20;++index) {
+        const unsigned id=61+index;const auto& item=encodings[index];
+        fprintf(log,"batch_test_begin=%02u\nbatch_input_unicode=0x%04X\n",id,item.unit);
+        const uint8_t input[]={item.first,item.second};uint16_t unit=0;
+        std::array<uint8_t,4> encoded_output{{0xCC,0xCC,0xCC,0xCC}},actual{};
+        uint32_t default_used=1;
+        bool ok=setup && cpu.write(scratch+512,input,item.length) &&
+            call("MultiByteToWideChar",{932,8,scratch+512,item.length,0,0},value) && value==1 &&
+            call("MultiByteToWideChar",{932,8,scratch+512,item.length,scratch+544,1},value) && value==1 &&
+            cpu.read(scratch+544,&unit,2) && unit==item.unit &&
+            cpu.write(scratch+576,encoded_output.data(),encoded_output.size()) &&
+            cpu.write(scratch+608,&default_used,4) &&
+            call("WideCharToMultiByte",{932,0,scratch+544,1,scratch+576,item.length,0,scratch+608},value) && value==item.length &&
+            cpu.read(scratch+608,&default_used,4) && !default_used &&
+            cpu.read(scratch+576,actual.data(),actual.size());
+        std::memcpy(encoded_output.data(),input,item.length);
+        ok=ok && actual==encoded_output;
+        char name[80];std::snprintf(name,sizeof(name),"cp932_U%04X_explicit_length_roundtrip_guard",item.unit);
+        report(id,name,ok,"encoding_size_unicode_roundtrip_guard_or_default");
+    }
+    const unsigned metric_indices[]={0,1,4,5,6,7,8,45,46};
+    for(unsigned index=0;index<9;++index) {
+        const unsigned id=81+index,metric=metric_indices[index];
+        fprintf(log,"batch_test_begin=%02u\nbatch_input_metric=%u\n",id,metric);
+        wx86_set_lasterr(cpu,0x8181);
+        const bool ok=setup && call("GetSystemMetrics",{metric},value) &&
+            value==(metric==0 ? 640u : metric==1 ? 480u : 0u) && wx86_get_lasterr(cpu)==0x8181;
+        char name[80];std::snprintf(name,sizeof(name),"logical_borderless_metric_%u",metric);
+        report(id,name,ok,"metric_value_or_last_error");
+    }
+    for(unsigned cycles=1;cycles<=11;++cycles) {
+        const unsigned id=89+cycles;const bool manual=(cycles%2)==0;
+        fprintf(log,"batch_test_begin=%02u\nbatch_input_event_cycles=%u\n",id,cycles);
+        uint32_t handle=0;
+        bool ok=setup && call("CreateEventA",{0,manual ? 1u:0u,0,0},handle) && handle;
+        for(unsigned cycle=0;cycle<cycles && ok;++cycle) {
+            ok=call("WaitForSingleObject",{handle,0},value) && value==0x102 &&
+                call("SetEvent",{handle},value) && value==1 &&
+                call("WaitForSingleObject",{handle,0},value) && !value &&
+                call("WaitForSingleObject",{handle,0},value) && value==(manual ? 0u:0x102u) &&
+                call("ResetEvent",{handle},value) && value==1;
+        }
+        if(handle){const bool closed=call("CloseHandle",{handle},value)&&value==1;ok=ok&&closed;}
+        char name[80];std::snprintf(name,sizeof(name),"event_%s_reset_%u_cycles",manual ? "manual":"auto",cycles);
+        report(id,name,ok,"event_cycle_state_wait_result_or_cleanup");
+    }
     fprintf(log,"batch_passed=%u\nbatch_failed=%u\nbatch_result=%s\n",passed,total-passed,passed==total?"passed":"failed");
     return passed==total;
 }

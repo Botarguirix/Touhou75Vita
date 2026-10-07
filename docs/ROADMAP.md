@@ -96,3 +96,10 @@ The next major milestone is returning from game initialization's synchronization
 and thread setup. Then record actual game asset requests and
 the first graphics calls before implementing a renderer for a real game frame.
 No reliable iteration count or completion percentage is available yet.
+
+Hardware iteration 40 passed twenty cases, resumed the original worker after
+its real timeout and reached SetCurrentDirectoryA on main. Iteration 41 mounts
+the application directory and serves the observed logical window dimensions,
+with 100 individual service cases per installation. Next priorities are the
+actual resource/window boundary, guest window creation, then a real game frame
+through the graphics backend. The diagnostic screen is not a game title screen.
