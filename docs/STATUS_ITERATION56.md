@@ -1,5 +1,11 @@
 # Iteración 56 — DAT Music / 01.60
 
+Resultado físico: el usuario confirmó música audible pero entrecortada.
+Se entregaron 101 bloques de 63.wav sin errores nativos y se liberaron
+puerto e hilo correctamente. El éxito de API no establece continuidad.
+La [iteración 57](STATUS_ITERATION57.md) corrige el drenaje por bloque y
+usa la frecuencia original mediante BGM con doble buffer.
+
 ## Música de comprobación
 
 Al presentar los resultados se elige aleatoriamente una pista de

@@ -11,6 +11,9 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>
+#include <malloc.h>
+#include <memory>
 
 namespace th075 {
 // Native, bounded DAT/WAV streaming; independent of guest DirectSound.
@@ -51,7 +54,7 @@ class MusicProbe {
         }
         const uint64_t seed=sceKernelGetProcessTimeWide();
         random_.seed(uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
-        fprintf(log,"bgm_inventory=passed tracks:%u seed:0x%08X\nbgm_scope=native_streaming_not_guest_directsound\nbgm_log=ux0:data/TH075Vita/iteration56-bgm.log\n",unsigned(tracks_.size()),uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
+        fprintf(log,"bgm_inventory=passed tracks:%u seed:0x%08X\nbgm_scope=native_streaming_not_guest_directsound\nbgm_log=ux0:data/TH075Vita/iteration57-bgm.log\n",unsigned(tracks_.size()),uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
         return !tracks_.empty();
     }
     struct WaveStream {
@@ -98,46 +101,64 @@ class MusicProbe {
         std::memcpy(&self,argument,sizeof(self));return self->run();
     }
     int run(){
-        FILE* log=fopen("ux0:data/TH075Vita/iteration56-bgm.log","wb");
+        FILE* log=fopen("ux0:data/TH075Vita/iteration57-bgm.log","wb");
         if(!log){state_.store(2);return -1;}
         setvbuf(log,nullptr,_IONBF,0);
         FILE* f=fopen(archive,"rb");
         if(!f){fprintf(log,"bgm_result=archive_open_failed\n");state_.store(2);fclose(log);return -1;}
-        const int port=sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN,1024,48000,SCE_AUDIO_OUT_MODE_STEREO);
+        SceKernelThreadInfo info{};info.size=sizeof(info);
+        if(sceKernelGetThreadInfo(sceKernelGetThreadId(),&info)>=0 && info.currentPriority>64){
+            const int priority_rc=sceKernelChangeThreadPriority(sceKernelGetThreadId(),info.currentPriority-1);
+            fprintf(log,"bgm_priority=before:%d requested:%d rc:0x%08X\n",info.currentPriority,info.currentPriority-1,unsigned(priority_rc));
+        }
+        constexpr unsigned frames_per_block=2048,buffer_samples=frames_per_block*2;
+        // Alternating buffers follow SDL's Vita backend. No per-block drain.
+        std::unique_ptr<int16_t,decltype(&std::free)> buffers(
+            static_cast<int16_t*>(memalign(64,2*buffer_samples*sizeof(int16_t))),&std::free);
+        if(!buffers){fprintf(log,"bgm_result=buffer_allocation_failed\n");state_.store(2);fclose(f);fclose(log);return -1;}
+        const int port=sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM,frames_per_block,44100,SCE_AUDIO_OUT_MODE_STEREO);
         fprintf(log,"bgm_open_rc=0x%08X\n",unsigned(port));
         if(port<0){state_.store(2);fclose(f);fclose(log);return -1;}
         int volume[2]={8192,8192};
         const int volume_rc=sceAudioOutSetVolume(port,static_cast<SceAudioOutChannelFlag>(SCE_AUDIO_VOLUME_FLAG_L_CH|SCE_AUDIO_VOLUME_FLAG_R_CH),volume);
         const int len=sceAudioOutGetConfig(port,SCE_AUDIO_OUT_CONFIG_TYPE_LEN),freq=sceAudioOutGetConfig(port,SCE_AUDIO_OUT_CONFIG_TYPE_FREQ),mode=sceAudioOutGetConfig(port,SCE_AUDIO_OUT_CONFIG_TYPE_MODE);
         fprintf(log,"bgm_config=frames:%d hz:%d mode:%d volume_rc:0x%08X gain:25_percent\n",len,freq,mode,unsigned(volume_rc));
-        bool good=volume_rc>=0 && len==1024 && freq==48000 && mode==SCE_AUDIO_OUT_MODE_STEREO;
-        WaveStream stream(f);std::array<int16_t,2048> block{};
+        bool good=volume_rc>=0 && len==int(frames_per_block) && freq==44100 && mode==SCE_AUDIO_OUT_MODE_STEREO;
+        fprintf(log,"bgm_pipeline=bgm_44100_pcm_no_resampling double_buffer_64byte_aligned drain_only_at_shutdown\n");
+        WaveStream stream(f);unsigned buffer_index=0;
         uint32_t active=0;uint64_t position=0,limit=0,total_blocks=0;int output_rc=0;
+        const uint64_t begin=sceKernelGetProcessTimeWide();
+        uint64_t fill_max=0,output_max=0,late_fill=0;
         while(good && !quit_.load(std::memory_order_acquire)){
             const uint32_t requested=command_.load(std::memory_order_acquire);
             if(requested!=active){
                 const unsigned index=requested&63;
                 if(index>=tracks_.size() || !stream.open(tracks_[index],log)){fprintf(log,"bgm_result=unsupported_or_invalid_wave\n");good=false;break;}
                 active=requested;playing_.store(index);state_.store(1);position=0;
-                limit=(uint64_t(stream.frames)*48000+44099)/44100;
+                limit=stream.frames;
                 fprintf(log,"bgm_track_start=command:%u index:%u name:%s output_frames:%llu\n",active,index,tracks_[index].name.c_str(),(unsigned long long)limit);
             }
-            block.fill(0);
-            for(unsigned i=0;i<1024 && position<limit;++i,++position){
-                const uint64_t source=position*44100;
-                const uint32_t first=std::min(uint32_t(source/48000),stream.frames-1),next=std::min(first+1,stream.frames-1),fraction=source%48000;
-                std::array<int,2> a{},b{};
-                if(!stream.sample(first,a) || !stream.sample(next,b)){good=false;break;}
-                for(unsigned c=0;c<2;++c)block[2*i+c]=int16_t((int64_t(a[c])*(48000-fraction)+int64_t(b[c])*fraction)/48000);
+            int16_t* block=buffers.get()+buffer_index*buffer_samples;
+            const uint64_t fill_begin=sceKernelGetProcessTimeWide();
+            for(unsigned i=0;i<frames_per_block;++i,++position){
+                if(position==limit){position=0;stream.cache_frames=0;fprintf(log,"bgm_track_loop=index:%u policy:whole_wav\n",active&63);}
+                std::array<int,2> sample{};
+                if(!stream.sample(uint32_t(position),sample)){good=false;break;}
+                for(unsigned c=0;c<2;++c)block[2*i+c]=int16_t(sample[c]);
             }
             if(!good){fprintf(log,"bgm_result=pcm_read_failed\n");break;}
-            output_rc=sceAudioOutOutput(port,block.data());
-            if(output_rc>=0)output_rc=sceAudioOutOutput(port,nullptr);
+            const uint64_t output_begin=sceKernelGetProcessTimeWide(),fill_us=output_begin-fill_begin;
+            fill_max=std::max(fill_max,fill_us);if(fill_us>uint64_t(frames_per_block)*1000000/44100)++late_fill;
+            output_rc=sceAudioOutOutput(port,block);
+            output_max=std::max(output_max,sceKernelGetProcessTimeWide()-output_begin);
             if(output_rc<0){good=false;break;}
+            buffer_index^=1;
             ++total_blocks;
             if(total_blocks%240==0)fprintf(log,"bgm_progress=blocks:%llu track_index:%u position:%llu\n",(unsigned long long)total_blocks,active&63,(unsigned long long)position);
-            if(position==limit){position=0;stream.cache_frames=0;fprintf(log,"bgm_track_loop=index:%u policy:whole_wav\n",active&63);}
         }
+        const int drain=sceAudioOutOutput(port,nullptr);
+        fprintf(log,"bgm_final_drain_rc=0x%08X\nbgm_timing=elapsed_us:%llu fill_max_us:%llu output_max_us:%llu late_fill_blocks:%llu\n",unsigned(drain),(unsigned long long)(sceKernelGetProcessTimeWide()-begin),(unsigned long long)fill_max,(unsigned long long)output_max,(unsigned long long)late_fill);
+        if(drain<0)good=false;
         fprintf(log,"bgm_output=%s blocks:%llu rc:0x%08X\n",good?"stopped_by_user":"failed",(unsigned long long)total_blocks,unsigned(output_rc));
         const int release=sceAudioOutReleasePort(port);
         fprintf(log,"bgm_release_rc=0x%08X\n",unsigned(release));

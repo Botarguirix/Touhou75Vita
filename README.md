@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Physical iteration 55 decoded and submitted the original DAT effect successfully; the user confirmed audible output. Iteration 56/version 01.60 streams a random music track directly from th075bgm.dat in a native thread. Triangle changes to a different random track, Square restarts the current track, and X stops playback and exits. Hardware music validation is pending. The original EXE still stops at primary CreateSoundBuffer; guest playback and title-screen rendering remain pending. See [iteration 56 scope](docs/STATUS_ITERATION56.md) and [roadmap](docs/ROADMAP.md).
+Physical iteration 56 played original DAT music but the user reported stuttering. Iteration 57/version 01.61 removes the per-block drain and resampling, uses BGM at the original 44100 Hz with two aligned buffers, and adds timing diagnostics. Continuity validation on Vita is pending. Triangle/Square/X controls remain. The EXE still stops at CreateSoundBuffer. See [iteration 57 evidence and sources](docs/STATUS_ITERATION57.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,15 +15,15 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration56-dat-music-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration57-continuous-music-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe with th075.dat and th075bgm.dat alongside it for the native resource preview and music.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 56 DAT Music**, package version 01.60, on the same Vita used previously. The screen must show ITERATION 56.
+3. Launch **Touhou 7.5 Vita - Iteration 57 Continuous Music**, package version 01.61, on the same Vita used previously. The screen must show ITERATION 57.
 4. Wait for the results screen. Listen to the music; Triangle selects another track, Square restarts it, and X exits. Photograph the screen.
-5. Inspect iteration56.log, iteration56-runtime.log and iteration56-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration56-dat-music-r1, include iteration56-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
+5. Inspect iteration57.log, iteration57-runtime.log and iteration57-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration57-continuous-music-r1, include iteration57-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 

@@ -1,12 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 56, version 01.60
+## Current checkpoint — iteration 57, version 01.61
 
-The user confirmed audible original-effect output on iteration 55.
-Iteration 56 streams random original DAT music with Triangle/Square/X
-controls and a dedicated native thread. Hardware streaming validation
-is pending. The EXE boundary remains at primary CreateSoundBuffer.
-Next boot work: primary buffers/format and the texture upload/Draw/Present
-path for a real title frame. See [scope/evidence](STATUS_ITERATION56.md).
+Iteration 56 played original DAT music but stuttered on hardware.
+Iteration 57 removes per-block draining and resampling, and introduces
+BGM at 44100 Hz with two aligned buffers and timing metrics. Hardware
+continuity validation remains pending. Original EXE boot still stops
+at CreateSoundBuffer. See [scope and sources](STATUS_ITERATION57.md).
 Historical observations follow below.
 
 ## Phase 0 — reproducible diagnostic shell (complete)
