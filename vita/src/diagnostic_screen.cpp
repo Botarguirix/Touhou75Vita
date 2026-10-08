@@ -78,7 +78,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 70 - PIPELINE STATE",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 71 - RANDOM DAT RECT",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -144,7 +144,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
         th075::DatBrowser browser;
-        browser.open(log);browser.draw(pixels);
+        const bool browser_ready=browser.open(log);browser.draw(pixels);
         th075::MusicProbe music;
         music.start(log);
         bool released=false,square_released=false,triangle_released=false;
@@ -158,16 +158,16 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             if(released&&(pad.buttons&SCE_CTRL_CROSS)) { exit_reason="cross";break; }
             const uint32_t pressed=pad.buttons&~previous_buttons;previous_buttons=pad.buttons;
             bool redraw=false;
-            if(pressed&SCE_CTRL_CIRCLE){browser.next(log);redraw=true;}
-            if(pressed&SCE_CTRL_RIGHT){browser.frame(1,log);redraw=true;}
-            if(pressed&SCE_CTRL_LEFT){browser.frame(-1,log);redraw=true;}
-            if(pressed&SCE_CTRL_START)browser.export_current(log);
+            if(browser_ready && (pressed&SCE_CTRL_CIRCLE)){browser.random(log);redraw=true;}
+            if(browser_ready && (pressed&SCE_CTRL_RIGHT)){browser.frame(1,log);redraw=true;}
+            if(browser_ready && (pressed&SCE_CTRL_LEFT)){browser.frame(-1,log);redraw=true;}
+            if(browser_ready && (pressed&SCE_CTRL_START))browser.export_current(log);
             if(redraw){sceDisplayWaitVblankStart();browser.draw(pixels);}
             if(redraw || previous_label.empty()){
                 for(unsigned y=202;y<216;++y)for(unsigned x=690;x<950;++x)pixels[y*960+x]=0xFF20130D;
-                std::string resource=browser.label();for(auto& c:resource)if(c=='\\')c='/';
+                std::string resource=browser_ready?browser.label():"DAT UNAVAILABLE";for(auto& c:resource)if(c=='\\')c='/';
                 text(pixels,690,202,resource,neutral,1);
-                text(pixels,690,445,"CIRCLE NEXT DAT",neutral,2);
+                text(pixels,690,445,"CIRCLE RANDOM DAT",neutral,2);
                 text(pixels,690,464,"LEFT RIGHT FRAME",neutral,2);
                 text(pixels,690,483,"START EXPORT",neutral,2);
             }

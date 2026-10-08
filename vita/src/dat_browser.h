@@ -8,6 +8,9 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
+#include <random>
+#include <utility>
+#include <new>
 #include <psp2/kernel/processmgr.h>
 
 namespace th075 {
@@ -20,6 +23,7 @@ class DatBrowser {
     std::vector<Frame> frames_;
     std::vector<uint32_t> pixels_;
     std::vector<uint32_t> preview_;
+    std::mt19937 random_;
     bool preview_ready_=false;
     std::array<uint16_t,256> palette_{};
     FILE* file_=nullptr;unsigned selected_=0,frame_=0;
@@ -27,10 +31,17 @@ class DatBrowser {
     static uint32_t u32(const uint8_t* p){return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}
     static uint16_t u16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
     bool read(uint64_t offset,void* p,size_t bytes){return offset<=0x7FFFFFFF && !fseek(file_,long(offset),SEEK_SET) && fread(p,1,bytes,file_)==bytes;}
-    bool container(FILE* log){
+    void select_frame(bool random_frame,unsigned excluded_frame){
+        frame_=0;if(!random_frame || frames_.empty())return;
+        const unsigned count=unsigned(frames_.size());
+        const bool exclude=count>1 && excluded_frame<count;
+        frame_=std::uniform_int_distribution<unsigned>(0,count-1-(exclude?1:0))(random_);
+        if(exclude && frame_>=excluded_frame)++frame_;
+    }
+    bool container(FILE* log,bool random_frame=false,unsigned excluded_frame=0xFFFFFFFFu){
         frames_.clear();pixels_.clear();const auto& e=entries_[selected_];
         auto& cached=indexes_[selected_];
-        if(cached.indexed){frames_=cached.frames;palette_=cached.palette;palette_present_=cached.palettes;frame_=0;
+        if(cached.indexed){frames_=cached.frames;palette_=cached.palette;palette_present_=cached.palettes;select_frame(random_frame,excluded_frame);
             fprintf(log,"dat_view_index=cache_hit container:%s\n",e.name.c_str());return decode(log);}
         const uint64_t begin=sceKernelGetProcessTimeWide();
         uint8_t palettes=0;if(!read(e.offset,&palettes,1))return false;
@@ -48,7 +59,7 @@ class DatBrowser {
         fprintf(log,"dat_view_container=%s frames:%u\n",e.name.c_str(),unsigned(frames_.size()));
         if(!frames_.empty()){cached.frames=frames_;cached.palette=palette_;cached.palettes=palette_present_;cached.indexed=true;}
         fprintf(log,"dat_view_index=scan_us:%llu container:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-begin),e.name.c_str());
-        frame_=0;return !frames_.empty() && decode(log);
+        select_frame(random_frame,excluded_frame);return !frames_.empty() && decode(log);
     }
     bool decode(FILE* log){
         const uint64_t begin=sceKernelGetProcessTimeWide();
@@ -121,9 +132,41 @@ public:
         }
         fprintf(log,"dat_view_inventory=archive_entries:%u image_containers:%u\n",count,unsigned(entries_.size()));
         indexes_.resize(entries_.size());
+        const uint64_t time=sceKernelGetProcessTimeWide();
+        const uint32_t seed=uint32_t(time)^uint32_t(time>>32)^uint32_t(size);
+        random_.seed(seed);fprintf(log,"dat_view_random_seed=0x%08X\n",seed);
         return !entries_.empty() && container(log);
     }
-    void next(FILE* log){if(entries_.empty())return;selected_=(selected_+1)%entries_.size();if(!container(log)){pixels_.clear();fprintf(log,"dat_view_decode=unsupported_container\n");}}
+    void random(FILE* log){
+        if(!file_ || entries_.empty() || indexes_.size()!=entries_.size())return;
+        const unsigned old_selected=selected_,old_frame=frame_;
+        const uint32_t old_width=width_,old_height=height_;
+        const bool old_ready=preview_ready_,old_palette_present=palette_present_;
+        const auto old_palette=palette_;
+        // Keep the displayed resource until another one has decoded successfully.
+        auto old_frames=std::move(frames_);auto old_pixels=std::move(pixels_);
+        auto old_preview=std::move(preview_);
+        unsigned attempted=0;
+        try {
+            std::vector<unsigned> choices;choices.reserve(entries_.size());
+            for(unsigned i=0;i<entries_.size();++i)if(i!=old_selected || entries_.size()==1)choices.push_back(i);
+            std::shuffle(choices.begin(),choices.end(),random_);
+            const unsigned attempts=std::min(unsigned(choices.size()),8u);
+            for(unsigned i=0;i<attempts;++i){
+                selected_=choices[i];attempted=i+1;
+                if(container(log,true,selected_==old_selected?old_frame:0xFFFFFFFFu)){
+                    fprintf(log,"dat_view_random=selected container:%s frame:%u attempts:%u\n",entries_[selected_].name.c_str(),frame_,attempted);fflush(log);return;
+                }
+                fprintf(log,"dat_view_random=rejected container:%s\n",entries_[selected_].name.c_str());
+            }
+        }catch(const std::bad_alloc&){
+            fprintf(log,"dat_view_random=allocation_failed\n");
+        }
+        selected_=old_selected;frame_=old_frame;width_=old_width;height_=old_height;
+        palette_=old_palette;palette_present_=old_palette_present;preview_ready_=old_ready;
+        frames_=std::move(old_frames);pixels_=std::move(old_pixels);preview_=std::move(old_preview);
+        fprintf(log,"dat_view_random=retained_previous attempts:%u\n",attempted);fflush(log);
+    }
     void frame(int step,FILE* log){if(frames_.empty())return;const unsigned next=unsigned((int(frame_)+step+int(frames_.size()))%int(frames_.size()));
         if(next==frame_ && !pixels_.empty()){fprintf(log,"dat_view_frame=unchanged_skip_decode\n");return;}
         frame_=next;if(!decode(log)){pixels_.clear();fprintf(log,"dat_view_decode=failed_frame\n");}}

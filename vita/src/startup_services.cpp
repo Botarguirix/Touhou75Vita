@@ -48,6 +48,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool window_default = import.dll == "USER32.dll" && import.name == "DefWindowProcA";
     const bool window_show = import.dll == "USER32.dll" && import.name == "ShowWindow";
     const bool window_update = import.dll == "USER32.dll" && import.name == "UpdateWindow";
+    const bool rect_set = import.dll == "USER32.dll" && import.name == "SetRect";
     const bool com_init = import.dll == "ole32.dll" && import.name == "CoInitialize";
     const bool com_uninit = import.dll == "ole32.dll" && import.name == "CoUninitialize";
     const bool com = com_init || com_uninit;
@@ -58,7 +59,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool timer_end = winmm && import.name == "timeEndPeriod";
     const bool timer_time = winmm && import.name == "timeGetTime";
     const bool multimedia_timer = timer_begin || timer_end || timer_time;
-    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics && !gui && !com) return StartupServiceResult::Unsupported;
+    if (import.dll != "KERNEL32.dll" && !multimedia_timer && !metrics && !gui && !com && !rect_set) return StartupServiceResult::Unsupported;
     const bool cwd_set = import.name == "SetCurrentDirectoryA";
     const bool cwd_get = import.name == "GetCurrentDirectoryA";
     const bool cwd = cwd_set || cwd_get;
@@ -131,7 +132,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     if (!version && !module && !proc_address && !critical_init && !critical_op && !tls &&
         !get_error && !set_error && !thread_id && !process_id && !clock && !process && !environment && !wide_to_bytes &&
         !code_page_query && !code_page_info && !string_type && !bytes_to_wide && !case_map &&
-        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics && !gui && !com && !file_io)
+        !heap_create && !heap_alloc && !heap_free && !heap_size && !heap_realloc && !multimedia_timer && !event && !priority && !cwd && !metrics && !gui && !com && !file_io && !rect_set)
         return StartupServiceResult::Unsupported;
     const uint32_t esp = cpu_.reg(d2rt::R_ESP);
     const int preserved[] = {d2rt::R_EBX, d2rt::R_EBP, d2rt::R_ESI, d2rt::R_EDI};
@@ -139,7 +140,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
+    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write || rect_set) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
         ((com_uninit || tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
         ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((file_size || window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
@@ -282,6 +283,28 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
         fprintf(log_,"startup_file_scope=owned_application_mount_readonly_assets_writable_log\n");
         fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+    } else if(rect_set) {
+        // The original IAT imports SetRect only. Its RECT consists of four
+        // signed 32-bit LONGs, with no normalization or coordinate clipping.
+        // Read every by-value coordinate before writing, even if the output
+        // overlaps argument storage. The null-pointer contract returns FALSE.
+        std::array<int32_t,4> rect{},readback{};
+        if(!cpu_.read(esp+8,rect.data(),sizeof(rect)))return StartupServiceResult::ContractFailure;
+        fprintf(log_,"startup_rect_set=output:0x%08X left:%ld top:%ld right:%ld bottom:%ld return:0x%08X\n",
+            arg,long(rect[0]),long(rect[1]),long(rect[2]),long(rect[3]),ret);
+        if(arg) {
+            if(arg<0x10000 || uint64_t(arg)+sizeof(rect)>0x02000000ull ||
+                !cpu_.write(arg,rect.data(),sizeof(rect)) ||
+                !cpu_.read(arg,readback.data(),sizeof(readback)) || readback!=rect) {
+                fprintf(log_,"startup_service_error=invalid_rect_output\n");
+                return StartupServiceResult::ContractFailure;
+            }
+            expected_eax=1;
+            fprintf(log_,"startup_rect_readback=passed bytes:16 signed_coordinates:yes\n");
+        } else fprintf(log_,"startup_rect_set_result=null_output_false\n");
+        // SetRect returns BOOL, not HRESULT, and does not change LastError.
+        cpu_.trap_epilogue(expected_eax,cleanup,ret);
+        fprintf(log_,"startup_serviced_import=USER32.dll!SetRect\n");
     } else if(com) {
         const uint32_t tib=wx86_cur_tib();
         if(com_init) {

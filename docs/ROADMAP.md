@@ -1,14 +1,15 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 70, version 01.74
+## Current checkpoint — iteration 71, version 01.75
 
-Hardware 69 serviced viewport/state-block calls, render/depth target switching,
-BeginScene and Clear. It stopped at SetRenderState(14, 1): ZWRITEENABLE.
-Iteration 70 prepares depth/blend/alpha state storage, owned stage-zero texture
-bindings and their state-block references. Clear respects the active viewport.
-The first DrawPrimitiveUP can now capture bounded vertices and pipeline states;
-it remains an unexecuted boundary. Physical validation of these changes is pending.
+Hardware 70 serviced ZWRITEENABLE and source/destination blend state, then
+reached USER32!SetRect before the original textured-quad path.
+Iteration 71 prepares SetRect and random DAT container/frame selection.
+The next physical run can capture the first DrawPrimitiveUP if that path is
+reached; Draw remains unexecuted. SetRect and random selection await Vita validation.
 Guest audio mixing, original rasterization/Present and gameplay remain pending.
-See [scope/evidence and next milestones](STATUS_ITERATION70.md).
+TH08-Web's renderer/mixer are useful adaptation references, with a different
+target and host ABI. See [scope/evidence](STATUS_ITERATION71.md) and
+[external research](RESEARCH_N0ZOM1Z0_ITERATION71.md).
 
 Historical observations follow below.
 
