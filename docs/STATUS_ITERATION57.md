@@ -1,5 +1,11 @@
 # Iteración 57 — Continuous Music / 01.61
 
+Resultado físico: el usuario confirmó que la música es fluida. Se
+registraron 657 bloques durante 31.058780 segundos, cero preparaciones
+tardías y cierre correcto. Cambios/reinicios también aparecen en el log.
+La [iteración 58](STATUS_ITERATION58.md) conserva esta ruta y añade visor
+de DAT y creación del buffer primario para avanzar el EXE.
+
 ## Resultado de la 56
 
 El usuario escuchó música, pero entrecortada. El DAT presentó 34 pistas y

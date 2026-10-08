@@ -9,11 +9,14 @@
 // Buffer allocation, mixing and playback remain explicit unsupported methods.
 class DirectSoundBootstrap {
 public:
-    static constexpr uint32_t object=0x00AD1000, vtable=object+0x100, trap_base=0x00BF6000;
+    static constexpr uint32_t object=0x00AD1000, vtable=object+0x100, trap_base=0x00BF6000,
+        primary=0x00AD2000,primary_table=primary+0x100,primary_trap=0x00BF5000;
     DirectSoundBootstrap(d2rt::Cpu& cpu,FILE* log):cpu_(cpu),log_(log) {}
     ~DirectSoundBootstrap(){close_port();}
-    bool owns(uint32_t t)const{return t>=trap_base && t<trap_base+12*16 && (t-trap_base)%16==0;}
+    bool owns(uint32_t t)const{return (t>=trap_base && t<trap_base+12*16 && (t-trap_base)%16==0) || (t>=primary_trap && t<primary_trap+21*16 && (t-primary_trap)%16==0);}
+    const char* interface_name(uint32_t t)const{return t< trap_base?"IDirectSoundBuffer":"IDirectSound8";}
     const char* method_name(uint32_t t)const{
+        if(t<trap_base){static const char* names[]={"QueryInterface","AddRef","Release","GetCaps","GetCurrentPosition","GetFormat","GetVolume","GetPan","GetFrequency","GetStatus","Initialize","Lock","Play","SetCurrentPosition","SetFormat","SetVolume","SetPan","SetFrequency","Stop","Unlock","Restore"};return names[(t-primary_trap)/16];}
         static const char* names[]={"QueryInterface","AddRef","Release","CreateSoundBuffer","GetCaps","DuplicateSoundBuffer","SetCooperativeLevel","Compact","GetSpeakerConfig","SetSpeakerConfig","Initialize","VerifyCertification"};
         return names[(t-trap_base)/16];
     }
@@ -35,6 +38,7 @@ public:
         return finish(0,sizeof(w),w[0],esp);
     }
     StartupServiceResult call(uint32_t t){
+        if(t<trap_base)return primary_call(t);
         const unsigned slot=(t-trap_base)/16;
         static const unsigned argc[]={3,1,1,4,2,3,3,1,2,2,2,2};
         const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=4*(argc[slot]+1);
@@ -79,15 +83,37 @@ public:
             std::array<uint32_t,9> desc{};
             if(w[2]<0x10000 || !cpu_.read(w[2],desc.data(),sizeof(desc)))return failure();
             fprintf(log_,"startup_dsound_buffer_boundary=size:%u flags:0x%08X bytes:%u reserved:%u format:0x%08X output:0x%08X aggregate:0x%08X\n",desc[0],desc[1],desc[2],desc[3],desc[4],w[3],w[4]);
-            return unsupported();
+            if(desc[0]!=36 || desc[1]!=0x00040001 || desc[2] || desc[3] || desc[4] || desc[5] || desc[6] || desc[7] || desc[8] || w[4] || primary_refs_)return unsupported();
+            if(refs_==std::numeric_limits<uint32_t>::max() || !cpu_.map(primary,0x1000,nullptr,d2rt::P_RW))return failure();
+            std::array<uint32_t,21> table{},check{};for(unsigned i=0;i<21;++i)table[i]=primary_trap+i*16;
+            if(!cpu_.write(primary_table,table.data(),sizeof(table)) || !cpu_.read(primary_table,check.data(),sizeof(check)) || table!=check || !write(primary,primary_table) || !write(w[3],primary))return failure();
+            primary_refs_=1;++refs_;
+            fprintf(log_,"startup_dsound_primary=owned_native_output_port vtable_readback:passed bytes:0 playback:no\n");
         }else return unsupported();
         return finish(hr,cleanup,w[0],esp);
     }
 private:
+    StartupServiceResult primary_call(uint32_t t){
+        const unsigned slot=(t-primary_trap)/16;
+        fprintf(log_,"startup_dsound_method=IDirectSoundBuffer::%s slot=%u\n",method_name(t),slot);
+        if(slot>2)return unsupported();
+        const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=slot==0?16:8;uint32_t w[4]{},vt=0;
+        if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || !primary_refs_ || w[1]!=primary || !cpu_.read(primary,&vt,4) || vt!=primary_table)return failure();
+        uint32_t hr=0;
+        if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();
+            const bool match=iid==unknown_iid || iid==buffer_iid;
+            if(match && primary_refs_==std::numeric_limits<uint32_t>::max())return failure();
+            if(!write(w[3],match?primary:0u))return failure();
+            if(match)++primary_refs_;else hr=0x80004002;
+        }else if(slot==1){if(primary_refs_==std::numeric_limits<uint32_t>::max())return failure();hr=++primary_refs_;}
+        else{hr=--primary_refs_;if(!primary_refs_){if(!write(primary,0u) || !refs_)return failure();--refs_;if(!refs_)close_port();}}
+        return finish(hr,cleanup,w[0],esp);
+    }
     using Guid=std::array<uint32_t,4>;
     inline static constexpr Guid sound_clsid={0x3901CC3F,0x4FA484B5,0x81AA35BA,0x9BA0B872};
     inline static constexpr Guid sound_iid={0xC50A7E93,0x4834F395,0xA97FF69E,0x6609E59D};
     inline static constexpr Guid unknown_iid={0,0,0x000000C0,0x46000000};
+    inline static constexpr Guid buffer_iid={0x279AFA85,0x11CE4981,0x200021A5,0x60E50BAF};
     static bool frame(uint32_t esp,uint32_t size){return esp>=0x00800000 && uint64_t(esp)+size<=0x00A00000;}
     bool guid(uint32_t p,Guid& value){return p>=0x10000 && cpu_.read(p,value.data(),sizeof(value));}
     bool write(uint32_t p,uint32_t value){return p>=0x10000 && uint64_t(p)+4<=0x02000000 && cpu_.write(p,&value,4);}
@@ -106,5 +132,5 @@ private:
     }
     StartupServiceResult unsupported(){fprintf(log_,"startup_dsound_method_executed=no playback:no\n");return StartupServiceResult::Unsupported;}
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
-    d2rt::Cpu& cpu_;FILE* log_;uint32_t refs_=0;unsigned calls_=0;int port_=-1;bool cooperative_=false;
+    d2rt::Cpu& cpu_;FILE* log_;uint32_t refs_=0,primary_refs_=0;unsigned calls_=0;int port_=-1;bool cooperative_=false;
 };

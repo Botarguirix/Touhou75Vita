@@ -11,6 +11,7 @@
 #include "pe_resources.h"
 #include "th075_assets.h"
 #include "music_probe.h"
+#include "dat_browser.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -77,7 +78,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 57 - CONTINUOUS MUSIC",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 58 - DAT BROWSER",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -142,9 +143,12 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         fprintf(log,"screen_result=%s\n",wait_rc>=0&&matches?"presented":"confirmation_failed");
     } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
+        th075::DatBrowser browser;
+        browser.open(log);browser.draw(pixels);
         th075::MusicProbe music;
         music.start(log);
         bool released=false,square_released=false,triangle_released=false;
+        uint32_t previous_buttons=SCE_CTRL_CIRCLE|SCE_CTRL_LEFT|SCE_CTRL_RIGHT|SCE_CTRL_START;
         const char* exit_reason="cross";
         std::string previous_label;
         for(;;) {
@@ -152,6 +156,21 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             if(sceCtrlPeekBufferPositive(0,&pad,1)<0) { exit_reason="controller_error";break; }
             if(!(pad.buttons&SCE_CTRL_CROSS)) released=true;
             if(released&&(pad.buttons&SCE_CTRL_CROSS)) { exit_reason="cross";break; }
+            const uint32_t pressed=pad.buttons&~previous_buttons;previous_buttons=pad.buttons;
+            bool redraw=false;
+            if(pressed&SCE_CTRL_CIRCLE){browser.next(log);redraw=true;}
+            if(pressed&SCE_CTRL_RIGHT){browser.frame(1,log);redraw=true;}
+            if(pressed&SCE_CTRL_LEFT){browser.frame(-1,log);redraw=true;}
+            if(pressed&SCE_CTRL_START)browser.export_current(log);
+            if(redraw){sceDisplayWaitVblankStart();browser.draw(pixels);}
+            if(redraw || previous_label.empty()){
+                for(unsigned y=202;y<216;++y)for(unsigned x=690;x<950;++x)pixels[y*960+x]=0xFF20130D;
+                std::string resource=browser.label();for(auto& c:resource)if(c=='\\')c='/';
+                text(pixels,690,202,resource,neutral,1);
+                text(pixels,690,445,"CIRCLE NEXT DAT",neutral,2);
+                text(pixels,690,464,"LEFT RIGHT FRAME",neutral,2);
+                text(pixels,690,483,"START EXPORT",neutral,2);
+            }
             if(!(pad.buttons&SCE_CTRL_SQUARE))square_released=true;
             if(square_released&&(pad.buttons&SCE_CTRL_SQUARE)){
                 square_released=false;music.replay(log);
