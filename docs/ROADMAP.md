@@ -1,11 +1,12 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 64, version 01.68
+## Current checkpoint — iteration 65, version 01.69
 
-Hardware 63 confirmed PCM allocation but rejected Buffer8 QueryInterface.
-Iteration 64 prepares ten buffer contracts together, correcting that failure
-without bypassing the error dialog. Lock/Unlock storage remains available.
-Guest playback/mixing, original drawing/presentation and gameplay are pending.
-See [scope/evidence](STATUS_ITERATION64.md) and
+Hardware 64 confirmed 39 PCM uploads through Buffer8 QI and Lock/Unlock.
+The original game log reached SystemDataInit. A budget pause at the registered
+HeapAlloc trap was incorrectly rejected by the runner's executable-section guard.
+Iteration 65 validates owned trap slots and executable returns before resuming.
+Guest playback/mixing, original drawing/presentation and gameplay remain pending.
+See [scope/evidence](STATUS_ITERATION65.md) and
 [batch/reconstruction report](INFORME_ITERACION64_RECONSTRUCCION_Y_LOTE.md).
 
 Historical observations follow below.

@@ -1,4 +1,5 @@
 #include "startup_probe.h"
+#include "startup_resume_policy.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
 #include "dinput8_bridge.h"
@@ -27,7 +28,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration64-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration65-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -93,7 +94,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration64\n");
+        fprintf(report_, "watchdog_revision=iteration65\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -501,7 +502,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
     bool stopped = false, limit = false;
-    unsigned cosine_slices = 0, resume_slices = 0;
+    unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
     auto run_main = [&](uint32_t entry, uint64_t budget) {
         cpu.take_limit_hit(); cpu.set_run_limit(budget);
         stopped = cpu.run(entry, &fault);
@@ -517,10 +518,27 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             const uint64_t elapsed = sceKernelGetProcessTimeWide() - start;
             const uint32_t ip = cpu.reg(d2rt::R_EIP), esp = cpu.reg(d2rt::R_ESP);
             uint8_t stack[128] = {};
-            if (!original_code_address(exe, nt, image, ip) || !cpu.mapped(ip) ||
-                wx86_cur_tib() != kDiagnosticTeb || !stack_range(esp, sizeof(stack)) ||
-                !cpu.read(esp, stack, sizeof(stack))) {
-                fprintf(log, "startup_resume_stop=invalid_code_stack_or_tib\n"); break;
+            const bool code = original_code_address(exe, nt, image, ip);
+            const bool known_trap = startup_known_resume_trap(ip,kTrap,image.imports().size(),
+                StartupServices::critical_init_trap,StartupServices::processor_feature_trap,
+                sound.owns(ip) || input.owns(ip) || d3d8.owns_trap(ip));
+            const bool valid_stack = stack_range(esp,sizeof(stack)) && cpu.read(esp,stack,sizeof(stack));
+            uint32_t pending_return=0;
+            if(valid_stack)std::memcpy(&pending_return,stack,4);
+            const bool valid_return = known_trap && valid_stack && cpu.mapped(pending_return) &&
+                original_code_address(exe,nt,image,pending_return);
+            if ((!code && !valid_return) || !cpu.mapped(ip) ||
+                wx86_cur_tib() != kDiagnosticTeb || !valid_stack) {
+                fprintf(log,"startup_resume_stop=invalid_code_stack_or_tib eip:0x%08X code:%s known_trap:%s return:0x%08X valid_return:%s stack:%s tib:0x%08X\n",
+                    ip,code?"yes":"no",known_trap?"yes":"no",pending_return,
+                    valid_return?"yes":"no",valid_stack?"yes":"no",wx86_cur_tib());break;
+            }
+            if(known_trap){
+                fprintf(log,"startup_pending_trap=0x%08X return:0x%08X dispatch:normal_callback\n",ip,pending_return);
+                if(ip>=kTrap && (ip-kTrap)/16<image.imports().size()) {
+                    const auto& pending=image.imports()[(ip-kTrap)/16];
+                    fprintf(log,"startup_pending_import=%s!%s\n",pending.dll.c_str(),pending.name.c_str());
+                }
             }
             uint32_t hash = 2166136261u;
             auto hash_word = [&](uint32_t word) { hash = (hash ^ word) * 16777619u; };
@@ -558,8 +576,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             }
             ++resume_slices;
             if (cosine) ++cosine_slices;
+            if (known_trap) ++import_resume_slices;
             fprintf(log, "startup_resume_slice=%u scope=%s budget=%llu\n",
-                resume_slices, cosine ? "original_cosine" : "original_executable_section", (unsigned long long)kRunBudget);
+                resume_slices, cosine ? "original_cosine" : known_trap ? "owned_import_trap" : "original_executable_section", (unsigned long long)kRunBudget);
             fflush(log);
             // run() recharges its block budget on the same emulator. All
             // registers, stack, flags and x87 state remain owned by it.
@@ -659,6 +678,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
     fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());
     fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
+    fprintf(log,"startup_import_resume_slices=%u\n",import_resume_slices);
     fprintf(log, "startup_resume_slices=%u\nstartup_main_import_calls=%u\n", resume_slices, main_import_calls);
     if (limit || !stopped) fprintf(log, "startup_stop_import=%s EIP 0x%08X\n",
         limit ? "CPU BUDGET" : "CPU FAULT", cpu.reg(d2rt::R_EIP));
@@ -671,7 +691,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     if (limit && cpu.reg(d2rt::R_EIP) < 0x00400000u) {
         fprintf(log, "startup_control_flow_result=low_guest_eip\n");
     } else if (limit) {
-        fprintf(log, "startup_control_flow_result=budget_in_image\n");
+        fprintf(log,"startup_control_flow_result=%s\n", original_code_address(exe,nt,image,cpu.reg(d2rt::R_EIP)) ? "budget_in_image" : "budget_outside_image");
     }
     fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
     fprintf(log, "startup_version_calls=%u\n", services.version_calls());
