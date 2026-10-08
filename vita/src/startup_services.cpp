@@ -63,7 +63,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool cwd_get = import.name == "GetCurrentDirectoryA";
     const bool cwd = cwd_set || cwd_get;
     const bool version = import.name == "GetVersionExA";
-    const bool module = import.name == "GetModuleHandleA";
+    const bool library_load = import.name == "LoadLibraryA";
+    const bool module = import.name == "GetModuleHandleA" || library_load;
     const bool proc_address = import.name == "GetProcAddress";
     const bool critical_plain = import.name == "InitializeCriticalSection";
     const bool critical_init = critical_plain || import.name == "InitializeCriticalSectionAndSpinCount";
@@ -907,15 +908,26 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
             fprintf(log_, "startup_module_requested=%s\n", name);
             const std::string module_name(name);
-            if (module_name != "kernel32.dll" && module_name != "kernel32") return StartupServiceResult::Unsupported;
-            const uint32_t handle = 0x00AB1000;
+            uint32_t handle = 0;
+            if(module_name=="kernel32.dll" || module_name=="kernel32") {
+                if(library_load)return StartupServiceResult::Unsupported;
+                handle=0x00AB1000;
+            } else if(module_name=="d3d8.dll" || module_name=="d3d8") {
+                handle=0x00AB1200;
+                if(library_load){if(d3d8_module_refs_==0xFFFFFFFFu)return StartupServiceResult::ContractFailure;++d3d8_module_refs_;}
+                fprintf(log_,"startup_module_backend=d3d8_compatibility refs:%u\n",d3d8_module_refs_);
+            } else if(module_name=="d3d8d.dll" || module_name=="d3d8d") {
+                wx86_set_lasterr(cpu_,126); // No debug runtime installed.
+                fprintf(log_,"startup_module_availability=debug_d3d8_not_installed\n");
+            } else return StartupServiceResult::Unsupported;
             cpu_.trap_epilogue(handle, 8, ret);
             expected_eax = handle;
             ++module_calls_;
             fprintf(log_, "startup_module_base_returned=0x%08X\n", handle);
             fprintf(log_, "startup_module_handle_kind=runtime_opaque\n");
-            fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
+            fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
         } else {
+            if(library_load)return StartupServiceResult::ContractFailure;
             // NULL always identifies the current executable. The CRT queries
             // it again immediately before passing HINSTANCE to game startup.
             // This API contract must not depend on call count or return site.
@@ -946,7 +958,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     } else if (proc_address) {
         uint32_t symbol = 0;
         if (!in_stack(esp, 12) || !cpu_.read(esp + 8, &symbol, 4) ||
-            arg != 0x00AB1000 || symbol <= 0xFFFFu) {
+            (arg != 0x00AB1000 && arg != 0x00AB1200) || symbol <= 0xFFFFu) {
             fprintf(log_, "startup_service_error=unsupported_export_frame\n");
             return StartupServiceResult::ContractFailure;
         }
@@ -961,7 +973,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
         fprintf(log_, "startup_export_requested=%s\n", name);
         const std::string symbol_name(name);
-        if (symbol_name == "FlsAlloc" || symbol_name == "FlsFree" ||
+        if(arg==0x00AB1200) {
+            // The D3DX helper checks this optional diagnostic export before
+            // calling it. Our backend has no Windows debug output to mute.
+            if(symbol_name!="DebugSetMute")return StartupServiceResult::Unsupported;
+            expected_eax=0;wx86_set_lasterr(cpu_,127);
+            ++unavailable_export_calls_;
+            fprintf(log_,"startup_export_availability=optional_debug_export_not_implemented\n");
+        } else if (symbol_name == "FlsAlloc" || symbol_name == "FlsFree" ||
             symbol_name == "FlsGetValue" || symbol_name == "FlsSetValue") {
             // The advertised XP profile uses the CRT's existing TLS fallback.
             expected_eax = 0;

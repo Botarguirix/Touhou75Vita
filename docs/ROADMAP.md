@@ -1,11 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 59, version 01.63
+## Current checkpoint — iteration 60, version 01.64
 
-Hardware 58 reached DirectInput EnumDevices and returned exact DAT/BMP exports.
-Iteration 59 caches composed previews and visited container indexes, logs timings,
-and serves the observed GAMECTRL enumeration with zero joystick devices in the
-keyboard backend. Hardware performance and next boundary remain pending.
-See [scope/evidence](STATUS_ITERATION59.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+Hardware 59 confirmed faster previews and fluent music, completed keyboard/joystick
+initialization, and stopped at GetModuleHandleA(d3d8.dll). Iteration 60 serves the
+virtual D3D lookup/load and optional DebugSetMute export query, while skipping
+redundant decoding of unchanged viewer frames. Next EXE boundary remains pending.
+See [scope/evidence](STATUS_ITERATION60.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
 
 Historical observations follow below.
 

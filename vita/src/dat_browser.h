@@ -124,7 +124,9 @@ public:
         return !entries_.empty() && container(log);
     }
     void next(FILE* log){if(entries_.empty())return;selected_=(selected_+1)%entries_.size();if(!container(log)){pixels_.clear();fprintf(log,"dat_view_decode=unsupported_container\n");}}
-    void frame(int step,FILE* log){if(frames_.empty())return;frame_=unsigned((int(frame_)+step+int(frames_.size()))%int(frames_.size()));if(!decode(log)){pixels_.clear();fprintf(log,"dat_view_decode=failed_frame\n");}}
+    void frame(int step,FILE* log){if(frames_.empty())return;const unsigned next=unsigned((int(frame_)+step+int(frames_.size()))%int(frames_.size()));
+        if(next==frame_ && !pixels_.empty()){fprintf(log,"dat_view_frame=unchanged_skip_decode\n");return;}
+        frame_=next;if(!decode(log)){pixels_.clear();fprintf(log,"dat_view_decode=failed_frame\n");}}
     std::string label()const{return entries_.empty()?"DAT UNAVAILABLE":entries_[selected_].name+" F"+std::to_string(frame_)+"/"+std::to_string(frames_.size());}
     void draw(uint32_t* target)const{
         constexpr unsigned x0=690,y0=228,w=260,h=180;

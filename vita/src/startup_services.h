@@ -58,6 +58,7 @@ private:
     StartupWorker* worker_ = nullptr;
     unsigned priority_calls_ = 0;
     unsigned version_calls_ = 0, module_calls_ = 0;
+    uint32_t d3d8_module_refs_ = 1; // Already linked through the PE IAT backend.
     unsigned heap_create_calls_ = 0, heap_alloc_calls_ = 0;
     unsigned heap_other_calls_ = 0;
     struct HeapBlock { uint32_t size, capacity; };
