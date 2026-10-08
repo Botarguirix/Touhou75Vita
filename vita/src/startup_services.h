@@ -106,5 +106,7 @@ private:
     std::map<uint32_t,unsigned> com_apartments_;
     std::map<uint32_t,FILE*> files_;
     std::set<uint32_t> writable_files_;
+    // Stable std::map nodes keep setvbuf storage alive until fclose. At most 32 files.
+    std::map<uint32_t,std::array<char,65536>> readonly_file_buffers_;
     uint32_t next_file_handle_=0x00AB8000;
 };

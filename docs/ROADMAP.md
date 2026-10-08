@@ -1,12 +1,12 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 65, version 01.69
+## Current checkpoint — iteration 66, version 01.70
 
-Hardware 64 confirmed 39 PCM uploads through Buffer8 QI and Lock/Unlock.
-The original game log reached SystemDataInit. A budget pause at the registered
-HeapAlloc trap was incorrectly rejected by the runner's executable-section guard.
-Iteration 65 validates owned trap slots and executable returns before resuming.
-Guest playback/mixing, original drawing/presentation and gameplay remain pending.
-See [scope/evidence](STATUS_ITERATION65.md) and
+Hardware 65 resumed import-budget pauses and advanced to 3613 main calls,
+then reached the 16-slice cap while still loading SystemDataInit.
+Iteration 66 allows 32 slices under existing time limits, buffers readonly files
+and batches diagnostic writes. Physical performance confirmation is pending.
+39 original PCM uploads remain confirmed; guest mixing, original Draw/Present
+and gameplay remain pending. See [scope/evidence](STATUS_ITERATION66.md) and
 [batch/reconstruction report](INFORME_ITERACION64_RECONSTRUCCION_Y_LOTE.md).
 
 Historical observations follow below.

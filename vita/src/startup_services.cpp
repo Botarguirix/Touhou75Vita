@@ -193,6 +193,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     FILE* file=fopen(native.c_str(),readonly ? "rb" : args[4]==2 ? "wb" : "r+b");
                     if(!file)wx86_set_lasterr(cpu_,existed || args[4]==2 ? 5:2);
                     else {expected_eax=next_file_handle_;next_file_handle_+=4;files_.emplace(expected_eax,file);
+                        if(readonly) {
+                            auto& buffer=readonly_file_buffers_[expected_eax];
+                            const int buffered=setvbuf(file,buffer.data(),_IOFBF,buffer.size());
+                            fprintf(log_,"startup_file_read_buffer=handle:0x%08X bytes:%u rc:%d\n",expected_eax,unsigned(buffer.size()),buffered);
+                        }
                         if(game_log) {
                             writable_files_.insert(expected_eax);
                             if(args[4]==2)wx86_set_lasterr(cpu_,existed ? 183:0);
@@ -212,7 +217,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             const auto it=files_.find(arg);
             if(it==files_.end()) {wx86_set_lasterr(cpu_,6);expected_eax=file_size || file_seek ? 0xFFFFFFFFu:0u;}
             else if(event_close) {
-                const int rc=fclose(it->second);writable_files_.erase(arg);files_.erase(it);expected_eax=rc==0 ? 1u:0u;
+                const int rc=fclose(it->second);readonly_file_buffers_.erase(arg);writable_files_.erase(arg);files_.erase(it);expected_eax=rc==0 ? 1u:0u;
                 if(rc)wx86_set_lasterr(cpu_,5);
             } else if(file_type)expected_eax=1;
             else if(file_size) {

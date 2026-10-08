@@ -28,7 +28,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration65-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration66-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -94,7 +94,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration65\n");
+        fprintf(report_, "watchdog_revision=iteration66\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -308,15 +308,17 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
         "KERNEL32.dll", "IsProcessorFeaturePresent", 0, 0, 0};
+    unsigned boundaries_since_flush=0;
+    fprintf(log,"startup_logging=all_calls_recorded flush_every:32_successful_callbacks flush_on:stop_or_slice\n");
     auto startup_trap = [&](d2rt::Cpu& c, uint32_t trap) {
         struct FlushBoundary {
-            FILE* file;
-            ~FlushBoundary() { fflush(file); }
-        } flush_boundary{log};
+            FILE* file;unsigned& count;bool continuing=false;
+            ~FlushBoundary() { if(!continuing || ++count>=32){fflush(file);count=0;} }
+        } flush_boundary{log,boundaries_since_flush};
         if(sound.owns(trap)) {
             ++main_import_calls;import_hit=true;
             const auto result=sound.call(trap);
-            if(result==StartupServiceResult::Serviced)return true;
+            if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
             fprintf(log,"startup_stop_import=%s::%s\n",sound.interface_name(trap),sound.method_name(trap));
@@ -326,7 +328,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(input.owns(trap)) {
             ++main_import_calls;import_hit=true;
             const auto result=input.call(trap);
-            if(result==StartupServiceResult::Serviced)return true;
+            if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
             fprintf(log,"startup_stop_import=%s::%s\n",input.interface_name(trap),input.method_name(trap));
@@ -336,7 +338,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(d3d8.owns_trap(trap)) {
             ++main_import_calls; import_hit=true;
             const auto result=d3d8.call(trap);
-            if(result==StartupServiceResult::Serviced)return true;
+            if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
             fprintf(log,"startup_stop_import=%s::%s\n",d3d8.interface_name(trap),d3d8.method_name(trap));
@@ -440,7 +442,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 priority_dispatch_requested=true;
                 fprintf(log,"startup_scheduler_yield=dispatch_priority_worker\n");return false;
             }
-            return true;
+            flush_boundary.continuing=true;return true;
         }
         if (service == StartupServiceResult::ContractFailure) {
             if(!first)log_frame();
@@ -503,10 +505,12 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const char* fault = nullptr;
     bool stopped = false, limit = false;
     unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
+    fprintf(log,"startup_slice_cap=32\nstartup_time_cap_us=45000000\n");
     auto run_main = [&](uint32_t entry, uint64_t budget) {
         cpu.take_limit_hit(); cpu.set_run_limit(budget);
         stopped = cpu.run(entry, &fault);
         limit = cpu.take_limit_hit();
+        fflush(log);boundaries_since_flush=0;
         uint32_t previous = 0;
         bool have_previous = false;
         unsigned unchanged = 0, repeated_state = 0;
@@ -570,9 +574,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             } else {
                 have_previous = false; unchanged = 0;
             }
-            if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= 16 || elapsed >= 45000000) {
+            if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= 32 || elapsed >= 45000000) {
                 fprintf(log, "startup_resume_stop=%s\n", unchanged >= 2 ? "cosine_no_index_progress" :
-                    repeated_state >= 3 ? "repeated_sampled_state" : resume_slices >= 16 ? "slice_cap" : "time_cap"); break;
+                    repeated_state >= 3 ? "repeated_sampled_state" : resume_slices >= 32 ? "slice_cap" : "time_cap"); break;
             }
             ++resume_slices;
             if (cosine) ++cosine_slices;
@@ -585,6 +589,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             cpu.set_run_limit(kRunBudget);
             stopped = cpu.run(cpu.reg(d2rt::R_EIP), &fault);
             limit = cpu.take_limit_hit();
+            fflush(log);boundaries_since_flush=0;
         }
     };
     run_main(kEntry, kRunBudget);
