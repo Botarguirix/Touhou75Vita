@@ -1,11 +1,12 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 58, version 01.62
+## Current checkpoint — iteration 59, version 01.63
 
-The user confirmed fluent music on iteration 57. Iteration 58 preserves
-that native path, adds a DAT image browser/exporter and creates the original
-primary DirectSound buffer request. Hardware viewer/export and next EXE
-boundary validation are pending. Uploads, Draw/Present and gameplay remain
-pending. See [scope/evidence](STATUS_ITERATION58.md).
+Hardware 58 reached DirectInput EnumDevices and returned exact DAT/BMP exports.
+Iteration 59 caches composed previews and visited container indexes, logs timings,
+and serves the observed GAMECTRL enumeration with zero joystick devices in the
+keyboard backend. Hardware performance and next boundary remain pending.
+See [scope/evidence](STATUS_ITERATION59.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+
 Historical observations follow below.
 
 ## Phase 0 — reproducible diagnostic shell (complete)

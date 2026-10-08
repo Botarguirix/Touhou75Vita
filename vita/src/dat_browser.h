@@ -8,14 +8,19 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
+#include <psp2/kernel/processmgr.h>
 
 namespace th075 {
 class DatBrowser {
     struct Entry{std::string name;uint32_t offset,size;};
     struct Frame{uint32_t offset,width,height,size;uint8_t depth;};
+    struct Index{std::vector<Frame> frames;std::array<uint16_t,256> palette{};bool indexed=false,palettes=false;};
     std::vector<Entry> entries_;
+    std::vector<Index> indexes_;
     std::vector<Frame> frames_;
     std::vector<uint32_t> pixels_;
+    std::vector<uint32_t> preview_;
+    bool preview_ready_=false;
     std::array<uint16_t,256> palette_{};
     FILE* file_=nullptr;unsigned selected_=0,frame_=0;
     uint32_t width_=0,height_=0;bool palette_present_=false;
@@ -24,6 +29,10 @@ class DatBrowser {
     bool read(uint64_t offset,void* p,size_t bytes){return offset<=0x7FFFFFFF && !fseek(file_,long(offset),SEEK_SET) && fread(p,1,bytes,file_)==bytes;}
     bool container(FILE* log){
         frames_.clear();pixels_.clear();const auto& e=entries_[selected_];
+        auto& cached=indexes_[selected_];
+        if(cached.indexed){frames_=cached.frames;palette_=cached.palette;palette_present_=cached.palettes;frame_=0;
+            fprintf(log,"dat_view_index=cache_hit container:%s\n",e.name.c_str());return decode(log);}
+        const uint64_t begin=sceKernelGetProcessTimeWide();
         uint8_t palettes=0;if(!read(e.offset,&palettes,1))return false;
         uint64_t cursor=1+uint32_t(palettes)*512;palette_present_=palettes>0;
         if(cursor>e.size)return false;
@@ -37,10 +46,13 @@ class DatBrowser {
             frames_.push_back(f);cursor=uint64_t(f.offset)+f.size;
         }
         fprintf(log,"dat_view_container=%s frames:%u\n",e.name.c_str(),unsigned(frames_.size()));
+        if(!frames_.empty()){cached.frames=frames_;cached.palette=palette_;cached.palettes=palette_present_;cached.indexed=true;}
+        fprintf(log,"dat_view_index=scan_us:%llu container:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-begin),e.name.c_str());
         frame_=0;return !frames_.empty() && decode(log);
     }
     bool decode(FILE* log){
-        pixels_.clear();if(frames_.empty())return false;
+        const uint64_t begin=sceKernelGetProcessTimeWide();
+        preview_ready_=false;pixels_.clear();if(frames_.empty())return false;
         const auto& e=entries_[selected_];const auto& f=frames_[frame_];
         const unsigned unit=f.depth>=24?4:f.depth/8;
         if(f.size%(unit*2) || (f.depth==8 && !palette_present_) || f.size>32u*1024*1024)return false;
@@ -69,7 +81,25 @@ class DatBrowser {
         }
         if(pixel!=decoded.size())return false;
         pixels_.swap(decoded);width_=f.width;height_=f.height;
+        const uint64_t decoded_at=sceKernelGetProcessTimeWide();
+        prepare_preview();
+        fprintf(log,"dat_view_timing=decode_us:%llu preview_us:%llu compressed_bytes:%u rgba_bytes:%u\n",
+            (unsigned long long)(decoded_at-begin),(unsigned long long)(sceKernelGetProcessTimeWide()-decoded_at),f.size,unsigned(pixels_.size()*4));
         fprintf(log,"dat_view_frame=%s index:%u dimensions:%ux%u depth:%u pixels:%u\n",e.name.c_str(),frame_,width_,height_,f.depth,unsigned(pixel));fflush(log);return true;
+    }
+    void prepare_preview(){
+        constexpr unsigned w=260,h=180;
+        preview_.resize(w*h);
+        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x)preview_[y*w+x]=((x/8+y/8)%2)?0xFF484848:0xFF282828;
+        unsigned dw=w,dh=uint64_t(height_)*w/width_;if(dh>h){dh=h;dw=uint64_t(width_)*h/height_;}
+        dw=std::max(dw,1u);dh=std::max(dh,1u);
+        for(unsigned y=0;y<dh;++y)for(unsigned x=0;x<dw;++x){
+            const uint32_t src=pixels_[(uint64_t(y)*height_/dh)*width_+uint64_t(x)*width_/dw];
+            auto& dst=preview_[((h-dh)/2+y)*w+(w-dw)/2+x];const unsigned a=src>>24;uint32_t rgb=0;
+            for(unsigned c=0;c<3;++c)rgb|=((((src>>(8*c))&255)*a+((dst>>(8*c))&255)*(255-a))/255)<<(8*c);
+            dst=0xFF000000|rgb;
+        }
+        preview_ready_=true;
     }
 public:
     ~DatBrowser(){if(file_)fclose(file_);}
@@ -90,6 +120,7 @@ public:
             if(image && name.size()>4 && name.substr(name.size()-4)==".dat")entries_.push_back({name,offset,bytes});
         }
         fprintf(log,"dat_view_inventory=archive_entries:%u image_containers:%u\n",count,unsigned(entries_.size()));
+        indexes_.resize(entries_.size());
         return !entries_.empty() && container(log);
     }
     void next(FILE* log){if(entries_.empty())return;selected_=(selected_+1)%entries_.size();if(!container(log)){pixels_.clear();fprintf(log,"dat_view_decode=unsupported_container\n");}}
@@ -97,15 +128,8 @@ public:
     std::string label()const{return entries_.empty()?"DAT UNAVAILABLE":entries_[selected_].name+" F"+std::to_string(frame_)+"/"+std::to_string(frames_.size());}
     void draw(uint32_t* target)const{
         constexpr unsigned x0=690,y0=228,w=260,h=180;
-        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x)target[(y0+y)*960+x0+x]=((x/8+y/8)%2)?0xFF484848:0xFF282828;
-        if(pixels_.empty())return;
-        unsigned dw=w,dh=uint64_t(height_)*w/width_;if(dh>h){dh=h;dw=uint64_t(width_)*h/height_;}
-        dw=std::max(dw,1u);dh=std::max(dh,1u);
-        for(unsigned y=0;y<dh;++y)for(unsigned x=0;x<dw;++x){const uint32_t src=pixels_[(uint64_t(y)*height_/dh)*width_+uint64_t(x)*width_/dw];
-            auto& dst=target[(y0+(h-dh)/2+y)*960+x0+(w-dw)/2+x];const unsigned a=src>>24;uint32_t rgb=0;
-            for(unsigned c=0;c<3;++c)rgb|=((((src>>(8*c))&255)*a+((dst>>(8*c))&255)*(255-a))/255)<<(8*c);
-            dst=0xFF000000|rgb;
-        }
+        if(preview_ready_ && !pixels_.empty())for(unsigned y=0;y<h;++y)std::memcpy(target+(y0+y)*960+x0,preview_.data()+y*w,w*4);
+        else for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x)target[(y0+y)*960+x0+x]=((x/8+y/8)%2)?0xFF484848:0xFF282828;
     }
     void export_current(FILE* log){
         if(entries_.empty() || pixels_.empty())return;

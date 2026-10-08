@@ -88,8 +88,11 @@ public:
                 if(guid!=keyboard_guid)return unsupported();
                 if(!sample())return failure();
             } else if(slot==4) {
-                fprintf(log_,"startup_dinput_enumeration_boundary=guest_callback_required type=%u callback=0x%08X flags=%u\n",w[2],w[3],w[5]);
-                return unsupported();
+                // This backend exposes a keyboard, not a DirectInput joystick.
+                // A GAMECTRL-only query therefore has no matching devices.
+                // Other filters still require real guest callback delivery.
+                if(w[2]!=4 || w[5]!=1 || w[3]<0x00401000 || w[3]>=0x00690000)return unsupported();
+                fprintf(log_,"startup_dinput_enumeration=gamectrl attached_only matching_devices:0 backend:keyboard_native_pad no_callback\n");
             } else return unsupported();
         } else {
             if(slot==11) {
