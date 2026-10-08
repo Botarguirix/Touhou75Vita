@@ -19,6 +19,7 @@ public:
     bool window_pending() const { return window_pending_; }
     bool finish_window_creation(); // Call only after Cpu::run has returned.
     void attach_worker(StartupWorker* worker) { worker_ = worker; }
+    void attach_audio_worker(StartupWorker* worker) { audio_worker_ = worker; }
     unsigned priority_calls() const { return priority_calls_; }
     unsigned version_calls() const { return version_calls_; }
     unsigned module_calls() const { return module_calls_; }
@@ -56,6 +57,7 @@ private:
     const d2rt::PeImage& image_;
     FILE* log_;
     StartupWorker* worker_ = nullptr;
+    StartupWorker* audio_worker_ = nullptr;
     unsigned priority_calls_ = 0;
     unsigned version_calls_ = 0, module_calls_ = 0;
     uint32_t d3d8_module_refs_ = 1; // Already linked through the PE IAT backend.

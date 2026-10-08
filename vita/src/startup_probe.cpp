@@ -27,7 +27,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration61-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration62-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -93,7 +93,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration61\n");
+        fprintf(report_, "watchdog_revision=iteration62\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -300,6 +300,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     unsigned main_import_calls = 0;
     uint32_t worker_create_frame = 0;
     StartupWorker worker;
+    StartupWorker audio_worker;audio_worker.handle=0x00AB4010;audio_worker.id=13;
+    uint32_t audio_create_frame=0;
     bool priority_dispatch_requested = false;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
@@ -429,6 +431,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         }
         if (service == StartupServiceResult::Unsupported && imp.dll == "KERNEL32.dll" &&
             imp.name == "CreateThread" && ret == 0x00423A58) worker_create_frame = esp;
+        if(service==StartupServiceResult::Unsupported && imp.dll=="KERNEL32.dll" &&
+            imp.name=="CreateThread" && ret==0x0040721F)audio_create_frame=esp;
         if (service == StartupServiceResult::Serviced) {
             if(imp.dll=="KERNEL32.dll" && imp.name=="SetThreadPriority" && ret==0x00423A6C &&
                c.reg(d2rt::R_EAX)==1 && worker.blocked && worker.priority>0) {
@@ -624,7 +628,33 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             run_main(cpu.reg(d2rt::R_EIP), kRunBudget);
         }
     }
-    fprintf(log, "startup_thread_create_calls=%u\n", thread_created ? 1u : 0u);
+    bool audio_created=false;
+    if(audio_create_frame && stopped && !limit && !service_failed && worker_ok) {
+        d2rt::X86Context saved{},restored{};cpu.save_context(saved);
+        fprintf(log,"startup_audio_worker=initial_handoff entry:0x00407EF0\n");
+        worker_ok=run_worker_probe(cpu,image,audio_create_frame,services,audio_worker,log);
+        cpu.save_context(restored);
+        worker_ok=worker_ok && !std::memcmp(saved.gpr,restored.gpr,sizeof(saved.gpr)) && saved.eip==restored.eip &&
+            saved.eflags==restored.eflags && saved.fs_base==restored.fs_base && wx86_cur_tib()==kDiagnosticTeb;
+        cpu.set_trap(kTrap,kTrapEnd,startup_trap);
+        uint32_t ret=0,out=0,copy=0;
+        if(worker_ok)worker_ok=cpu.read(audio_create_frame,&ret,4) && ret==0x0040721F &&
+            cpu.read(audio_create_frame+24,&out,4) && out==0x0067139C &&
+            cpu.write(out,&audio_worker.id,4) && cpu.read(out,&copy,4) && copy==audio_worker.id;
+        if(worker_ok) {
+            services.attach_audio_worker(&audio_worker);audio_created=true;
+            cpu.trap_epilogue(audio_worker.handle,28,ret);
+            fprintf(log,"startup_audio_worker=blocked_main_resumed handle:0x%08X id:%u\n",audio_worker.handle,audio_worker.id);
+            expected_boundary=false;run_main(ret,kRunBudget);
+            // The new thread runs at the same priority as the timer. Dispatch
+            // its first elapsed wait before reporting the main boundary.
+            if(stopped && !limit && !service_failed && audio_worker.priority>0) {
+                worker_ok=wake_worker_slice(cpu,image,services,audio_worker,log);
+                cpu.set_trap(kTrap,kTrapEnd,startup_trap);
+            }
+        } else service_failed=true;
+    }
+    fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
     fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
     fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());

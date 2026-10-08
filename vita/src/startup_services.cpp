@@ -20,7 +20,7 @@ constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kMajor = 5, kMinor = 1, kBuild = 2600, kPlatform = 2;
 bool in_stack(uint32_t p, uint32_t size) {
     return (p >= kStack && uint64_t(p) + size <= kStackEnd) ||
-        (p >= 0x00A00000 && uint64_t(p)+size <= 0x00A20000);
+        (p >= 0x00A00000 && uint64_t(p)+size <= 0x00A40000);
 }
 void put32(uint8_t* out, uint32_t value) {
     for (unsigned i = 0; i < 4; ++i) out[i] = uint8_t(value >> (8 * i));
@@ -520,19 +520,20 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
         fprintf(log_,"startup_serviced_import=USER32.dll!GetSystemMetrics\n");
     } else if (priority) {
-        if (!worker_ || arg != worker_->handle) {
+        StartupWorker* selected=worker_ && arg==worker_->handle?worker_:audio_worker_;
+        if (!selected || arg != selected->handle) {
             wx86_set_lasterr(cpu_,6);
             expected_eax = priority_get ? 0x7FFFFFFFu : 0;
-        } else if (priority_get) expected_eax = uint32_t(worker_->priority);
+        } else if (priority_get) expected_eax = uint32_t(selected->priority);
         else {
             int32_t requested=0;
             if(!cpu_.read(esp+8,&requested,4)) return StartupServiceResult::ContractFailure;
             if(requested != -15 && requested != 15 && (requested < -2 || requested > 2)) {
                 wx86_set_lasterr(cpu_,87); expected_eax=0;
-            } else { worker_->priority=requested; expected_eax=1; }
+            } else { selected->priority=requested; expected_eax=1; }
             fprintf(log_,"startup_thread_requested_priority=%d\n",requested);
         }
-        if(worker_) fprintf(log_,"startup_thread_priority=%d\n",worker_->priority);
+        if(selected) fprintf(log_,"startup_thread_priority=%d\n",selected->priority);
         fprintf(log_,"startup_priority_scope=bounded_guest_worker_dispatch\n");
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
         ++priority_calls_;

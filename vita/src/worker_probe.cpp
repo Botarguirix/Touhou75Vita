@@ -10,14 +10,15 @@
 
 bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame,
                       StartupServices& services, StartupWorker& state, FILE* log) {
-    constexpr uint32_t stack = 0x00A00000, top = 0x00A20000, teb = 0x00760000;
+    const bool audio=state.id==13;
+    const uint32_t stack=audio?0x00A20000:0x00A00000, top=stack+0x20000, teb=audio?0x00770000:0x00760000;
     constexpr uint32_t sentinel = 0x00BFFFC0, traps = 0x00B00000;
     uint32_t args[6] = {};
     fprintf(log, "worker_probe_scope=original_worker_to_first_blocking_wait\n");
     if (frame < 0x00800000 || uint64_t(frame) + 28 > 0x00A00000 ||
         !cpu.read(frame + 4, args, sizeof(args))) return false;
     for (unsigned i = 0; i < 6; ++i) fprintf(log, "worker_create_arg%u=0x%08X\n", i, args[i]);
-    if (args[0] || args[1] || args[2] != 0x00423B40 || args[3] || args[4] || args[5] != 0x0068BE3C) {
+    if (args[0] || args[1] || args[2] != (audio?0x00407EF0u:0x00423B40u) || args[3] || args[4] || args[5] != (audio?0x0067139Cu:0x0068BE3Cu)) {
         fprintf(log, "worker_probe_result=unsupported_create_frame\n"); return false;
     }
     d2rt::X86Context main{};
@@ -32,7 +33,7 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
         fprintf(log, "worker_probe_result=context_map_failed\n"); return false;
     }
     const std::array<std::array<uint32_t,2>,8> fields = {{{0,0xFFFFFFFF}, {4,top}, {8,stack},
-        {0x18,teb}, {0x20,4}, {0x24,12}, {0x30,0x00731000}, {0x34,0}}};
+        {0x18,teb}, {0x20,4}, {0x24,state.id}, {0x30,0x00731000}, {0x34,0}}};
     for (const auto& field : fields) {
         uint32_t copy = 0;
         if (!cpu.write(teb+field[0], &field[1], 4) ||
@@ -43,7 +44,7 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
     d2rt::X86Context worker{};
     worker.eip = args[2]; worker.gpr[d2rt::R_ESP] = esp; worker.fs_base = teb;
     cpu.load_context(worker); wx86_set_main_tib(teb);
-    bool hit = false, valid = false;
+    bool hit = false, valid = false;unsigned imports_serviced=0;
     cpu.set_trap(traps, 0x00C00000, [&](d2rt::Cpu& c, uint32_t trap) {
         if (trap == sentinel) { fprintf(log, "worker_probe_stop=worker_returned\n"); return false; }
         if (trap < traps || (trap-traps)%16 || (trap-traps)/16 >= image.imports().size()) return false;
@@ -61,9 +62,10 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
         uint32_t wait_args[2] = {};
         uint32_t tls_slot = 1;
         if (valid && imp.dll == "KERNEL32.dll" && imp.name == "WaitForSingleObject" &&
-            ret == 0x00423B8C && uint64_t(sp)+12 <= top && c.read(sp+4,wait_args,8) &&
+            ret == (audio?0x004080FAu:0x00423B8Cu) && uint64_t(sp)+12 <= top && c.read(sp+4,wait_args,8) &&
             wait_args[1] && services.event_unsignaled(wait_args[0]) &&
             c.read(teb+0xE10,&tls_slot,4) && !tls_slot) {
+            if(wait_args[1]!=(audio?80u:16u))return false;
             state.event = wait_args[0]; state.timeout_ms = wait_args[1];
             state.wait_started_us = sceKernelGetProcessTimeWide();
             state.blocked = true;
@@ -72,6 +74,10 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
             fprintf(log, "worker_wait_timeout_ms=%u\n", state.timeout_ms);
             fprintf(log, "worker_wait_state=blocked_saved_context\n");
             fprintf(log, "worker_tls_slot0=zero\n");
+            return false;
+        }
+        if(audio && valid && ++imports_serviced<=16 && services.call(imp)==StartupServiceResult::Serviced){
+            fprintf(log,"worker_probe_import_executed=serviced id:%u\n",state.id);return true;
         }
         return false;
     });
@@ -91,7 +97,8 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
 
 bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices& services,
                        StartupWorker& worker,FILE* log) {
-    if(!worker.blocked || worker.timeout_ms!=16 || !services.event_unsignaled(worker.event)) {
+    const uint32_t stack=worker.id==13?0x00A20000:0x00A00000,top=stack+0x20000;
+    if(!worker.blocked || worker.timeout_ms!=(worker.id==13?80u:16u) || !services.event_unsignaled(worker.event)) {
         fprintf(log,"worker_wake_result=unsupported_wait_state\n"); return false;
     }
     const uint64_t deadline=worker.wait_started_us+uint64_t(worker.timeout_ms)*1000;
@@ -108,11 +115,11 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
     cpu.load_context(worker.context); wx86_set_main_tib(worker.context.fs_base);
     uint32_t ret=0;
     const uint32_t esp=cpu.reg(d2rt::R_ESP);
-    if(esp<0x00A00000 || uint64_t(esp)+12>0x00A20000 || !cpu.read(esp,&ret,4)) return false;
+    if(esp<stack || uint64_t(esp)+12>top || !cpu.read(esp,&ret,4)) return false;
     cpu.trap_epilogue(0x102,12,ret); // Actual elapsed timeout, not an invented signal.
     worker.blocked=false;
     fprintf(log,"worker_wake_elapsed_us=%llu\n",(unsigned long long)(now-worker.wait_started_us));
-    fprintf(log,"worker_wake_reason=real_16ms_timeout\nworker_wait_result=0x00000102\n");
+    fprintf(log,"worker_wake_reason=real_timeout ms:%u id:%u\nworker_wait_result=0x00000102\n",worker.timeout_ms,worker.id);
     fprintf(log,"worker_dispatch_priority=%d\n",worker.priority);
     bool boundary=false,failed=false;
     unsigned calls=0;
@@ -121,7 +128,7 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
         const auto& imp=image.imports()[(trap-0x00B00000)/16];
         const uint32_t sp=c.reg(d2rt::R_ESP);
         uint32_t return_va=0;
-        if(sp<0x00A00000 || uint64_t(sp)+12>0x00A20000 || !c.read(sp,&return_va,4) ||
+        if(sp<stack || uint64_t(sp)+12>top || !c.read(sp,&return_va,4) ||
            return_va<image.load_base() || uint64_t(return_va)>=uint64_t(image.load_base())+image.image_size()) {failed=true;return false;}
         fprintf(log,"worker_resumed_import=%s!%s\n",imp.dll.c_str(),imp.name.c_str());
         fprintf(log,"worker_resumed_return_va=0x%08X\n",return_va);

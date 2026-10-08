@@ -1,11 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 61, version 01.65
+## Current checkpoint — iteration 62, version 01.66
 
-Hardware 60 reached the first managed texture LockRect. Its staging copy was
-rejected as outside the actual 16 MiB guest arena. Iteration 61 requests and
-validates 32 MiB of usable guest memory, with an explicit staging bounds check.
-Hardware upload, memory/JIT availability and the next boundary remain pending.
-See [scope/evidence](STATUS_ITERATION61.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+Hardware 61 confirmed a 32 MiB arena and two original EXE texture uploads.
+It reached a second CreateThread for the audio queue. Iteration 62 adds a separate
+worker context and bounded initial wait/timeout handoff. Hardware validation,
+continuous scheduling, original Draw/Present and gameplay remain pending.
+See [scope/evidence](STATUS_ITERATION62.md) and [engine roadmap](INFORME_ROADMAP_ITERACION59.md).
 
 Historical observations follow below.
 
