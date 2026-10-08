@@ -1411,8 +1411,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         if (heap_alloc) {
             const uint32_t size = pointer_or_size;
             const uint64_t capacity64 = std::max<uint64_t>(16, (uint64_t(size) + 15) & ~15ull);
-            if (uint64_t(heap_next_) + capacity64 <= 0x01400000ull) {
-                const uint32_t capacity = uint32_t(capacity64), address = heap_next_;
+            const uint32_t address = capacity64<=0x00800000u ? reserve_heap(uint32_t(capacity64)):0;
+            if (address) {
+                const uint32_t capacity = uint32_t(capacity64);
                 if (flags & 8u) {
                     std::vector<uint8_t> zero(capacity), readback(capacity);
                     if (!cpu_.write(address, zero.data(), capacity) ||
@@ -1420,9 +1421,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         return StartupServiceResult::ContractFailure;
                 }
                 heap_blocks_.emplace(address, HeapBlock{size, capacity});
-                heap_next_ += capacity;
                 expected_eax = address;
             }
+            if(!address){fprintf(log_,"startup_heap_boundary=capacity_exhausted requested:%u high_water:0x%08X free_ranges:%u\n",size,heap_next_,unsigned(heap_free_ranges_.size()));return StartupServiceResult::Unsupported;}
             ++heap_alloc_calls_;
             fprintf(log_, "startup_heap_alloc_va=0x%08X\n", expected_eax);
             fprintf(log_, "startup_heap_alloc_size=%u\n", size);
@@ -1439,13 +1440,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             if (heap_size) expected_eax = old.size;
             else if (heap_free) {
                 heap_blocks_.erase(block);
+                reclaim_heap(pointer_or_size,old.capacity);
                 expected_eax = 1;
             } else {
                 const uint64_t capacity64 = std::max<uint64_t>(16, (uint64_t(new_size) + 15) & ~15ull);
                 const bool in_place = new_size <= old.capacity;
-                const bool can_move = !(flags & 0x10u) && uint64_t(heap_next_) + capacity64 <= 0x01400000ull;
-                if (in_place || can_move) {
-                    const uint32_t address = in_place ? pointer_or_size : heap_next_;
+                const uint32_t moved = !in_place && !(flags&0x10u) && capacity64<=0x00800000u ? reserve_heap(uint32_t(capacity64)):0;
+                if (in_place || moved) {
+                    const uint32_t address = in_place ? pointer_or_size : moved;
                     const uint32_t capacity = in_place ? old.capacity : uint32_t(capacity64);
                     const uint32_t preserved_size = std::min(old.size, new_size);
                     std::vector<uint8_t> preserved_bytes(preserved_size), readback(preserved_size);
@@ -1464,7 +1466,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     else {
                         heap_blocks_.emplace(address, HeapBlock{new_size, capacity});
                         heap_blocks_.erase(block);
-                        heap_next_ += capacity;
+                        reclaim_heap(pointer_or_size,old.capacity);
                     }
                     expected_eax = address;
                     fprintf(log_, "startup_heap_realloc_preserved_readback=passed\n");
@@ -1592,4 +1594,29 @@ bool StartupServices::version_globals_match() {
     }
     fprintf(log_, "startup_version_globals=%s\n", ok ? "passed" : "failed");
     return ok;
+}
+
+uint32_t StartupServices::reserve_heap(uint32_t capacity) {
+    for(auto it=heap_free_ranges_.begin();it!=heap_free_ranges_.end();++it) {
+        if(it->second<capacity)continue;
+        const uint32_t address=it->first,remainder=it->second-capacity;
+        heap_free_ranges_.erase(it);
+        if(remainder)heap_free_ranges_.emplace(address+capacity,remainder);
+        fprintf(log_,"startup_heap_reuse=address:0x%08X bytes:%u\n",address,capacity);
+        return address;
+    }
+    if(uint64_t(heap_next_)+capacity>0x01400000u)return 0;
+    const uint32_t address=heap_next_;heap_next_+=capacity;return address;
+}
+void StartupServices::reclaim_heap(uint32_t address,uint32_t capacity) {
+    auto next=heap_free_ranges_.lower_bound(address);
+    if(next!=heap_free_ranges_.begin()) {
+        auto previous=std::prev(next);
+        if(uint64_t(previous->first)+previous->second==address){address=previous->first;capacity+=previous->second;heap_free_ranges_.erase(previous);}
+    }
+    next=heap_free_ranges_.lower_bound(address);
+    if(next!=heap_free_ranges_.end() && uint64_t(address)+capacity==next->first){capacity+=next->second;heap_free_ranges_.erase(next);}
+    if(uint64_t(address)+capacity==heap_next_)heap_next_=address;
+    else heap_free_ranges_.emplace(address,capacity);
+    fprintf(log_,"startup_heap_reclaim=address:0x%08X bytes:%u high_water:0x%08X ranges:%u\n",address,capacity,heap_next_,unsigned(heap_free_ranges_.size()));
 }

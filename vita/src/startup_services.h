@@ -86,6 +86,9 @@ private:
     std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;
     uint32_t heap_next_ = 0x00C00000;
+    std::map<uint32_t,uint32_t> heap_free_ranges_;
+    uint32_t reserve_heap(uint32_t capacity);
+    void reclaim_heap(uint32_t address,uint32_t capacity);
     uint32_t unhandled_filter_ = 0;
     struct IconObject { uint32_t handle; std::vector<uint32_t> pixels; };
     std::map<std::string,IconObject> icons_;

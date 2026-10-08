@@ -1,13 +1,12 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 66, version 01.70
+## Current checkpoint — iteration 67, version 01.71
 
-Hardware 65 resumed import-budget pauses and advanced to 3613 main calls,
-then reached the 16-slice cap while still loading SystemDataInit.
-Iteration 66 allows 32 slices under existing time limits, buffers readonly files
-and batches diagnostic writes. Physical performance confirmation is pending.
+Hardware 66 advanced to 9483 main calls / 2467 D3D calls and LoadEffect ...OK,
+then HeapAlloc returned NULL before a CPU fault. Its allocator discarded freed
+capacity. Iteration 67 recovers and coalesces ranges within the existing heap.
+Physical confirmation of reuse and further progress is pending.
 39 original PCM uploads remain confirmed; guest mixing, original Draw/Present
-and gameplay remain pending. See [scope/evidence](STATUS_ITERATION66.md) and
-[batch/reconstruction report](INFORME_ITERACION64_RECONSTRUCCION_Y_LOTE.md).
+and gameplay remain pending. See [scope/evidence](STATUS_ITERATION67.md).
 
 Historical observations follow below.
 
