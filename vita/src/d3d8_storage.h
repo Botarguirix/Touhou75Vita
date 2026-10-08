@@ -77,6 +77,10 @@ public:
         if(refs_ || w[4]!=0x00AB7000 || p[6]!=w[4] || p[0]!=640 || p[1]!=480 || p[2]!=22 ||
             p[3]!=1 || p[4] || p[5]!=1 || p[7]!=1 || p[8]!=1 || p[9]!=80 || p[10]!=1 || p[11] || p[12])
             return unsupported();
+        if(!cpu_.hostptr(staging,staging_size)) {
+            fprintf(log_,"startup_d3d8_storage_error=staging_outside_guest_arena address:0x%08X bytes:%u\n",staging,staging_size);
+            return failure();
+        }
         if(!table(device_table,device_trap,97) || !table(texture_table,texture_trap,19) ||
             !table(surface_table,surface_trap,11) || !cpu_.write(device,&device_table,4) ||
             !cpu_.map(staging,staging_size,nullptr,d2rt::P_RW))return failure();
@@ -269,8 +273,9 @@ private:
         if((tex && s==16)||(!tex && s==9)) {
             const uint32_t output=w[tex?3:2],rect=w[tex?4:3],flags=w[tex?5:4];
             if((tex && w[2]) || rect || flags || data->locked || locked_ || data->format==80)return unsupported();
-            if(data->bytes.size()>staging_size || !cpu_.write(staging,data->bytes.data(),data->bytes.size()) ||
-                !put(output,std::array<uint32_t,2>{data->pitch,staging}))return failure();
+            if(data->bytes.size()>staging_size){fprintf(log_,"startup_d3d8_lock_error=staging_capacity_exceeded\n");return failure();}
+            if(!cpu_.write(staging,data->bytes.data(),data->bytes.size())){fprintf(log_,"startup_d3d8_lock_error=staging_write_failed\n");return failure();}
+            if(!put(output,std::array<uint32_t,2>{data->pitch,staging})){fprintf(log_,"startup_d3d8_lock_error=locked_rect_output_failed\n");return failure();}
             data->locked=true;locked_=data->handle;
             fprintf(log_,"startup_d3d8_texture_lock=object:0x%08X pitch:%u guest_bits:0x%08X bytes:%u\n",data->handle,data->pitch,staging,unsigned(data->bytes.size()));return serviced();
         }

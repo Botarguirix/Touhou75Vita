@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-The user confirmed smooth music on physical iteration 57. Iteration 60/version 01.64 adds a native DAT image browser: Circle switches graphic containers, Left/Right select frames and Start exports the original DAT plus a transparent BMP. Triangle/Square/X retain the music controls. Hardware 58 reached DirectInput EnumDevices and returned exact DAT/BMP exports. Version 59 caches the composed preview and container indexes, logs load times, and serves the observed controller enumeration with no joystick devices in this keyboard backend. Hardware 59 confirmed faster previews and fluent music, completed keyboard/joystick initialization, and reached GetModuleHandleA for d3d8.dll. Iteration 60 serves the virtual D3D module lookup/load and its optional DebugSetMute query; next hardware boundary is pending. Title-screen rendering and gameplay remain pending. See [iteration 60 scope](docs/STATUS_ITERATION58.md) and [roadmap](docs/ROADMAP.md).
+The user confirmed smooth music on physical iteration 57. Iteration 61/version 01.65 adds a native DAT image browser: Circle switches graphic containers, Left/Right select frames and Start exports the original DAT plus a transparent BMP. Triangle/Square/X retain the music controls. Hardware 58 reached DirectInput EnumDevices and returned exact DAT/BMP exports. Version 59 caches the composed preview and container indexes, logs load times, and serves the observed controller enumeration with no joystick devices in this keyboard backend. Hardware 59 confirmed faster previews and fluent music, completed keyboard/joystick initialization, and reached GetModuleHandleA for d3d8.dll. Iteration 61 serves the virtual D3D module lookup/load and its optional DebugSetMute query; Hardware 60 reached the first managed texture LockRect, which failed because staging lay outside the actual 16 MiB arena. Iteration 61 requests and validates 32 MiB of usable guest memory before execution; texture upload and next boundary need hardware confirmation. Title-screen rendering and gameplay remain pending. See [iteration 61 scope](docs/STATUS_ITERATION58.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,15 +15,15 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration60-dat-browser-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration61-dat-browser-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe with th075.dat and th075bgm.dat alongside it for the native resource preview and music.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 60 D3D Module**, package version 01.64, on the same Vita used previously. The screen must show ITERATION 60.
+3. Launch **Touhou 7.5 Vita - Iteration 61 Texture Upload**, package version 01.65, on the same Vita used previously. The screen must show ITERATION 61.
 4. Wait for the results screen. Circle selects a graphic container, Left/Right select frames, and Start exports DAT/BMP. Triangle selects another song, Square restarts it, and X exits. Photograph the screen.
-5. Inspect iteration60.log, iteration60-runtime.log and iteration60-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration60-d3d-module-r1, include iteration60-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
+5. Inspect iteration61.log, iteration61-runtime.log and iteration61-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration61-texture-upload-r1, include iteration61-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 

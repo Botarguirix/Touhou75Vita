@@ -1,11 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 60, version 01.64
+## Current checkpoint — iteration 61, version 01.65
 
-Hardware 59 confirmed faster previews and fluent music, completed keyboard/joystick
-initialization, and stopped at GetModuleHandleA(d3d8.dll). Iteration 60 serves the
-virtual D3D lookup/load and optional DebugSetMute export query, while skipping
-redundant decoding of unchanged viewer frames. Next EXE boundary remains pending.
-See [scope/evidence](STATUS_ITERATION60.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+Hardware 60 reached the first managed texture LockRect. Its staging copy was
+rejected as outside the actual 16 MiB guest arena. Iteration 61 requests and
+validates 32 MiB of usable guest memory, with an explicit staging bounds check.
+Hardware upload, memory/JIT availability and the next boundary remain pending.
+See [scope/evidence](STATUS_ITERATION61.md) and [resource/engine roadmap](INFORME_ROADMAP_ITERACION59.md).
 
 Historical observations follow below.
 

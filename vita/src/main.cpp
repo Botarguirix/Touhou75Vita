@@ -24,15 +24,15 @@
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration60.log"
-#define BUILD_ID "iteration60-d3d-module-r1"
+#define LOG_PATH APP_DIR "/iteration61.log"
+#define BUILD_ID "iteration61-texture-upload-r1"
 
-static const uint32_t kArenaGuestLimit = 0x01000000;
+static const uint32_t kArenaGuestLimit = 0x02000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration60-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration61-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -189,10 +189,10 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 
 static int run(FILE* log) {
     if(!th075::load_title_asset(log))fprintf(log,"dat_title_preview=unavailable\n");
-    fprintf(log, "Touhou 7.5 Vita - Iteration 60 original EXE process startup\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 61 original EXE process startup\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     errno = 0;
-    const int old_watchdog = remove(APP_DIR "/iteration60-watchdog.log");
+    const int old_watchdog = remove(APP_DIR "/iteration61-watchdog.log");
     const int watchdog_errno = errno;
     fprintf(log, "watchdog_previous_log_cleared=%s\n",
         old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");
@@ -221,14 +221,16 @@ static int run(FILE* log) {
     const bool pe_loaded = file_read && load_game_pe(exe_bytes, game_image, log);
     if (!pe_loaded) { fprintf(log, "result=input_validation_failed\n"); return 1; }
 
-    if (setenv("WX86_ARENA", "02000000", 1) != 0) {
+    // Box86 arena sizing subtracts a 16 MiB alignment allowance. Request
+    // 48 MiB to obtain at least 32 MiB of usable guest addresses.
+    if (setenv("WX86_ARENA", "03000000", 1) != 0) {
         fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
         fprintf(log, "dynarec_init_result=failed\n");
         fprintf(log, "dynarec_init_error=setenv_failed\n");
         return 1;
     }
-    fprintf(log, "guest_arena_requested_bytes=0x02000000\n");
-    fprintf(log, "guest_address_span_for_smoke=0x01000000\n");
+    fprintf(log, "guest_arena_requested_bytes=0x03000000\n");
+    fprintf(log, "guest_address_span_required=0x02000000\n");
 
     std::unique_ptr<d2rt::Cpu> cpu(d2rt::make_cpu_box86());
     if (!cpu) {
@@ -237,6 +239,10 @@ static int run(FILE* log) {
         fprintf(log, "dynarec_init_error=cpu_backend_unavailable\n");
         return 1;
     }
+    if(!cpu->hostptr(0,kArenaGuestLimit)) {
+        fprintf(log,"dynarec_init_error=guest_arena_span_below_32MiB\n");return 1;
+    }
+    fprintf(log,"guest_arena_span_validation=at_least_32MiB\n");
     fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
     fprintf(log, "dynarec_init_result=created\n");
 
