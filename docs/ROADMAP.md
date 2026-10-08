@@ -1,11 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 68, version 01.72
+## Current checkpoint — iteration 69, version 01.73
 
-Hardware 67 reached BeginStateBlock after 9653 calls with no fault/limit.
-Heap reuse advanced loading. Iteration 68 prepares state-block recording,
-end/apply/capture/delete for the currently supported render/stage/FVF states.
-Physical execution of these contracts is pending. Original Draw/Present,
-guest audio mixing and gameplay remain pending. See [scope](STATUS_ITERATION68.md).
+Hardware 68 serviced BeginStateBlock then reached SetViewport (slot 40).
+Iteration 69 prepares viewport storage/recording and render/depth bindings for
+the original target-switch sequence. Physical validation is pending.
+Guest audio mixing, original rasterization/Present and gameplay remain pending.
+See [scope/evidence](STATUS_ITERATION69.md).
 
 Historical observations follow below.
 

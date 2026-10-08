@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <limits>
 #include <cstring>
+#include <cmath>
 
 // Partial software graphics bridge. Implements owned storage and state;
 // Draw/Present remain explicit boundaries. ABI follows Wine's d3d8.h.
@@ -48,7 +49,7 @@ public:
         case CreateRenderTarget:return "CreateRenderTarget";
         case CreateDepthStencilSurface:return "CreateDepthStencilSurface";
         case 33:return "GetDepthStencilSurface";case 34:return "BeginScene";case 35:return "EndScene";
-        case 36:return "Clear";case 50:return "SetRenderState";case 51:return "GetRenderState";
+        case 40:return "SetViewport";case 41:return "GetViewport";case 36:return "Clear";case 50:return "SetRenderState";case 51:return "GetRenderState";
         case 52:return "BeginStateBlock";case 53:return "EndStateBlock";case 54:return "ApplyStateBlock";
         case 55:return "CaptureStateBlock";case 56:return "DeleteStateBlock";case 57:return "CreateStateBlock";
         case GetTexture:return "GetTexture";case SetTexture:return "SetTexture";case GetTextureStageState:return "GetTextureStageState";
@@ -86,7 +87,7 @@ public:
             !cpu_.map(staging,staging_size,nullptr,d2rt::P_RW))return failure();
         uint32_t back=0,depth=0;
         if(!allocate(640,480,22,1,0,false,back) || !allocate(640,480,80,2,0,false,depth))return unsupported();
-        back_=target_=back;depth_=depth;focus_=w[4];refs_=1;++root_refs_;
+        back_=target_=back;depth_=depth;++find(back)->refs;++find(depth)->refs;focus_=w[4];refs_=1;++root_refs_;
         if(!put(w[7],device))return failure();
         hr=0;
         fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
@@ -178,9 +179,9 @@ private:
             switch(s){case 8:return 2;case 9:return 4;case 10:return 1;default:return 0;}
         }
         switch(s){case 3:case 4:case 34:case 35:case 52:return 1;
-        case 6:case 7:case 8:case 9:case 32:case 33:case 53:case 54:case 55:case 56:case 76:case 77:return 2;
+        case 6:case 7:case 8:case 9:case 32:case 33:case 40:case 41:case 53:case 54:case 55:case 56:case 76:case 77:return 2;
         case 16:return 4;case 20:return 8;case CreateDepthStencilSurface:return 6;case 36:return 7;
-        case 50:case 51:return 3;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
+        case 31:case 50:case 51:return 3;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
     }
     StartupServiceResult device_call(unsigned s,const uint32_t* w,uint32_t& value) {
         switch(s) {
@@ -191,8 +192,35 @@ private:
         case 8:return put(w[2],mode())?serviced():failure();
         case 9:return put(w[2],std::array<uint32_t,4>{0,2,focus_,0x20})?serviced():failure();
         case 16:if(w[2] || w[3])return unsupported();return surface_output(back_,w[4]);
+        case 31: {
+            const uint32_t color_handle=w[2]?w[2]:target_;
+            auto* color=find(color_handle);auto* depth=w[3]?find(w[3]):nullptr;
+            auto* color_data=color && color->parent?find(color->parent):color;
+            auto* depth_data=depth && depth->parent?find(depth->parent):depth;
+            if(!color || color->texture || !color_data || !(color_data->usage&1u) ||
+                (color_data->format!=21 && color_data->format!=22) ||
+                (w[3] && (!depth || depth->texture || !depth_data || depth_data->format!=80 ||
+                 depth_data->width<color_data->width || depth_data->height<color_data->height))){value=0x8876086C;return serviced();}
+            if(color_handle!=target_){auto* old=find(target_);if(!old || old->refs<2 || color->refs==0xFFFFFFFFu)return failure();++color->refs;--old->refs;target_=color_handle;}
+            if(w[3]!=depth_){auto* old=depth_?find(depth_):nullptr;if((old && old->refs<2) || (depth && depth->refs==0xFFFFFFFFu))return failure();if(depth)++depth->refs;if(old)--old->refs;depth_=w[3];}
+            viewport_={0,0,color_data->width,color_data->height,0,0x3F800000};
+            fprintf(log_,"startup_d3d8_render_target=color:0x%08X depth:0x%08X dimensions:%ux%u viewport_reset:yes\n",target_,depth_,color_data->width,color_data->height);return serviced();
+        }
+        case 40: {
+            std::array<uint32_t,6> v{};float minz=0,maxz=0;
+            if(w[2]<0x10000 || !cpu_.read(w[2],v.data(),sizeof(v)))return failure();
+            std::memcpy(&minz,&v[4],4);std::memcpy(&maxz,&v[5],4);
+            auto* target=find(target_);auto* data=target && target->parent?find(target->parent):target;
+            const uint32_t width=recording_on_?1024:data?data->width:0,height=recording_on_?1024:data?data->height:0;
+            fprintf(log_,"startup_d3d8_viewport=request x:%u y:%u width:%u height:%u minz:%g maxz:%g recording:%s\n",v[0],v[1],v[2],v[3],double(minz),double(maxz),recording_on_?"yes":"no");
+            if(!v[2] || !v[3] || uint64_t(v[0])+v[2]>width || uint64_t(v[1])+v[3]>height ||
+                !std::isfinite(minz) || !std::isfinite(maxz) || minz<0 || maxz>1 || minz>maxz){value=0x8876086C;return serviced();}
+            if(recording_on_){recording_.viewport=v;recording_.viewport_mask=true;}else viewport_=v;
+            return serviced();
+        }
+        case 41:return put(w[2],viewport_)?serviced():failure();
         case 32:return surface_output(target_,w[2]);
-        case 33:return surface_output(depth_,w[2]);
+        case 33:if(!depth_){if(!put(w[2],0u))return failure();value=0x88760866;return serviced();}return surface_output(depth_,w[2]);
         case CreateDepthStencilSurface: {
             if(!w[6] || !put(w[6],0u))return failure();
             if(!w[2] || !w[3] || w[2]>1024 || w[3]>1024 || w[4]!=80 || w[5])return unsupported();
@@ -236,6 +264,7 @@ private:
                 for(unsigned i=0;i<stage_.size();++i)if(block.stage_mask[i]){
                     if(s==54){stage_[i]=block.stage[i];stage_valid_[i]=true;}else block.stage[i]=stage_[i];}
                 if(block.fvf_mask){if(s==54)fvf_=block.fvf;else block.fvf=fvf_;}
+                if(block.viewport_mask){if(s==54)viewport_=block.viewport;else block.viewport=viewport_;}
             }
             fprintf(log_,"startup_d3d8_stateblock=method:%s token:%u\n",method(device_trap+16*s),w[2]);return serviced();
         }
@@ -254,8 +283,9 @@ private:
         case 35:if(!scene_)return failure();scene_=false;return serviced();
         case 36: {
             if(w[2] || w[3] || !w[4] || (w[4]&~3u))return unsupported();
-            auto* color=find(target_);auto* depth=find(depth_);
-            if(!color || !depth || color->format!=22)return failure();
+            auto* target=find(target_);auto* color=target && target->parent?find(target->parent):target;
+            auto* depth=find(depth_);
+            if(!color || (color->format!=21 && color->format!=22) || ((w[4]&2) && !depth))return failure();
             float z=0;std::memcpy(&z,&w[6],4);if((w[4]&2) && !(z>=0 && z<=1))return failure();
             if(w[4]&1)for(size_t i=0;i<color->bytes.size();i+=4)std::memcpy(color->bytes.data()+i,&w[5],4);
             if(w[4]&2) {
@@ -333,6 +363,7 @@ private:
     struct StateBlock {
         std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};
         std::array<bool,256> render_mask{};std::array<bool,32> stage_mask{};
+        std::array<uint32_t,6> viewport{};bool viewport_mask=false;
         uint32_t fvf=0;bool fvf_mask=false,alive=false;
     };
     std::array<StateBlock,64> state_blocks_{};StateBlock recording_{};
@@ -340,6 +371,7 @@ private:
     std::array<Resource,capacity> resources_{};
     std::array<uint32_t,256> render_{};std::array<uint32_t,32> stage_{};
     std::array<bool,32> stage_valid_{};
+    std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     bool scene_=false;
 };
