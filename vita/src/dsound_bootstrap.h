@@ -18,10 +18,10 @@ public:
         pcm_staging=0x01800000,pcm_capacity=0x00400000;
     DirectSoundBootstrap(d2rt::Cpu& cpu,FILE* log):cpu_(cpu),log_(log) {}
     ~DirectSoundBootstrap(){close_port();}
-    bool owns(uint32_t t)const{return (t>=trap_base && t<trap_base+12*16 && (t-trap_base)%16==0) || (t>=primary_trap && t<primary_trap+21*16 && (t-primary_trap)%16==0) || (t>=secondary_trap && t<secondary_trap+21*16 && (t-secondary_trap)%16==0);}
+    bool owns(uint32_t t)const{return (t>=trap_base && t<trap_base+12*16 && (t-trap_base)%16==0) || (t>=primary_trap && t<primary_trap+21*16 && (t-primary_trap)%16==0) || (t>=secondary_trap && t<secondary_trap+24*16 && (t-secondary_trap)%16==0);}
     const char* interface_name(uint32_t t)const{return t< trap_base?"IDirectSoundBuffer":"IDirectSound8";}
     const char* method_name(uint32_t t)const{
-        if(t<trap_base){static const char* names[]={"QueryInterface","AddRef","Release","GetCaps","GetCurrentPosition","GetFormat","GetVolume","GetPan","GetFrequency","GetStatus","Initialize","Lock","Play","SetCurrentPosition","SetFormat","SetVolume","SetPan","SetFrequency","Stop","Unlock","Restore"};return names[(t-(t<primary_trap?secondary_trap:primary_trap))/16];}
+        if(t<trap_base){static const char* names[]={"QueryInterface","AddRef","Release","GetCaps","GetCurrentPosition","GetFormat","GetVolume","GetPan","GetFrequency","GetStatus","Initialize","Lock","Play","SetCurrentPosition","SetFormat","SetVolume","SetPan","SetFrequency","Stop","Unlock","Restore","SetFX","AcquireResources","GetObjectInPath"};return names[(t-(t<primary_trap?secondary_trap:primary_trap))/16];}
         static const char* names[]={"QueryInterface","AddRef","Release","CreateSoundBuffer","GetCaps","DuplicateSoundBuffer","SetCooperativeLevel","Compact","GetSpeakerConfig","SetSpeakerConfig","Initialize","VerifyCertification"};
         return names[(t-trap_base)/16];
     }
@@ -103,10 +103,13 @@ public:
         return finish(hr,cleanup,w[0],esp);
     }
 private:
-    struct PcmBuffer{uint32_t refs=0,flags=0,hz=0,channels=0,bits=0,align=0,position=0;int32_t volume=0,pan=0;
+    struct PcmBuffer{uint32_t refs=0,flags=0,hz=0,original_hz=0,channels=0,bits=0,align=0,position=0;int32_t volume=0,pan=0;
         std::vector<uint8_t> bytes;};
     std::array<PcmBuffer,128> buffers_{};unsigned buffer_count_=0;uint32_t pcm_used_=0,locked_handle_=0;
     std::array<uint32_t,4> lock_spans_{};
+    static void put16(uint8_t* p,uint32_t v){p[0]=uint8_t(v);p[1]=uint8_t(v>>8);}
+    static void put32(uint8_t* p,uint32_t v){put16(p,v);put16(p+2,v>>16);}
+    bool output(uint32_t p,const void* value,uint32_t size){return p>=0x10000 && uint64_t(p)+size<=0x02000000 && cpu_.write(p,value,size);}
     static uint16_t le16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
     static uint32_t le32(const uint8_t* p){return uint32_t(le16(p))|uint32_t(le16(p+2))<<16;}
     StartupServiceResult allocate_secondary(const std::array<uint32_t,9>& d,const uint32_t* w){
@@ -120,32 +123,58 @@ private:
         if(!buffer_count_){
             if(!cpu_.hostptr(pcm_staging,pcm_capacity) || !cpu_.map(pcm_staging,pcm_capacity,nullptr,d2rt::P_RW) ||
                 !cpu_.map(secondary,0x2000,nullptr,d2rt::P_RW))return failure();
-            std::array<uint32_t,21> table{},check{};for(unsigned i=0;i<21;++i)table[i]=secondary_trap+i*16;
+            std::array<uint32_t,24> table{},check{};for(unsigned i=0;i<24;++i)table[i]=secondary_trap+i*16;
             if(!cpu_.write(secondary_table,table.data(),sizeof(table)) || !cpu_.read(secondary_table,check.data(),sizeof(check)) || table!=check)return failure();
         }
         auto& b=buffers_[buffer_count_];try{b.bytes.assign(d[2],bits==8?128:0);}catch(const std::bad_alloc&){return failure();}
         const uint32_t handle=secondary+buffer_count_*8;
         if(!write(handle,secondary_table) || !write(w[3],handle))return failure();
-        b.refs=1;b.flags=d[1];b.channels=channels;b.hz=hz;b.bits=bits;b.align=align;
+        b.refs=1;b.flags=d[1];b.channels=channels;b.hz=hz;b.original_hz=hz;b.bits=bits;b.align=align;
         ++buffer_count_;++refs_;pcm_used_+=d[2];
         fprintf(log_,"startup_dsound_secondary=owned handle:0x%08X bytes:%u buffers:%u used:%u playback:no\n",handle,d[2],buffer_count_,pcm_used_);
         return StartupServiceResult::Serviced;
     }
     StartupServiceResult secondary_call(uint32_t t){
         const unsigned slot=(t-secondary_trap)/16;
-        unsigned argc=0;switch(slot){case 0:argc=3;break;case 1:case 2:argc=1;break;case 9:case 13:case 15:case 16:argc=2;break;case 11:argc=8;break;case 19:argc=5;break;default:return unsupported();}
+        unsigned argc=0;switch(slot){case 0:argc=3;break;case 1:case 2:argc=1;break;case 3:case 6:case 7:case 8:case 9:case 13:case 15:case 16:case 17:argc=2;break;case 4:argc=3;break;case 5:argc=4;break;case 18:case 20:argc=1;break;case 11:argc=8;break;case 19:argc=5;break;default:return unsupported();}
         uint32_t w[9]{},vt=0;const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=4*(argc+1);
         fprintf(log_,"startup_dsound_method=IDirectSoundBuffer::%s secondary slot=%u\n",method_name(t),slot);
         if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || w[1]<secondary || (w[1]-secondary)%8 ||
             (w[1]-secondary)/8>=buffer_count_ || !cpu_.read(w[1],&vt,4) || vt!=secondary_table)return failure();
         auto& b=buffers_[(w[1]-secondary)/8];if(!b.refs)return failure();uint32_t hr=0;
-        if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();const bool match=iid==unknown_iid || iid==buffer_iid;
+        if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();const bool match=iid==unknown_iid || iid==buffer_iid || iid==buffer8_iid;
+            fprintf(log_,"startup_dsound_pcm_qi=iid:%08X-%08X-%08X-%08X supported:%s\n",iid[0],iid[1],iid[2],iid[3],match?"yes":"no");
             if(match && b.refs==0xFFFFFFFFu)return failure();
             if(!write(w[3],match?w[1]:0u))return failure();
             if(match)++b.refs;else hr=0x80004002;
         }else if(slot==1){if(b.refs==0xFFFFFFFFu)return failure();hr=++b.refs;
         }else if(slot==2){if(locked_handle_==w[1])return unsupported();hr=--b.refs;
             if(!b.refs){pcm_used_-=b.bytes.size();std::vector<uint8_t>().swap(b.bytes);if(!write(w[1],0u) || !refs_)return failure();--refs_;}
+        }else if(slot==3){
+            uint32_t size=0;if(!cpu_.read(w[2],&size,4))return failure();
+            if(size!=20)hr=0x80070057;
+            else{std::array<uint32_t,5> caps={20,(b.flags&~0x40004u)|8u,uint32_t(b.bytes.size()),0,0};
+                if(!output(w[2],caps.data(),sizeof(caps)))return failure();}
+        }else if(slot==4){
+            if((w[2] && !write(w[2],b.position)) || (w[3] && !write(w[3],b.position)))return failure();
+        }else if(slot==5){
+            std::array<uint8_t,18> fmt{};put16(fmt.data(),1);put16(fmt.data()+2,b.channels);
+            put32(fmt.data()+4,b.original_hz);put32(fmt.data()+8,b.original_hz*b.align);
+            put16(fmt.data()+12,b.align);put16(fmt.data()+14,b.bits);
+            if(!w[2]){if(!w[4])hr=0x80070057;else if(!write(w[4],18))return failure();}
+            else if(w[3]<18)hr=0x80070057;
+            else{if(!output(w[2],fmt.data(),fmt.size()) || (w[4] && !write(w[4],18)))return failure();}
+        }else if(slot==6 || slot==7 || slot==8){
+            const uint32_t cap=slot==6?0x80u:slot==7?0x40u:0x20u;
+            if(!(b.flags&cap))hr=0x8878001E; // DSERR_CONTROLUNAVAIL
+            else if(!write(w[2],slot==6?uint32_t(b.volume):slot==7?uint32_t(b.pan):b.hz))return failure();
+        }else if(slot==17){
+            if(!(b.flags&0x20u))hr=0x8878001E;
+            else if(w[2] && (w[2]<100 || w[2]>200000))hr=0x80070057;
+            else b.hz=w[2]?w[2]:b.original_hz;
+        }else if(slot==18 || slot==20){
+            // No Play is serviced yet, and buffers have no device-loss transition.
+            // Stop is idempotent; Restore preserves owned sample storage.
         }else if(slot==9){if(!write(w[2],0u))return failure(); // Never played: stopped status.
         }else if(slot==13){if(w[2]>=b.bytes.size() || w[2]%b.align)return unsupported();b.position=w[2];
         }else if(slot==15 || slot==16){
@@ -169,6 +198,7 @@ private:
             uint32_t hash=2166136261u;for(uint8_t v:b.bytes)hash=(hash^v)*16777619u;
             locked_handle_=0;fprintf(log_,"startup_dsound_pcm_upload=handle:0x%08X bytes:%u fnv1a:0x%08X playback:no\n",w[1],unsigned(b.bytes.size()),hash);
         }
+        fprintf(log_,"startup_dsound_pcm_contract=method:%s handle:0x%08X result:0x%08X bytes:%u cursor:%u playback:no\n",method_name(t),w[1],hr,unsigned(b.bytes.size()),b.position);
         return finish(hr,cleanup,w[0],esp);
     }
     StartupServiceResult primary_call(uint32_t t){
@@ -191,6 +221,7 @@ private:
     inline static constexpr Guid sound_clsid={0x3901CC3F,0x4FA484B5,0x81AA35BA,0x9BA0B872};
     inline static constexpr Guid sound_iid={0xC50A7E93,0x4834F395,0xA97FF69E,0x6609E59D};
     inline static constexpr Guid unknown_iid={0,0,0x000000C0,0x46000000};
+    inline static constexpr Guid buffer8_iid={0x6825A449,0x4D827524,0xE3500F92,0x1EABB36A};
     inline static constexpr Guid buffer_iid={0x279AFA85,0x11CE4981,0x200021A5,0x60E50BAF};
     static bool frame(uint32_t esp,uint32_t size){return (esp>=0x00800000 && uint64_t(esp)+size<=0x00A00000) ||
         (esp>=0x00A00000 && uint64_t(esp)+size<=0x00A20000) || (esp>=0x00A20000 && uint64_t(esp)+size<=0x00A40000);}

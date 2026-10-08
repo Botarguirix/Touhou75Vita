@@ -1,11 +1,12 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint â€” iteration 63, version 01.67
+## Current checkpoint — iteration 64, version 01.68
 
-Hardware 62 confirmed the second original audio worker and its event wait.
-Iteration 63 adds bounded secondary PCM buffers and Lock/Unlock upload logging
-to continue from CreateSoundBuffer. Format/upload validation in hardware, guest
-playback/mixing, Draw/Present and gameplay remain pending.
-See [scope/evidence](STATUS_ITERATION63.md) and [engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+Hardware 63 confirmed PCM allocation but rejected Buffer8 QueryInterface.
+Iteration 64 prepares ten buffer contracts together, correcting that failure
+without bypassing the error dialog. Lock/Unlock storage remains available.
+Guest playback/mixing, original drawing/presentation and gameplay are pending.
+See [scope/evidence](STATUS_ITERATION64.md) and
+[batch/reconstruction report](INFORME_ITERACION64_RECONSTRUCCION_Y_LOTE.md).
 
 Historical observations follow below.
 
