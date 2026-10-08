@@ -1,12 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 67, version 01.71
+## Current checkpoint — iteration 68, version 01.72
 
-Hardware 66 advanced to 9483 main calls / 2467 D3D calls and LoadEffect ...OK,
-then HeapAlloc returned NULL before a CPU fault. Its allocator discarded freed
-capacity. Iteration 67 recovers and coalesces ranges within the existing heap.
-Physical confirmation of reuse and further progress is pending.
-39 original PCM uploads remain confirmed; guest mixing, original Draw/Present
-and gameplay remain pending. See [scope/evidence](STATUS_ITERATION67.md).
+Hardware 67 reached BeginStateBlock after 9653 calls with no fault/limit.
+Heap reuse advanced loading. Iteration 68 prepares state-block recording,
+end/apply/capture/delete for the currently supported render/stage/FVF states.
+Physical execution of these contracts is pending. Original Draw/Present,
+guest audio mixing and gameplay remain pending. See [scope](STATUS_ITERATION68.md).
 
 Historical observations follow below.
 

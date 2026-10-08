@@ -177,8 +177,8 @@ private:
             if(tex){switch(s){case 10:case 13:return 1;case 14:case 15:return 3;case 16:return 5;case 17:return 2;default:return 0;}}
             switch(s){case 8:return 2;case 9:return 4;case 10:return 1;default:return 0;}
         }
-        switch(s){case 3:case 4:case 34:case 35:return 1;
-        case 6:case 7:case 8:case 9:case 32:case 33:case 76:case 77:return 2;
+        switch(s){case 3:case 4:case 34:case 35:case 52:return 1;
+        case 6:case 7:case 8:case 9:case 32:case 33:case 53:case 54:case 55:case 56:case 76:case 77:return 2;
         case 16:return 4;case 20:return 8;case CreateDepthStencilSurface:return 6;case 36:return 7;
         case 50:case 51:return 3;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
     }
@@ -212,18 +212,43 @@ private:
             fprintf(log_,"startup_d3d8_texture=allocated object=0x%08X width=%u height=%u format=%u pitch=%u bytes=%u used=%u\n",h,w[2],w[3],w[6],find(h)->pitch,unsigned(find(h)->bytes.size()),used_);
             return serviced();
         }
-        case 50:if(w[2]>=render_.size() || !render_state(w[2],w[3]))return unsupported();render_[w[2]]=w[3];return serviced();
+        case 50:if(w[2]>=render_.size() || !render_state(w[2],w[3]))return unsupported();if(recording_on_){recording_.render[w[2]]=w[3];recording_.render_mask[w[2]]=true;}else render_[w[2]]=w[3];return serviced();
         case 51:if(w[2]>=render_.size())return unsupported();return put(w[3],render_[w[2]])?serviced():failure();
+        case 52:
+            if(recording_on_){value=0x8876086C;return serviced();}
+            recording_=StateBlock{};recording_on_=true;
+            fprintf(log_,"startup_d3d8_stateblock=begin scope:render_stage_fvf\n");return serviced();
+        case 53:
+            if(!recording_on_){value=0x8876086C;return serviced();}
+            if(state_block_count_>=state_blocks_.size())return unsupported();
+            if(!put(w[2],state_block_count_+1))return failure();
+            recording_.alive=true;state_blocks_[state_block_count_++]=recording_;recording_on_=false;
+            fprintf(log_,"startup_d3d8_stateblock=end token:%u render:%u stage:%u fvf:%u\n",state_block_count_,
+                unsigned(std::count(recording_.render_mask.begin(),recording_.render_mask.end(),true)),
+                unsigned(std::count(recording_.stage_mask.begin(),recording_.stage_mask.end(),true)),recording_.fvf_mask?1:0);return serviced();
+        case 54:case 55:case 56: {
+            if(recording_on_ || !w[2] || w[2]>state_block_count_ || !state_blocks_[w[2]-1].alive){value=0x8876086C;return serviced();}
+            auto& block=state_blocks_[w[2]-1];
+            if(s==56)block=StateBlock{};
+            else {
+                for(unsigned i=0;i<render_.size();++i)if(block.render_mask[i]){
+                    if(s==54)render_[i]=block.render[i];else block.render[i]=render_[i];}
+                for(unsigned i=0;i<stage_.size();++i)if(block.stage_mask[i]){
+                    if(s==54){stage_[i]=block.stage[i];stage_valid_[i]=true;}else block.stage[i]=stage_[i];}
+                if(block.fvf_mask){if(s==54)fvf_=block.fvf;else block.fvf=fvf_;}
+            }
+            fprintf(log_,"startup_d3d8_stateblock=method:%s token:%u\n",method(device_trap+16*s),w[2]);return serviced();
+        }
         case GetTextureStageState:
             if(w[2] || w[3]>=stage_.size() || !stage_valid_[w[3]])return unsupported();
             fprintf(log_,"startup_d3d8_stage_get=stage:%u type:%u output:0x%08X value:%u\n",w[2],w[3],w[4],stage_[w[3]]);
             return put(w[4],stage_[w[3]])?serviced():failure();
         case SetTextureStageState:
             if(w[2] || w[3]>=stage_.size() || !stage_state(w[3],w[4]))return unsupported();
-            stage_[w[3]]=w[4];stage_valid_[w[3]]=true;
+            if(recording_on_){recording_.stage[w[3]]=w[4];recording_.stage_mask[w[3]]=true;}else{stage_[w[3]]=w[4];stage_valid_[w[3]]=true;}
             fprintf(log_,"startup_d3d8_stage_set=stage:%u type:%u value:%u output_write:none\n",w[2],w[3],w[4]);
             return serviced();
-        case 76:if(w[2]!=0x144)return unsupported();fvf_=w[2];return serviced();
+        case 76:if(w[2]!=0x144)return unsupported();if(recording_on_){recording_.fvf=w[2];recording_.fvf_mask=true;}else fvf_=w[2];return serviced();
         case 77:return put(w[2],fvf_)?serviced():failure();
         case 34:if(scene_)return failure();scene_=true;return serviced();
         case 35:if(!scene_)return failure();scene_=false;return serviced();
@@ -305,6 +330,13 @@ private:
         case 15:return value==0;case 16:case 17:case 18:return value==1;default:return false;}
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
+    struct StateBlock {
+        std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};
+        std::array<bool,256> render_mask{};std::array<bool,32> stage_mask{};
+        uint32_t fvf=0;bool fvf_mask=false,alive=false;
+    };
+    std::array<StateBlock,64> state_blocks_{};StateBlock recording_{};
+    unsigned state_block_count_=0;bool recording_on_=false;
     std::array<Resource,capacity> resources_{};
     std::array<uint32_t,256> render_{};std::array<uint32_t,32> stage_{};
     std::array<bool,32> stage_valid_{};
