@@ -25,7 +25,7 @@ public:
         GetTexture=60, SetTexture=61, GetTextureStageState=62,
         SetTextureStageState=63, ValidateDevice=64
     };
-    D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs) {}
+    D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs) { initialize_states(); }
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
     bool owns(uint32_t t) const {return range(t,device_trap,97)||range(t,texture_trap,19)||range(t,surface_trap,11);}
     static const char* interface_name(uint32_t t) {
@@ -108,6 +108,7 @@ public:
         const uint32_t expected=dev?device_table:tex?texture_table:surface_table;
         uint32_t actual=0;
         if((dev?w[1]!=device:!r || r->texture!=tex) || !cpu_.read(w[1],&actual,4) || actual!=expected)return failure();
+        fprintf(log_,"startup_d3d8_return=0x%08X esp:0x%08X\n",w[0],esp);
         for(unsigned i=1;i<=argc;++i)fprintf(log_,"startup_d3d8_arg%u=0x%08X\n",i-1,w[i]);
         uint32_t value=0;StartupServiceResult result=serviced();
         if(s==0)return unsupported(); // exact IID support is a later boundary.
@@ -181,7 +182,7 @@ private:
         switch(s){case 3:case 4:case 34:case 35:case 52:return 1;
         case 6:case 7:case 8:case 9:case 32:case 33:case 40:case 41:case 53:case 54:case 55:case 56:case 76:case 77:return 2;
         case 16:return 4;case 20:return 8;case CreateDepthStencilSurface:return 6;case 36:return 7;
-        case 31:case 50:case 51:return 3;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
+        case 31:case 50:case 51:case GetTexture:case SetTexture:return 3;case 72:return 5;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
     }
     StartupServiceResult device_call(unsigned s,const uint32_t* w,uint32_t& value) {
         switch(s) {
@@ -211,7 +212,7 @@ private:
             if(w[2]<0x10000 || !cpu_.read(w[2],v.data(),sizeof(v)))return failure();
             std::memcpy(&minz,&v[4],4);std::memcpy(&maxz,&v[5],4);
             auto* target=find(target_);auto* data=target && target->parent?find(target->parent):target;
-            const uint32_t width=recording_on_?1024:data?data->width:0,height=recording_on_?1024:data?data->height:0;
+            const uint32_t width=data?data->width:0,height=data?data->height:0;
             fprintf(log_,"startup_d3d8_viewport=request x:%u y:%u width:%u height:%u minz:%g maxz:%g recording:%s\n",v[0],v[1],v[2],v[3],double(minz),double(maxz),recording_on_?"yes":"no");
             if(!v[2] || !v[3] || uint64_t(v[0])+v[2]>width || uint64_t(v[1])+v[3]>height ||
                 !std::isfinite(minz) || !std::isfinite(maxz) || minz<0 || maxz>1 || minz>maxz){value=0x8876086C;return serviced();}
@@ -240,12 +241,29 @@ private:
             fprintf(log_,"startup_d3d8_texture=allocated object=0x%08X width=%u height=%u format=%u pitch=%u bytes=%u used=%u\n",h,w[2],w[3],w[6],find(h)->pitch,unsigned(find(h)->bytes.size()),used_);
             return serviced();
         }
-        case 50:if(w[2]>=render_.size() || !render_state(w[2],w[3]))return unsupported();if(recording_on_){recording_.render[w[2]]=w[3];recording_.render_mask[w[2]]=true;}else render_[w[2]]=w[3];return serviced();
-        case 51:if(w[2]>=render_.size())return unsupported();return put(w[3],render_[w[2]])?serviced():failure();
+        case 50:
+            fprintf(log_,"startup_d3d8_render_state=state:%u value:0x%08X recording:%s\n",w[2],w[3],recording_on_?"yes":"no");
+            if(w[2]>=render_.size() || !render_valid_[w[2]] || !render_state(w[2],w[3]))return unsupported();
+            if(recording_on_){recording_.render[w[2]]=w[3];recording_.render_mask[w[2]]=true;}else render_[w[2]]=w[3];return serviced();
+        case 51:if(w[2]>=render_.size() || !render_valid_[w[2]])return unsupported();return put(w[3],render_[w[2]])?serviced():failure();
+        case SetTexture:
+            if(w[2])return unsupported();
+            if(!replace_texture(recording_on_?recording_.texture:bound_texture_,w[3]))return failure();
+            if(recording_on_)recording_.texture_mask=true;
+            fprintf(log_,"startup_d3d8_texture_binding=stage:0 object:0x%08X recording:%s\n",w[3],recording_on_?"yes":"no");return serviced();
+        case GetTexture: {
+            if(w[2])return unsupported();
+            auto* texture=bound_texture_?find(bound_texture_):nullptr;
+            if(bound_texture_ && (!texture || !texture->texture || texture->refs==0xFFFFFFFFu))return failure();
+            if(!put(w[3],bound_texture_))return failure();
+            if(texture)++texture->refs;
+            fprintf(log_,"startup_d3d8_texture_get=stage:0 object:0x%08X addref:%s\n",bound_texture_,texture?"yes":"no");return serviced();
+        }
+        case 72:return draw_boundary(w);
         case 52:
             if(recording_on_){value=0x8876086C;return serviced();}
             recording_=StateBlock{};recording_on_=true;
-            fprintf(log_,"startup_d3d8_stateblock=begin scope:render_stage_fvf\n");return serviced();
+            fprintf(log_,"startup_d3d8_stateblock=begin scope:render_stage_fvf_viewport_texture0\n");return serviced();
         case 53:
             if(!recording_on_){value=0x8876086C;return serviced();}
             if(state_block_count_>=state_blocks_.size())return unsupported();
@@ -253,12 +271,15 @@ private:
             recording_.alive=true;state_blocks_[state_block_count_++]=recording_;recording_on_=false;
             fprintf(log_,"startup_d3d8_stateblock=end token:%u render:%u stage:%u fvf:%u\n",state_block_count_,
                 unsigned(std::count(recording_.render_mask.begin(),recording_.render_mask.end(),true)),
-                unsigned(std::count(recording_.stage_mask.begin(),recording_.stage_mask.end(),true)),recording_.fvf_mask?1:0);return serviced();
+                unsigned(std::count(recording_.stage_mask.begin(),recording_.stage_mask.end(),true)),recording_.fvf_mask?1:0);
+            fprintf(log_,"startup_d3d8_stateblock_texture=token:%u mask:%u object:0x%08X ownership:transferred\n",state_block_count_,recording_.texture_mask?1:0,recording_.texture);
+            recording_=StateBlock{};return serviced();
         case 54:case 55:case 56: {
             if(recording_on_ || !w[2] || w[2]>state_block_count_ || !state_blocks_[w[2]-1].alive){value=0x8876086C;return serviced();}
             auto& block=state_blocks_[w[2]-1];
-            if(s==56)block=StateBlock{};
+            if(s==56){if(block.texture_mask && !replace_texture(block.texture,0u))return failure();block=StateBlock{};}
             else {
+                if(block.texture_mask && !(s==54?replace_texture(bound_texture_,block.texture):replace_texture(block.texture,bound_texture_)))return failure();
                 for(unsigned i=0;i<render_.size();++i)if(block.render_mask[i]){
                     if(s==54)render_[i]=block.render[i];else block.render[i]=render_[i];}
                 for(unsigned i=0;i<stage_.size();++i)if(block.stage_mask[i]){
@@ -287,12 +308,14 @@ private:
             auto* depth=find(depth_);
             if(!color || (color->format!=21 && color->format!=22) || ((w[4]&2) && !depth))return failure();
             float z=0;std::memcpy(&z,&w[6],4);if((w[4]&2) && !(z>=0 && z<=1))return failure();
-            if(w[4]&1)for(size_t i=0;i<color->bytes.size();i+=4)std::memcpy(color->bytes.data()+i,&w[5],4);
-            if(w[4]&2) {
-                const uint16_t d=uint16_t(z*65535.0f);
-                for(size_t i=0;i<depth->bytes.size();i+=2)std::memcpy(depth->bytes.data()+i,&d,2);
+            const uint64_t right=uint64_t(viewport_[0])+viewport_[2],bottom=uint64_t(viewport_[1])+viewport_[3];
+            if(right>color->width || bottom>color->height || ((w[4]&2) && (right>depth->width || bottom>depth->height)))return failure();
+            const uint16_t d=(w[4]&2)?uint16_t(z*65535.0f):0;
+            for(uint32_t y=viewport_[1];y<bottom;++y)for(uint32_t x=viewport_[0];x<right;++x){
+                if(w[4]&1)std::memcpy(color->bytes.data()+size_t(y)*color->pitch+size_t(x)*4,&w[5],4);
+                if(w[4]&2)std::memcpy(depth->bytes.data()+size_t(y)*depth->pitch+size_t(x)*2,&d,2);
             }
-            fprintf(log_,"startup_d3d8_clear=owned_storage flags=%u\n",w[4]);return serviced();
+            fprintf(log_,"startup_d3d8_clear=owned_storage flags:%u viewport:%u,%u,%u,%u pixels:%u\n",w[4],viewport_[0],viewport_[1],viewport_[2],viewport_[3],viewport_[2]*viewport_[3]);return serviced();
         }
         default:return unsupported();
         }
@@ -349,28 +372,68 @@ private:
         }
         return unsupported();
     }
+    void initialize_states() {
+        const uint32_t render[][2]={{7,1},{8,3},{9,2},{14,1},{15,0},{16,1},{19,2},{20,1},{22,3},{23,4},{24,0},{25,8},{26,0},{27,0},{28,0},{29,0},{60,0xFFFFFFFF},{136,1},{137,1}};
+        const uint32_t stage[][2]={{1,4},{2,2},{3,1},{4,2},{5,2},{6,1},{13,1},{14,1},{15,0},{16,1},{17,1},{18,0}};
+        for(const auto& v:render){render_[v[0]]=v[1];render_valid_[v[0]]=true;}
+        for(const auto& v:stage){stage_[v[0]]=v[1];stage_valid_[v[0]]=true;}
+    }
     static bool render_state(uint32_t state,uint32_t value) {
-        switch(state){case 7:case 137:return value==0;case 15:case 27:return value<=1;
-        case 19:return value==5;case 20:return value==6;case 22:return value==1;
-        case 24:return value<=255;case 25:return value==7;default:return false;}
+        switch(state){
+        case 7:case 14:case 15:case 16:case 26:case 27:case 28:case 29:case 136:case 137:return value<=1;
+        case 8:case 9:case 22:return value>=1 && value<=3;
+        case 19:case 20:return value>=1 && value<=13;
+        case 23:case 25:return value>=1 && value<=8;
+        case 24:return value<=255;case 60:return true;default:return false;}
     }
     static bool stage_state(uint32_t state,uint32_t value) {
-        switch(state){case 1:case 4:return value==4;case 2:case 5:return value==2;
-        case 3:return value==0;case 6:return value==1;case 13:case 14:return value==1;
-        case 15:return value==0;case 16:case 17:case 18:return value==1;default:return false;}
+        switch(state){case 1:case 4:return (value>=1 && value<=4) || value==7;
+        case 2:case 3:case 5:case 6:return (value&~0x30u)<=3;
+        case 13:case 14:return value>=1 && value<=5;
+        case 15:return true;
+        // Preserve legacy filter enums used by the original helper (0/1/2/4).
+        // This is state storage only; no sampling implementation is claimed.
+        case 16:case 17:case 18:return value<=5;default:return false;}
+    }
+    bool replace_texture(uint32_t& current,uint32_t next) {
+        auto* incoming=next?find(next):nullptr;auto* outgoing=current?find(current):nullptr;
+        if((next && (!incoming || !incoming->texture)) || (current && (!outgoing || !outgoing->texture)))return false;
+        if(current==next)return true;
+        if((incoming && incoming->refs==0xFFFFFFFFu) || (outgoing && outgoing->refs<=1))return false;
+        if(incoming)++incoming->refs;
+        if(outgoing)--outgoing->refs;
+        current=next;return true;
+    }
+    StartupServiceResult draw_boundary(const uint32_t* w) {
+        fprintf(log_,"startup_d3d8_draw_boundary=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s executed:no\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
+        for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
+        for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])fprintf(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
+        uint32_t count=0;
+        if(w[3]<=16){switch(w[2]){case 1:count=w[3];break;case 2:count=w[3]*2;break;case 3:count=w[3]+1;break;case 4:count=w[3]*3;break;case 5:case 6:count=w[3]+2;break;}}
+        if(fvf_==0x144 && w[5]==28 && count && w[4]>=0x10000 && uint64_t(w[4])+uint64_t(count)*28<=0x02000000){
+            std::array<uint32_t,48*7> vertices{};
+            if(!cpu_.read(w[4],vertices.data(),count*28))return failure();
+            uint32_t hash=2166136261u;const auto* bytes=reinterpret_cast<const uint8_t*>(vertices.data());for(unsigned i=0;i<count*28;++i)hash=(hash^bytes[i])*16777619u;
+            fprintf(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
+            for(unsigned i=0;i<std::min(count,8u);++i){const auto* v=vertices.data()+i*7;float f[7]{};std::memcpy(f,v,28);
+                fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));}
+        }
+        return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
     struct StateBlock {
         std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};
         std::array<bool,256> render_mask{};std::array<bool,32> stage_mask{};
         std::array<uint32_t,6> viewport{};bool viewport_mask=false;
+        uint32_t texture=0;bool texture_mask=false;
         uint32_t fvf=0;bool fvf_mask=false,alive=false;
     };
     std::array<StateBlock,64> state_blocks_{};StateBlock recording_{};
     unsigned state_block_count_=0;bool recording_on_=false;
     std::array<Resource,capacity> resources_{};
     std::array<uint32_t,256> render_{};std::array<uint32_t,32> stage_{};
-    std::array<bool,32> stage_valid_{};
+    std::array<bool,32> stage_valid_{};std::array<bool,256> render_valid_{};
+    uint32_t bound_texture_=0;
     std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     bool scene_=false;
