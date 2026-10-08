@@ -1,11 +1,11 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 62, version 01.66
+## Current checkpoint — iteration 63, version 01.67
 
-Hardware 61 confirmed a 32 MiB arena and two original EXE texture uploads.
-It reached a second CreateThread for the audio queue. Iteration 62 adds a separate
-worker context and bounded initial wait/timeout handoff. Hardware validation,
-continuous scheduling, original Draw/Present and gameplay remain pending.
-See [scope/evidence](STATUS_ITERATION62.md) and [engine roadmap](INFORME_ROADMAP_ITERACION59.md).
+Hardware 62 confirmed the second original audio worker and its event wait.
+Iteration 63 adds bounded secondary PCM buffers and Lock/Unlock upload logging
+to continue from CreateSoundBuffer. Format/upload validation in hardware, guest
+playback/mixing, Draw/Present and gameplay remain pending.
+See [scope/evidence](STATUS_ITERATION63.md) and [engine roadmap](INFORME_ROADMAP_ITERACION59.md).
 
 Historical observations follow below.
 

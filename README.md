@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Physical iteration 61 confirmed a 32 MiB usable arena and two original EXE texture uploads. It stopped at a second CreateThread for the audio queue. Iteration 62/version 01.66 adds an independent audio worker context and its bounded initial event wait/timeout handoff. DAT viewer/music controls are preserved. Continuous multi-worker scheduling, original Draw/Present and gameplay remain pending. See [scope](docs/STATUS_ITERATION62.md) and [roadmap](docs/ROADMAP.md).
+Physical iteration 62 confirmed the second original audio worker and its real 80 ms event wait/timeout. It reached a 32608-byte secondary DirectSound buffer request. Iteration 63/version 01.67 adds bounded PCM buffer storage, format checks, COM ownership and Lock/Unlock upload logging. Native DAT music and viewer controls remain available. Guest playback/mixing, original Draw/Present and gameplay remain pending. See [scope](docs/STATUS_ITERATION63.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,15 +15,15 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration62-dat-browser-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration63-dat-browser-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe with th075.dat and th075bgm.dat alongside it for the native resource preview and music.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 62 Audio Worker**, package version 01.66, on the same Vita used previously. The screen must show ITERATION 62.
+3. Launch **Touhou 7.5 Vita - Iteration 63 PCM Buffers**, package version 01.67, on the same Vita used previously. The screen must show ITERATION 63.
 4. Wait for the results screen. Circle selects a graphic container, Left/Right select frames, and Start exports DAT/BMP. Triangle selects another song, Square restarts it, and X exits. Photograph the screen.
-5. Inspect iteration62.log, iteration62-runtime.log and iteration62-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration62-audio-worker-r1, include iteration62-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
+5. Inspect iteration63.log, iteration63-runtime.log and iteration63-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration63-pcm-buffers-r1, include iteration63-bgm.log and inspect bgm_inventory/command/track_start/progress/release_rc and the final startup_stop_import/EIP. Include the game's log.txt. Inspect the REF/software device fallback and texture allocations/uploads when reached. Unsupported device methods, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
 
 The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
 
