@@ -1,26 +1,35 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 74, version 01.78
+## Current checkpoint — iteration 75, version 01.79
 
-Hardware 73 executed the second ONE/ZERO quad (219077 changed pixels),
-completed EndScene and read score.dat. It reached the original PeekMessageA
-main-loop query at return 602F40. Present has not executed: physical 73 is 0/8.
-Iteration 74 adds the owned message-queue query, preserving MSG and LastError
-when empty, to let the original frame branch continue. Pending window callbacks
-and invalid paint cannot be suppressed by returning an empty result.
-Six queue groups and six renderer groups passed on PC with ASan/UBSan;
-VitaSDK compilation/package inspection passed. Hardware validation is pending.
-Diagnostic music and sprite browsing remain removed. See
-[evidence/scope](STATUS_ITERATION74.md),
-[EXE checklist](EXE_CHECKLIST_ITERATION74.md) and
+Hardware 74 executed PeekMessageA and the first original Present. Its 640×480
+backbuffer reached native 960×544 scanout; set/vblank/query succeeded, active
+framebuffer matched and scanout FNV was B047B6F7. Main then blocked at
+WaitForSingleObject (return 603545), waiting indefinitely on frame event AB2004.
+
+Iteration 75 resumes the original timer worker after its real 16 ms timeout.
+The original worker must execute SetEvent; only then can the existing wait
+contract consume the auto-reset event and continue main. TIB ownership and
+canonical FPU snapshots support explicit context restoration checks.
+It allows up to eight frame-wait continuations, eight Present frames and
+bounded CPU slices, with the existing 45 s scheduling cap / 60 s watchdog.
+Eighteen portable groups passed on PC. VitaSDK compilation and package
+inspection passed; the new scheduler integration needs hardware validation.
+See [evidence/scope](STATUS_ITERATION75.md),
+[EXE checklist](EXE_CHECKLIST_ITERATION75.md) and
 [decompiler/external research](RESEARCH_EXE_ITERATION73.md).
 
 | Next milestone | Current evidence / remaining work |
 |---|---|
-| First EXE pixels | Hardware 72 confirmed the first logo quad; 73 confirmed its second fade/copy and EndScene. |
-| Original message/frame loop | 74 implements the observed PeekMessage query. Native Present, its rectangles and display readback still need physical evidence. Later main-thread waits may need scheduler work. |
-| Original menu | Complete remaining draw/state profiles and transitions; verify title/menu frames against Windows. |
-| Interactive scene | Continuous scheduling, guest input and DirectSound mixing alongside rendering. No posted input bridge is connected to the new message queue yet. |
+| First EXE pixels | Hardware 72/73 confirmed the first logo drawing and fade. |
+| Original message/frame loop | Hardware 74 confirmed PeekMessage and one native Present. 75 addresses the subsequent frame-event wait; repeated frames are pending. |
+| Original menu | Finish the required draw/state profiles and title transitions; compare menu frames with Windows. |
+| Interactive scene | Continuous timer/audio scheduling, guest input and DirectSound mixing alongside rendering. No posted input bridge is connected to the message queue. |
 | Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
+
+Diagnostic music and sprite browsing remain removed. The original game still
+needs its own EXE and data files on Vita. Asset extraction alone does not
+replace the executable's gameplay logic. No completion percentage is inferred
+from the number of service calls or checkpoint PASS labels.
 
 Historical observations follow below.
 

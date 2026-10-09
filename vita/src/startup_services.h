@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include "startup_message_queue.h"
+#include "startup_wait_policy.h"
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure, Deferred };
 struct StartupWorker;
@@ -53,6 +54,18 @@ public:
         const auto it = events_.find(handle);
         return it != events_.end() && !it->second.signaled;
     }
+    bool event_signaled(uint32_t handle) const {
+        const auto it=events_.find(handle);
+        return it!=events_.end() && it->second.signaled;
+    }
+    bool event_auto_reset(uint32_t handle) const {
+        const auto it=events_.find(handle);
+        return it!=events_.end() && !it->second.manual_reset;
+    }
+    uint32_t event_generation(uint32_t handle) const {
+        const auto it=events_.find(handle);
+        return it==events_.end() ? 0u:it->second.generation;
+    }
     bool version_globals_match();
 private:
     d2rt::Cpu& cpu_;
@@ -74,7 +87,7 @@ private:
     unsigned process_calls_ = 0;
     unsigned clock_calls_ = 0;
     unsigned multimedia_calls_ = 0, timer_period_requests_ = 0;
-    struct EventState { bool manual_reset, signaled; };
+    using EventState=startup_wait::Event;
     std::map<uint32_t, EventState> events_;
     uint32_t next_event_handle_ = 0x00AB2000;
     unsigned event_calls_ = 0;

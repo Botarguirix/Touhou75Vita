@@ -641,9 +641,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 fprintf(log_, "startup_event_error=closed_handle\n");
             } else if (event_wait) {
                 fprintf(log_, "startup_event_wait_timeout_ms=%u\n", timeout);
-                if (found->second.signaled) {
+                if (found->second.acquire()) {
                     expected_eax = 0; // WAIT_OBJECT_0
-                    if (!found->second.manual_reset) found->second.signaled = false;
                 } else if (!timeout) {
                     expected_eax = 0x102; // Immediate WAIT_TIMEOUT.
                 } else {
@@ -656,7 +655,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 expected_eax = 1;
                 fprintf(log_, "startup_event_closed=yes\n");
             } else {
-                found->second.signaled = event_set;
+                if(event_set) {
+                    found->second.set();
+                    fprintf(log_,"startup_event_signal=handle:0x%08X generation:%u producer_tib:0x%08X\n",arg,found->second.generation,wx86_cur_tib());
+                } else found->second.signaled=false;
                 expected_eax = 1;
             }
             const auto current = events_.find(arg);

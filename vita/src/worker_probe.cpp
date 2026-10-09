@@ -24,6 +24,7 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
     d2rt::X86Context main{};
     cpu.save_context(main);
     const uint32_t main_tib = wx86_cur_tib();
+    main.fs_base=main_tib; // Cpu::save_context leaves this to the scheduler.
     struct Restore {
         d2rt::Cpu& cpu; const d2rt::X86Context& context; uint32_t tib;
         ~Restore() { cpu.load_context(context); wx86_set_main_tib(tib); }
@@ -70,6 +71,7 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
             state.wait_started_us = sceKernelGetProcessTimeWide();
             state.blocked = true;
             c.save_context(state.context); // Preserve the unexecuted wait frame.
+            state.context.fs_base=teb;
             fprintf(log, "worker_wait_handle=0x%08X\n", state.event);
             fprintf(log, "worker_wait_timeout_ms=%u\n", state.timeout_ms);
             fprintf(log, "worker_wait_state=blocked_saved_context\n");
@@ -101,21 +103,33 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
     if(!worker.blocked || worker.timeout_ms!=(worker.id==13?80u:16u) || !services.event_unsignaled(worker.event)) {
         fprintf(log,"worker_wake_result=unsupported_wait_state\n"); return false;
     }
-    const uint64_t deadline=worker.wait_started_us+uint64_t(worker.timeout_ms)*1000;
     uint64_t now=sceKernelGetProcessTimeWide();
-    if(now<deadline) sceKernelDelayThread(uint32_t(deadline-now));
+    if(now<worker.wait_started_us)return false;
+    if(!startup_wait::timeout_elapsed(worker.wait_started_us,worker.timeout_ms,now)) {
+        const uint64_t remaining=uint64_t(worker.timeout_ms)*1000-(now-worker.wait_started_us);
+        const int rc=sceKernelDelayThread(uint32_t(remaining));
+        if(rc<0)return false;
+    }
     now=sceKernelGetProcessTimeWide();
-    if(now<deadline) return false;
+    if(!startup_wait::timeout_elapsed(worker.wait_started_us,worker.timeout_ms,now))return false;
     d2rt::X86Context main{}; cpu.save_context(main);
     const uint32_t main_tib=wx86_cur_tib();
+    main.fs_base=main_tib;
     struct Restore {
         d2rt::Cpu& cpu; const d2rt::X86Context& ctx; uint32_t tib;
-        ~Restore(){cpu.load_context(ctx);wx86_set_main_tib(tib);}
+        ~Restore(){
+            cpu.set_trap(0,0,[](d2rt::Cpu&,uint32_t){return false;});
+            cpu.load_context(ctx);wx86_set_main_tib(tib);
+        }
     } restore{cpu,main,main_tib};
     cpu.load_context(worker.context); wx86_set_main_tib(worker.context.fs_base);
-    uint32_t ret=0;
+    uint32_t wait[3]{};
     const uint32_t esp=cpu.reg(d2rt::R_ESP);
-    if(esp<stack || uint64_t(esp)+12>top || !cpu.read(esp,&ret,4)) return false;
+    if(esp<stack || uint64_t(esp)+12>top || !cpu.read(esp,wait,12) ||
+       wait[0]!=(worker.id==13 ? 0x004080FAu:0x00423B8Cu) ||
+       wait[1]!=worker.event || wait[2]!=worker.timeout_ms ||
+       worker.context.fs_base!=(worker.id==13 ? 0x00770000u:0x00760000u))return false;
+    const uint32_t ret=wait[0];
     cpu.trap_epilogue(0x102,12,ret); // Actual elapsed timeout, not an invented signal.
     worker.blocked=false;
     fprintf(log,"worker_wake_elapsed_us=%llu\n",(unsigned long long)(now-worker.wait_started_us));
@@ -135,8 +149,13 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
         if(imp.dll=="KERNEL32.dll" && imp.name=="WaitForSingleObject") {
             uint32_t args[2]={}; if(!c.read(sp+4,args,8)){failed=true;return false;}
             if(args[1] && services.event_unsignaled(args[0])) {
+                if(return_va!=(worker.id==13 ? 0x004080FAu:0x00423B8Cu) ||
+                   args[0]!=worker.event || args[1]!=(worker.id==13 ? 80u:16u)) {
+                    failed=true;return false;
+                }
                 worker.event=args[0];worker.timeout_ms=args[1];worker.wait_started_us=sceKernelGetProcessTimeWide();
                 worker.blocked=true;c.save_context(worker.context);boundary=true;
+                worker.context.fs_base=wx86_cur_tib();
                 fprintf(log,"worker_wait_state=reblocked_saved_context\n");return false;
             }
         }
@@ -145,8 +164,10 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
         if(result==StartupServiceResult::Serviced)return true;
         if(result==StartupServiceResult::ContractFailure){failed=true;return false;}
         worker.unsupported_boundary=true;c.save_context(worker.context);boundary=true;
+        worker.context.fs_base=wx86_cur_tib();
         fprintf(log,"worker_stop_import=%s!%s\nstartup_stop_import=%s!%s\n",
             imp.dll.c_str(),imp.name.c_str(),imp.dll.c_str(),imp.name.c_str());
+        fprintf(log,"startup_stop_worker_eip=0x%08X esp:0x%08X id:%u\n",c.reg(d2rt::R_EIP),sp,worker.id);
         fprintf(log,"startup_stop_thread=worker\n");return false;
     });
     cpu.take_limit_hit();cpu.set_run_limit(4096);

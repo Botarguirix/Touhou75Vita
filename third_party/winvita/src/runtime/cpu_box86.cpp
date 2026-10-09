@@ -1455,7 +1455,9 @@ public:
     void save_context(X86Context& c) override {
         Cpu::save_context(c);
         static_assert(sizeof(X87Blob) <= sizeof(c.fpu), "X86Context::fpu too small");
-        X87Blob b; blob_from_emu(b, E());
+        // Stable snapshots must not contain uninitialized structure padding.
+        X87Blob b; std::memset(&b,0,sizeof b); blob_from_emu(b, E());
+        std::memset(c.fpu,0,sizeof c.fpu);
         std::memcpy(c.fpu, &b, sizeof b); c.fpu_valid = true;
     }
     void load_context(const X86Context& c) override {
