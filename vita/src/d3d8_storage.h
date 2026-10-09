@@ -4,6 +4,8 @@
 #include "d3d8_quad_raster.h"
 #include "exe_draw_preview.h"
 #include "exe_presenter.h"
+#include "startup_limits.h"
+#include <psp2/kernel/processmgr.h>
 #include <array>
 #include <vector>
 #include <new>
@@ -421,11 +423,13 @@ private:
         if(!d3d8_present::full_rect(source,640,480) || !d3d8_present::full_rect(destination,640,480))return unsupported();
         auto* back=find(back_);
         if(!back || back->locked || back->width!=640 || back->height!=480 || back->format!=22)return failure();
-        if(present_calls_>=8){fprintf(log_,"startup_d3d8_present_scope_limit=frames:%u maximum:8\n",present_calls_);return unsupported();}
+        if(present_calls_>=startup_limits::present_frames){fprintf(log_,"startup_d3d8_present_scope_limit=frames:%u maximum:%u\n",present_calls_,startup_limits::present_frames);return unsupported();}
         const d3d8_quad::Image image={back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,back->format};
+        const uint64_t started=sceKernelGetProcessTimeWide();
         if(!presenter_.present(image))return failure();
         ++present_calls_;
         th075::capture_presented_exe_frame(back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,present_calls_,log_);
+        fprintf(log_,"startup_d3d8_present_elapsed_us=%llu frame:%u scope:prepare_native_capture\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),present_calls_);
         fprintf(log_,"startup_d3d8_present=executed frame:%u backbuffer:0x%08X\n",present_calls_,back_);
         return serviced();
     }
@@ -454,8 +458,8 @@ private:
             auto* target=surface && surface->parent?find(surface->parent):surface;
             if(profile && texture && texture->texture && target && !texture->locked && !target->locked){
                 const uint64_t pixels=uint64_t(viewport_[2])*viewport_[3];
-                if(draw_calls_>=64 || pixels>16u*1024u*1024u-draw_pixels_){
-                    fprintf(log_,"startup_d3d8_draw_scope_limit=calls:%u covered:%u max_calls:64 max_pixels:16777216\n",draw_calls_,draw_pixels_);return unsupported();
+                if(draw_calls_>=startup_limits::draw_calls || pixels>startup_limits::draw_pixels-draw_pixels_){
+                    fprintf(log_,"startup_d3d8_draw_scope_limit=calls:%u covered:%u max_calls:%u max_pixels:%u\n",draw_calls_,draw_pixels_,startup_limits::draw_calls,startup_limits::draw_pixels);return unsupported();
                 }
                 d3d8_quad::Vertex quad[4]{};std::memcpy(quad,vertices.data(),sizeof(quad));
                 const d3d8_quad::Image image={texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
@@ -463,8 +467,10 @@ private:
                 const d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
                 const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1};
                 d3d8_quad::Stats stats;
+                const uint64_t started=sceKernelGetProcessTimeWide();
                 if(d3d8_quad::rasterize(quad,image,output,view,settings,stats)==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
+                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:raster_and_pixel_hashes\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_);
                     fprintf(log_,"startup_d3d8_draw=executed renderer:point_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
                     fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
                     fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);

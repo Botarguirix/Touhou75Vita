@@ -1,35 +1,36 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 75, version 01.79
+## Current checkpoint — iteration 76, version 01.80
 
-Hardware 74 executed PeekMessageA and the first original Present. Its 640×480
-backbuffer reached native 960×544 scanout; set/vblank/query succeeded, active
-framebuffer matched and scanout FNV was B047B6F7. Main then blocked at
-WaitForSingleObject (return 603545), waiting indefinitely on frame event AB2004.
+Hardware 75 confirmed eight original Present frames with active scanout
+matching on every call. The original timer worker signaled AB2004 eight times;
+main consumed each auto-reset event and retained GPR/flags/TIB/FPU,
+call frame and LastError. It stopped before the ninth Present as configured,
+after 37.37 s, with no CPU fault/limit and a disarmed watchdog.
 
-Iteration 75 resumes the original timer worker after its real 16 ms timeout.
-The original worker must execute SetEvent; only then can the existing wait
-contract consume the auto-reset event and continue main. TIB ownership and
-canonical FPU snapshots support explicit context restoration checks.
-It allows up to eight frame-wait continuations, eight Present frames and
-bounded CPU slices, with the existing 45 s scheduling cap / 60 s watchdog.
-Eighteen portable groups passed on PC. VitaSDK compilation and package
-inspection passed; the new scheduler integration needs hardware validation.
-See [evidence/scope](STATUS_ITERATION75.md),
-[EXE checklist](EXE_CHECKLIST_ITERATION75.md) and
+The Vita application had a blank CMake build type and no optimization flag.
+Iteration 76 defaults to RelWithDebInfo (-O2) with fast-math and floating-point
+contraction disabled. It permits sixteen real frames/waits and records
+draw/present/cycle timing plus the observed guest transition counter.
+The 45 s cap, 60 s watchdog, memory/ABI guards and 64-slice maximum remain.
+The static fade path suggests more frames can reach the next original scene;
+neither that transition nor a speed gain has been confirmed on hardware.
+See [evidence/scope](STATUS_ITERATION76.md),
+[EXE checklist](EXE_CHECKLIST_ITERATION76.md) and
 [decompiler/external research](RESEARCH_EXE_ITERATION73.md).
 
 | Next milestone | Current evidence / remaining work |
 |---|---|
-| First EXE pixels | Hardware 72/73 confirmed the first logo drawing and fade. |
-| Original message/frame loop | Hardware 74 confirmed PeekMessage and one native Present. 75 addresses the subsequent frame-event wait; repeated frames are pending. |
-| Original menu | Finish the required draw/state profiles and title transitions; compare menu frames with Windows. |
+| First EXE pixels | Hardware 72/73 confirmed logo drawing and fade. |
+| Original message/frame loop | Hardware 74 confirmed PeekMessage; 75 confirmed eight timer/main continuations and native Present frames. 76 extends the bounded run. |
+| Original menu | Finish the initial transition, capture the next service/draw profile and compare title/menu frames with Windows. |
 | Interactive scene | Continuous timer/audio scheduling, guest input and DirectSound mixing alongside rendering. No posted input bridge is connected to the message queue. |
 | Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
 
-Diagnostic music and sprite browsing remain removed. The original game still
-needs its own EXE and data files on Vita. Asset extraction alone does not
-replace the executable's gameplay logic. No completion percentage is inferred
-from the number of service calls or checkpoint PASS labels.
+Eighteen portable groups and the -O0/-O2 renderer digest comparison passed.
+VitaSDK compilation and package inspection passed; physical 76 is pending.
+Diagnostic music and sprite browsing remain removed. The original EXE and
+its data still supply the game's logic/resources; checkpoint PASS does not
+establish a playable menu or a completion percentage.
 
 Historical observations follow below.
 

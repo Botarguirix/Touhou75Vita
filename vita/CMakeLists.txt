@@ -12,13 +12,19 @@ endif()
 project(touhou75_vita C CXX)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
+# A blank build type left the software pixel loops unoptimized in 75.
+# Keep explicit Debug/Release choices; use strict -O2 with symbols by default.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build configuration" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 75 EXE Frame Events")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 76 EXE Transition")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.79")
+set(VITA_VERSION "01.80")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
@@ -46,7 +52,7 @@ add_executable(${PROJECT_NAME}
   src/sha256.cpp
   src/diagnostic_screen.cpp
 )
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -fno-fast-math -ffp-contract=off)
 # VitaSDK's linker script reserves this gap before the next load segment.
 # vita-elf-create appends SCE module/import metadata to the code segment;
 # page alignment alone can leave too little space as the executable grows.

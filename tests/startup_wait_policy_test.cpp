@@ -1,4 +1,5 @@
 #include "../vita/src/startup_wait_policy.h"
+#include "../vita/src/startup_limits.h"
 #include <cassert>
 #include <cstdio>
 #include <limits>
@@ -49,6 +50,9 @@ int main() {
 
     for(unsigned i=0;i<=8;++i)assert(slice_cap(i)==32+4*i);
     assert(slice_cap(100)==64);
+    assert(startup_limits::present_frames==16 && startup_limits::frame_wait_resumes==16);
+    assert(startup_limits::time_cap_us<startup_limits::watchdog_timeout_us);
+    assert(slice_cap(startup_limits::frame_wait_resumes)==64);
     Event frame{false,false};
     const auto before=frame.generation;
     assert(!frame.signaled && !frame.acquire()); // An infinite main wait cannot finish.

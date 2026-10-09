@@ -31,6 +31,7 @@ int main() {
     assert(detail::load32(destination.data()+(479*1024+639)*4)==0xFF123456);
     assert(detail::load32(destination.data()+640*4)==0x0F000000);
     puts("PASS captured_geometry_sampling_and_alpha_test");
+    printf("PIXEL_DIGEST logo source:%08X before:%08X after:%08X\n",stats.hash_source,stats.hash_before,stats.hash_after);
 
     source.resize(1024*1024*4);fill(source,0x0F000000);fill(destination,0xFF000000);
     detail::store32(source.data()+4,0x80C86432);
@@ -40,6 +41,7 @@ int main() {
     assert(stats.covered==307200 && stats.written==307200 && stats.changed==1);
     assert(detail::load32(destination.data()+4)==0xFF0C0603);
     puts("PASS captured_fade_one_zero_x8_destination");
+    printf("PIXEL_DIGEST fade source:%08X before:%08X after:%08X\n",stats.hash_source,stats.hash_before,stats.hash_after);
 
     assert(detail::blend(0x80C86432,0xFF102030)==0xBF6C4231);
     puts("PASS source_alpha_blend_channels");
@@ -58,6 +60,7 @@ int main() {
     assert(scanout[117]==0xFF332211 && scanout[841]==0xFF332211 && scanout[842]==0xFF000000);
     assert(scanout[543*960+117]==0xFF332211 && scanout.back()==0xFF000000);
     puts("PASS present_abgr_aspect_and_black_bars");
+    printf("PIXEL_DIGEST scanout after:%08X\n",hash);
     const auto unchanged=scanout;image.size-=4;
     assert(!d3d8_present::prepare(image,scanout.data(),scanout.size(),hash) && scanout==unchanged);
     assert(d3d8_present::full_rect({0,0,640,480},640,480));

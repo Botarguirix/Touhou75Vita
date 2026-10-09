@@ -1,5 +1,6 @@
 #include "startup_probe.h"
 #include "startup_resume_policy.h"
+#include "startup_limits.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
 #include "dinput8_bridge.h"
@@ -24,11 +25,11 @@ constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
 // Allow the original entrypoint to traverse the post-HeapCreate allocator
 // setup while retaining the 60-second watchdog as the hard safety bound.
-constexpr uint64_t kRunBudget = 65536, kTimeoutUs = 60000000;
+constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_timeout_us;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration75-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration76-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -94,7 +95,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration75\n");
+        fprintf(report_, "watchdog_revision=iteration76\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -506,7 +507,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool stopped = false, limit = false;
     unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
     unsigned frame_wait_resumes=0;
-    fprintf(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=45000000\n");
+    fprintf(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
+    fprintf(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
     auto run_main = [&](uint32_t entry, uint64_t budget) {
         cpu.take_limit_hit(); cpu.set_run_limit(budget);
         stopped = cpu.run(entry, &fault);
@@ -576,7 +578,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 have_previous = false; unchanged = 0;
             }
             const unsigned slice_cap=startup_wait::slice_cap(frame_wait_resumes);
-            if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= slice_cap || elapsed >= 45000000) {
+            if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= slice_cap || elapsed >= startup_limits::time_cap_us) {
                 fprintf(log, "startup_resume_stop=%s\n", unchanged >= 2 ? "cosine_no_index_progress" :
                     repeated_state >= 3 ? "repeated_sampled_state" : resume_slices >= slice_cap ? "slice_cap" : "time_cap"); break;
             }
@@ -685,7 +687,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     // Hardware 74 reached this infinite frame-event wait after a genuine
     // Present. Pause main with its unexecuted call intact, run the original
     // timer worker after its real timeout, then retry the same event contract.
-    for(unsigned tick=0;tick<8 && stopped && !limit && !service_failed && worker_ok;++tick) {
+    for(unsigned tick=0;tick<startup_limits::frame_wait_resumes && stopped && !limit && !service_failed && worker_ok;++tick) {
         const uint32_t trap=cpu.reg(d2rt::R_EIP),esp=cpu.reg(d2rt::R_ESP);
         uint32_t wait[3]{};
         if(trap<kTrap || (trap-kTrap)%16 || (trap-kTrap)/16>=image.imports().size() ||
@@ -699,12 +701,17 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
            worker.event!=0x00AB2000 || worker.timeout_ms!=16 ||
            !cpu.read(0x0068BE34,&timer_event,4) || timer_event!=worker.event ||
            !cpu.read(0x0066C23C,&period,4) || period!=worker.timeout_ms)break;
-        if(sceKernelGetProcessTimeWide()-start>=45000000) {
+        if(sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
             fprintf(log,"startup_frame_wait_stop=time_cap\n");break;
         }
         d2rt::X86Context saved{},restored{};cpu.save_context(saved);
         saved.fs_base=wx86_cur_tib();
         const uint32_t error=wx86_get_lasterr(cpu),generation=services.event_generation(wait[1]);
+        const uint64_t frame_started=sceKernelGetProcessTimeWide();
+        uint32_t counter=0;uint16_t state=0;
+        const uint32_t ebp=cpu.reg(d2rt::R_EBP);
+        if(cpu.read(0x0066C240,&counter,4) && ebp>=kStack+0x3C && stack_range(ebp-0x3C,2) && cpu.read(ebp-0x3C,&state,2))
+            fprintf(log,"startup_frame_phase=state_word:0x%04X transition_counter:0x%08X scope:observed_guest_globals\n",unsigned(state),counter);
         fprintf(log,"startup_frame_wait=blocked frame:%u handle:0x%08X timeout:infinite producer:timer_worker\n",frame_wait_resumes+1,wait[1]);
         worker_ok=wake_worker_slice(cpu,image,services,worker,log);
         cpu.set_trap(kTrap,kTrapEnd,startup_trap);
@@ -729,6 +736,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(!resumed){service_failed=true;break;}
         ++frame_wait_resumes;expected_boundary=false;
         run_main(wait[0],kRunBudget);
+        fprintf(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)(sceKernelGetProcessTimeWide()-frame_started),frame_wait_resumes);
     }
     fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
     fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));

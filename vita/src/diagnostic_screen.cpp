@@ -10,6 +10,7 @@
 #include <string>
 #include "pe_resources.h"
 #include "exe_draw_preview.h"
+#include "startup_limits.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -76,7 +77,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 75 - EXE FRAME EVENTS",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 76 - EXE TRANSITION",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -140,7 +141,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             text(pixels,690,202,th075::exe_present_frames?"EXE PRESENT CAPTURE":"EXE DRAW CAPTURE",neutral,1);
             fprintf(log,"screen_exe_draw_snapshot=presented scope:%s\n",th075::exe_present_frames?"guest_present_backbuffer":"first_quad_not_guest_present");
         } else text(pixels,690,202,"EXE CAPTURE UNAVAILABLE",neutral,1);
-        text(pixels,690,420,"PRESENT FRAMES "+std::to_string(th075::exe_present_frames)+"/8",neutral,2);
+        text(pixels,690,420,"PRESENT FRAMES "+std::to_string(th075::exe_present_frames)+"/"+std::to_string(startup_limits::present_frames),neutral,2);
         text(pixels,690,445,"EXE ONLY",neutral,2);
         bool released=false;
         const char* exit_reason="cross";
