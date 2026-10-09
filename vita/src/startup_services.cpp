@@ -48,12 +48,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool window_default = import.dll == "USER32.dll" && import.name == "DefWindowProcA";
     const bool window_show = import.dll == "USER32.dll" && import.name == "ShowWindow";
     const bool window_update = import.dll == "USER32.dll" && import.name == "UpdateWindow";
+    const bool message_peek = import.dll == "USER32.dll" && import.name == "PeekMessageA";
     const bool rect_set = import.dll == "USER32.dll" && import.name == "SetRect";
     const bool com_init = import.dll == "ole32.dll" && import.name == "CoInitialize";
     const bool com_uninit = import.dll == "ole32.dll" && import.name == "CoUninitialize";
     const bool com = com_init || com_uninit;
     const bool stock = import.dll == "GDI32.dll" && import.name == "GetStockObject";
-    const bool gui = icon_load || cursor_load || class_register || stock || window_create || window_default || window_show || window_update;
+    const bool gui = icon_load || cursor_load || class_register || stock || window_create || window_default || window_show || window_update || message_peek;
     const bool winmm = import.dll == "WINMM.dll";
     const bool timer_begin = winmm && import.name == "timeBeginPeriod";
     const bool timer_end = winmm && import.name == "timeEndPeriod";
@@ -140,7 +141,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     for (unsigned i = 0; i < 4; ++i) before[i] = cpu_.reg(preserved[i]);
     uint32_t ret = 0, arg = 0;
     uint32_t expected_eax = 0;
-    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write || rect_set) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
+    const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write || rect_set || message_peek) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
         ((com_uninit || tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
         ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((file_size || window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
@@ -327,7 +328,43 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
             return false;
         };
-        if(window_update) {
+        if(message_peek) {
+            uint32_t args[5]{};
+            if(!cpu_.read(esp+4,args,sizeof(args)))return StartupServiceResult::ContractFailure;
+            fprintf(log_,"startup_message_query=hwnd:0x%08X min:0x%04X max:0x%04X flags:0x%08X\n",args[1],args[2],args[3],args[4]);
+            // Every window lifecycle callback has already run synchronously.
+            // Pending sends/invalid paint cannot be reported as an empty queue.
+            if(!window_.created || window_pending_ || window_.invalidated ||
+               wx86_cur_tib()!=window_.owner_tib) {
+                fprintf(log_,"startup_message_boundary=pending_window_work_or_foreign_thread\n");
+                return StartupServiceResult::Unsupported;
+            }
+            startup_messages::Message original{};
+            // The observed MSG is on the mapped RW guest stack. Heap/data MSG
+            // outputs require a separate writable-mapping contract.
+            if(!in_stack(args[0],sizeof(original)) || !cpu_.read(args[0],&original,sizeof(original)))
+                return StartupServiceResult::ContractFailure;
+            const uint32_t error=wx86_get_lasterr(cpu_);
+            const startup_messages::Query query{args[0],args[1],args[2],args[3],args[4]};
+            const auto result=message_queue_.peek(wx86_cur_tib(),query,
+                [&](uint32_t pointer,const startup_messages::Message& message) {
+                    return cpu_.write(pointer,&message,sizeof(message));
+                });
+            if(result==startup_messages::Result::Unsupported) {
+                fprintf(log_,"startup_message_boundary=unsupported_filter_or_queue_flags\n");
+                return StartupServiceResult::Unsupported;
+            }
+            if(result==startup_messages::Result::OutputFault)return StartupServiceResult::ContractFailure;
+            expected_eax=result==startup_messages::Result::Available ? 1u:0u;
+            startup_messages::Message after{};
+            if(wx86_get_lasterr(cpu_)!=error || !cpu_.read(args[0],&after,sizeof(after)) ||
+               (!expected_eax && std::memcmp(&original,&after,sizeof(original))))
+                return StartupServiceResult::ContractFailure;
+            ++message_calls_;
+            fprintf(log_,"startup_message_result=%s queued:%u call:%u\n",expected_eax ? "available":"empty",unsigned(message_queue_.size()),message_calls_);
+            fprintf(log_,"startup_message_empty_output=%s\nstartup_message_lasterror=preserved\n",expected_eax ? "not_applicable":"preserved");
+            fprintf(log_,"startup_message_scope=owned_posted_queue_no_host_input_no_timers\n");
+        } else if(window_update) {
             if(!window_.created || arg!=window_.handle || window_pending_)return StartupServiceResult::Unsupported;
             if(!window_.invalidated)expected_eax=1;
             else {
@@ -374,6 +411,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                args[5]!=0x80000000 || args[6]!=640 || args[7]!=480 || args[8] || args[9] ||
                args[10]!=cls->second.fields[5] || args[11])return StartupServiceResult::Unsupported;
             window_.handle=0x00AB7000;window_.procedure=cls->second.fields[2];
+            window_.owner_tib=wx86_cur_tib();
             window_.frame=esp;window_.return_address=ret;window_.args=args;
             window_.surface.assign(640u*480u,0xFFFFFFFFu);
             window_pending_=true;
@@ -1583,6 +1621,7 @@ bool StartupServices::finish_window_creation() {
         return false;
     }
     window_.created=true;
+    if(tib!=window_.owner_tib || !message_queue_.bind(window_.owner_tib,window_.handle))return false;
     if(showing) {window_.visible=true;window_.invalidated=true;}
     if(painting && window_.invalidated)return false;
     window_show_pending_=false;

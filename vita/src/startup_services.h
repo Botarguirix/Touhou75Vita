@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include "startup_message_queue.h"
 namespace d2rt { struct Cpu; class PeImage; struct ImportRef; }
 enum class StartupServiceResult { Unsupported, Serviced, ContractFailure, Deferred };
 struct StartupWorker;
@@ -40,6 +41,7 @@ public:
     unsigned code_page_calls() const { return code_page_calls_; }
     unsigned string_type_calls() const { return string_type_calls_; }
     unsigned case_map_calls() const { return case_map_calls_; }
+    unsigned message_calls() const { return message_calls_; }
     static constexpr uint32_t critical_init_trap = 0x00BFFFE0;
     static constexpr uint32_t processor_feature_trap = 0x00BFFFD0;
     bool heap_ready() const { return heap_ready_; }
@@ -82,6 +84,8 @@ private:
     unsigned code_page_calls_ = 0;
     unsigned string_type_calls_ = 0;
     unsigned case_map_calls_ = 0;
+    unsigned message_calls_ = 0;
+    startup_messages::Queue message_queue_;
     std::map<uint32_t, bool> environment_blocks_; // address -> Unicode variant
     std::vector<uint32_t> environment_free_blocks_;
     bool heap_ready_ = false;
@@ -96,7 +100,7 @@ private:
     struct WindowClass { uint16_t atom; std::array<uint32_t,12> fields; };
     std::map<std::string,WindowClass> window_classes_;
     struct Window {
-        uint32_t handle=0, procedure=0, frame=0, return_address=0;
+        uint32_t handle=0, procedure=0, frame=0, return_address=0, owner_tib=0;
         std::array<uint32_t,12> args{};
         std::vector<uint32_t> surface;
         bool created=false, visible=false, invalidated=false;

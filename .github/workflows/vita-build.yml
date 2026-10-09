@@ -43,6 +43,6 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-iteration73-exe-present-vpk
+          name: Touhou75Vita-iteration74-exe-message-loop-vpk
           path: vita/build/*.vpk
           if-no-files-found: error

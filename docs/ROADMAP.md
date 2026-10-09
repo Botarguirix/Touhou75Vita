@@ -1,24 +1,25 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 73, version 01.77
+## Current checkpoint — iteration 74, version 01.78
 
-Hardware 72 executed the original logo quad, changed 223567 pixels and restored
-the backbuffer, depth and state. It stopped at the second quad's ONE/ZERO blend.
-Iteration 73 implements that blend and native Present for the complete 640×480
-client, with double buffering and scanout readback, limited to eight real frames.
-The diagnostic music player and sprite browser are removed from the build.
-Physical validation of the second draw and Present is pending. Other draw
-profiles, the continuous loop, guest audio mixing and gameplay remain pending.
-TH08-Web's renderer/mixer are useful adaptation references, with a different
-target and host ABI. See [scope/evidence](STATUS_ITERATION73.md),
-[EXE checklist](EXE_CHECKLIST_ITERATION73.md) and
+Hardware 73 executed the second ONE/ZERO quad (219077 changed pixels),
+completed EndScene and read score.dat. It reached the original PeekMessageA
+main-loop query at return 602F40. Present has not executed: physical 73 is 0/8.
+Iteration 74 adds the owned message-queue query, preserving MSG and LastError
+when empty, to let the original frame branch continue. Pending window callbacks
+and invalid paint cannot be suppressed by returning an empty result.
+Six queue groups and six renderer groups passed on PC with ASan/UBSan;
+VitaSDK compilation/package inspection passed. Hardware validation is pending.
+Diagnostic music and sprite browsing remain removed. See
+[evidence/scope](STATUS_ITERATION74.md),
+[EXE checklist](EXE_CHECKLIST_ITERATION74.md) and
 [decompiler/external research](RESEARCH_EXE_ITERATION73.md).
 
 | Next milestone | Current evidence / remaining work |
 |---|---|
-| First EXE pixels | Hardware 72 confirmed coverage, writes, destination hash and visible logo. |
-| EndFrame and Present | EndFrame restoration confirmed on hardware 72; ONE/ZERO and native Present compiled in 73, six PC check groups passed, physical evidence pending. |
-| Original menu | Complete required draw/state profiles and connect the game's backbuffer to Vita scanout. |
-| Interactive scene | Continuous scheduling, guest input and DirectSound mixing alongside rendering. |
+| First EXE pixels | Hardware 72 confirmed the first logo quad; 73 confirmed its second fade/copy and EndScene. |
+| Original message/frame loop | 74 implements the observed PeekMessage query. Native Present, its rectangles and display readback still need physical evidence. Later main-thread waits may need scheduler work. |
+| Original menu | Complete remaining draw/state profiles and transitions; verify title/menu frames against Windows. |
+| Interactive scene | Continuous scheduling, guest input and DirectSound mixing alongside rendering. No posted input bridge is connected to the new message queue yet. |
 | Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
 
 Historical observations follow below.
