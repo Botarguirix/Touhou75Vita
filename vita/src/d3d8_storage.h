@@ -1,6 +1,8 @@
 #pragma once
 #include "startup_services.h"
 #include "runtime/cpu.h"
+#include "d3d8_quad_raster.h"
+#include "exe_draw_preview.h"
 #include <array>
 #include <vector>
 #include <new>
@@ -9,8 +11,8 @@
 #include <cstring>
 #include <cmath>
 
-// Partial software graphics bridge. Implements owned storage and state;
-// Draw/Present remain explicit boundaries. ABI follows Wine's d3d8.h.
+// Partial software graphics bridge: owned storage/state and the observed point
+// textured quad. Other Draw profiles and Present remain explicit boundaries.
 class D3D8Storage {
 public:
     static constexpr uint32_t device_trap=0x00BFC000, texture_trap=0x00BFB000,
@@ -91,7 +93,7 @@ public:
         if(!put(w[7],device))return failure();
         hr=0;
         fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
-        fprintf(log_,"startup_d3d8_rasterizer=not_implemented\nstartup_d3d8_caps_shader_versions=zero\n");
+        fprintf(log_,"startup_d3d8_rasterizer=bounded_point_quad\nstartup_d3d8_caps_shader_versions=zero\n");
         return serviced();
     }
     StartupServiceResult call(uint32_t t) {
@@ -259,7 +261,7 @@ private:
             if(texture)++texture->refs;
             fprintf(log_,"startup_d3d8_texture_get=stage:0 object:0x%08X addref:%s\n",bound_texture_,texture?"yes":"no");return serviced();
         }
-        case 72:return draw_boundary(w);
+        case 72:return draw(w);
         case 52:
             if(recording_on_){value=0x8876086C;return serviced();}
             recording_=StateBlock{};recording_on_=true;
@@ -311,8 +313,9 @@ private:
             const uint64_t right=uint64_t(viewport_[0])+viewport_[2],bottom=uint64_t(viewport_[1])+viewport_[3];
             if(right>color->width || bottom>color->height || ((w[4]&2) && (right>depth->width || bottom>depth->height)))return failure();
             const uint16_t d=(w[4]&2)?uint16_t(z*65535.0f):0;
+            const uint32_t clear_color=color->format==22?(w[5]|0xFF000000u):w[5];
             for(uint32_t y=viewport_[1];y<bottom;++y)for(uint32_t x=viewport_[0];x<right;++x){
-                if(w[4]&1)std::memcpy(color->bytes.data()+size_t(y)*color->pitch+size_t(x)*4,&w[5],4);
+                if(w[4]&1)std::memcpy(color->bytes.data()+size_t(y)*color->pitch+size_t(x)*4,&clear_color,4);
                 if(w[4]&2)std::memcpy(depth->bytes.data()+size_t(y)*depth->pitch+size_t(x)*2,&d,2);
             }
             fprintf(log_,"startup_d3d8_clear=owned_storage flags:%u viewport:%u,%u,%u,%u pixels:%u\n",w[4],viewport_[0],viewport_[1],viewport_[2],viewport_[3],viewport_[2]*viewport_[3]);return serviced();
@@ -373,8 +376,8 @@ private:
         return unsupported();
     }
     void initialize_states() {
-        const uint32_t render[][2]={{7,1},{8,3},{9,2},{14,1},{15,0},{16,1},{19,2},{20,1},{22,3},{23,4},{24,0},{25,8},{26,0},{27,0},{28,0},{29,0},{60,0xFFFFFFFF},{136,1},{137,1}};
-        const uint32_t stage[][2]={{1,4},{2,2},{3,1},{4,2},{5,2},{6,1},{13,1},{14,1},{15,0},{16,1},{17,1},{18,0}};
+        const uint32_t render[][2]={{7,1},{8,3},{9,2},{14,1},{15,0},{16,1},{19,2},{20,1},{22,3},{23,4},{24,0},{25,8},{26,0},{27,0},{28,0},{29,0},{60,0xFFFFFFFF},{136,1},{137,1},{168,15},{171,1}};
+        const uint32_t stage[][2]={{1,4},{2,2},{3,1},{4,2},{5,2},{6,1},{11,0},{13,1},{14,1},{15,0},{16,1},{17,1},{18,0}};
         for(const auto& v:render){render_[v[0]]=v[1];render_valid_[v[0]]=true;}
         for(const auto& v:stage){stage_[v[0]]=v[1];stage_valid_[v[0]]=true;}
     }
@@ -384,11 +387,13 @@ private:
         case 8:case 9:case 22:return value>=1 && value<=3;
         case 19:case 20:return value>=1 && value<=13;
         case 23:case 25:return value>=1 && value<=8;
-        case 24:return value<=255;case 60:return true;default:return false;}
+        case 24:return value<=255;case 60:return true;case 168:return value<=15;
+        case 171:return value>=1 && value<=5;default:return false;}
     }
     static bool stage_state(uint32_t state,uint32_t value) {
         switch(state){case 1:case 4:return (value>=1 && value<=4) || value==7;
         case 2:case 3:case 5:case 6:return (value&~0x30u)<=3;
+        case 11:return value==0; // TEXCOORDINDEX: first FVF coordinate set only.
         case 13:case 14:return value>=1 && value<=5;
         case 15:return true;
         // Preserve legacy filter enums used by the original helper (0/1/2/4).
@@ -404,8 +409,8 @@ private:
         if(outgoing)--outgoing->refs;
         current=next;return true;
     }
-    StartupServiceResult draw_boundary(const uint32_t* w) {
-        fprintf(log_,"startup_d3d8_draw_boundary=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s executed:no\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
+    StartupServiceResult draw(const uint32_t* w) {
+        fprintf(log_,"startup_d3d8_draw_request=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
         for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
         for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])fprintf(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
         uint32_t count=0;
@@ -417,7 +422,40 @@ private:
             fprintf(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
             for(unsigned i=0;i<std::min(count,8u);++i){const auto* v=vertices.data()+i*7;float f[7]{};std::memcpy(f,v,28);
                 fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));}
+            const bool profile=scene_ && !recording_on_ && w[2]==5 && w[3]==2 &&
+                render_[7]==0 && render_[8]==3 && render_[9]==2 && render_[22]==1 &&
+                render_[26]==0 && render_[28]==0 && render_[29]==0 && render_[137]==0 && render_[168]==15 && render_[171]==1 &&
+                (!render_[15] || render_[25]==7) &&
+                (!render_[27] || (render_[19]==5 && render_[20]==6)) &&
+                stage_[1]==4 && stage_[2]==2 && (stage_[3]==0 || stage_[3]==1) &&
+                stage_[4]==4 && stage_[5]==2 && (stage_[6]==0 || stage_[6]==1) &&
+                stage_[11]==0 && stage_[13]==1 && stage_[14]==1 && stage_[16]==1 && stage_[17]==1 && stage_[18]<=1;
+            auto* texture=find(bound_texture_);auto* surface=find(target_);
+            auto* target=surface && surface->parent?find(surface->parent):surface;
+            if(profile && texture && texture->texture && target && !texture->locked && !target->locked){
+                const uint64_t pixels=uint64_t(viewport_[2])*viewport_[3];
+                if(draw_calls_>=64 || pixels>16u*1024u*1024u-draw_pixels_){
+                    fprintf(log_,"startup_d3d8_draw_scope_limit=calls:%u covered:%u max_calls:64 max_pixels:16777216\n",draw_calls_,draw_pixels_);return unsupported();
+                }
+                d3d8_quad::Vertex quad[4]{};std::memcpy(quad,vertices.data(),sizeof(quad));
+                const d3d8_quad::Image image={texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
+                const d3d8_quad::Target output={target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,target->format};
+                const d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
+                const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0};
+                d3d8_quad::Stats stats;
+                if(d3d8_quad::rasterize(quad,image,output,view,settings,stats)==d3d8_quad::Result::Rendered){
+                    ++draw_calls_;draw_pixels_+=stats.covered;
+                    fprintf(log_,"startup_d3d8_draw=executed renderer:point_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
+                    const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
+                    if(stats.covered){probe("first",stats.first);probe("last",stats.last);}
+                    if(stats.changed)th075::capture_first_exe_quad(target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,view.x,view.y,view.width,view.height,log_);
+                    return serviced();
+                }
+                fprintf(log_,"startup_d3d8_draw_rejected=reason:%s output_write:none\n",d3d8_quad::reject_name(stats.reject));
+            }else fprintf(log_,"startup_d3d8_draw_rejected=state_or_resource_profile output_write:none\n");
         }
+        fprintf(log_,"startup_d3d8_draw_boundary=executed:no\n");
         return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
@@ -434,6 +472,7 @@ private:
     std::array<uint32_t,256> render_{};std::array<uint32_t,32> stage_{};
     std::array<bool,32> stage_valid_{};std::array<bool,256> render_valid_{};
     uint32_t bound_texture_=0;
+    uint32_t draw_calls_=0,draw_pixels_=0;
     std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     bool scene_=false;

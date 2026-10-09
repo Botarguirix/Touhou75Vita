@@ -4,7 +4,7 @@ Runtime prototype for Touhou 7.5 – Immaterial and Missing Power on PlayStation
 
 Iteration 11 r2 passed on the user's physical Vita: the original Japanese EXE ran from its entry point to GetVersionExA, with valid stack and SEH registration, a disarmed watchdog and a visible results screen. See [hardware evidence](docs/hardware/iteration11-r2/result-excerpt.txt).
 
-Physical iteration 70 passed ZWRITEENABLE and source/destination blend setters, then reached USER32!SetRect before a textured quad. Iteration 71/version 01.75 prepares the signed RECT contract so the existing first-draw diagnostics can capture that geometry if reached. Circle now selects a random graphic container and a random frame, avoiding the previous container. Native music remains available. Guest playback/mixing, original rasterization/Present and gameplay remain pending. See [scope](docs/STATUS_ITERATION71.md), [updated external research](docs/RESEARCH_N0ZOM1Z0_ITERATION71.md) and [roadmap](docs/ROADMAP.md).
+Physical iteration 71 passed SetRect and texture binding, then captured the original logo's first DrawPrimitiveUP: a 640×480 quad sampled from a 1024×512 texture. Random DAT container/frame selection also worked on Vita. Iteration 72/version 01.76 implements a bounded point-sampled quad renderer and displays its first changed output as an initial diagnostic snapshot. Native music remains available. Guest playback/mixing, original Present, complete rendering and gameplay remain pending. See [scope](docs/STATUS_ITERATION72.md), [external research](docs/RESEARCH_N0ZOM1Z0_ITERATION71.md) and [roadmap](docs/ROADMAP.md).
 
 ## Build
 
@@ -15,17 +15,17 @@ TARGET=vita bash third_party/winvita/build.sh
 make -C vita
 ```
 
-The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration71-dat-browser-vpk**.
+The package is vita/touhou75_vita.vpk (also in vita/build/). Actions publishes **Touhou75Vita-iteration72-dat-browser-vpk**.
 
 ## Test on one Vita
 
 1. Keep your Japanese executable at ux0:data/TH075Vita/TH075.exe with th075.dat and th075bgm.dat alongside it for the native resource preview and music.
 2. Download the artifact from a successful Actions run for the new commit, extract the ZIP and install its VPK with VitaShell.
-3. Launch **Touhou 7.5 Vita - Iteration 71 Random DAT Rect**, package version 01.75, on the same Vita used previously. The screen must show ITERATION 71.
-4. Wait for the results screen. Circle picks a random graphic container and frame; Left/Right select adjacent frames, and Start exports DAT/BMP. Triangle selects another song, Square restarts it, and X exits. Photograph the screen.
-5. Inspect iteration71.log, iteration71-runtime.log and iteration71-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration71-random-dat-rect-r1 and include iteration71-bgm.log, the game's log.txt and a screenshot. Inspect startup_rect_set/readback, texture_binding, draw_boundary/draw_state/draw_stage/vertex and the final startup_stop_import/EIP. DrawPrimitiveUP is captured but not executed. For Circle include dat_view_random/index/timing/frame. Unsupported graphics, Win32, input or audio services may be the next boundary. Title-screen drawing is not implemented yet.
+3. Launch **Touhou 7.5 Vita - Iteration 72 First EXE Quad**, package version 01.76, on the same Vita used previously. The screen must show ITERATION 72.
+4. Wait for the results screen and photograph its initial EXE DRAW CAPTURE before pressing Circle. Circle picks a random graphic container and frame; Left/Right select adjacent frames. Start switches to the current DAT view and exports its DAT/BMP. Triangle selects another song, Square restarts it, and X exits.
+5. Inspect iteration72.log, iteration72-runtime.log and iteration72-watchdog.log in ux0:data/TH075Vita. Confirm build_id=iteration72-first-exe-quad-r1 and include iteration72-bgm.log, the game's log.txt and a screenshot. Inspect startup_d3d8_draw, draw_hash, draw_probe, draw_capture and the final startup_stop_import/EIP. Unsupported draws preserve their boundary. The first snapshot shows stored RGB; it does not establish original Present or complete game boot. For Circle include dat_view_random/index/timing/frame.
 
-The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, Direct3D 8 graphics, controls and audio remain future work. Other Vitas will be used after the EXE boots.
+The screen shows preflight and original-startup checkpoint results. Startup and heap services are handled under restricted contracts; unsupported imports stop execution with a diagnostic. Full game startup, a complete graphics backend, guest controls and guest audio remain future work. Other Vitas will be used after the EXE boots.
 
 ## Keep game data outside Git
 

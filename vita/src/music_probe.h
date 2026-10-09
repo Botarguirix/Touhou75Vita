@@ -54,7 +54,7 @@ class MusicProbe {
         }
         const uint64_t seed=sceKernelGetProcessTimeWide();
         random_.seed(uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
-        fprintf(log,"bgm_inventory=passed tracks:%u seed:0x%08X\nbgm_scope=native_streaming_not_guest_directsound\nbgm_log=ux0:data/TH075Vita/iteration71-bgm.log\n",unsigned(tracks_.size()),uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
+        fprintf(log,"bgm_inventory=passed tracks:%u seed:0x%08X\nbgm_scope=native_streaming_not_guest_directsound\nbgm_log=ux0:data/TH075Vita/iteration72-bgm.log\n",unsigned(tracks_.size()),uint32_t(seed)^uint32_t(seed>>32)^uint32_t(length));
         return !tracks_.empty();
     }
     struct WaveStream {
@@ -101,7 +101,7 @@ class MusicProbe {
         std::memcpy(&self,argument,sizeof(self));return self->run();
     }
     int run(){
-        FILE* log=fopen("ux0:data/TH075Vita/iteration71-bgm.log","wb");
+        FILE* log=fopen("ux0:data/TH075Vita/iteration72-bgm.log","wb");
         if(!log){state_.store(2);return -1;}
         setvbuf(log,nullptr,_IONBF,0);
         FILE* f=fopen(archive,"rb");

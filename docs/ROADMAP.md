@@ -1,15 +1,23 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 71, version 01.75
+## Current checkpoint — iteration 72, version 01.76
 
-Hardware 70 serviced ZWRITEENABLE and source/destination blend state, then
-reached USER32!SetRect before the original textured-quad path.
-Iteration 71 prepares SetRect and random DAT container/frame selection.
-The next physical run can capture the first DrawPrimitiveUP if that path is
-reached; Draw remains unexecuted. SetRect and random selection await Vita validation.
-Guest audio mixing, original rasterization/Present and gameplay remain pending.
+Hardware 71 serviced SetRect and texture binding and captured the first original
+logo quad at DrawPrimitiveUP. Random DAT selection and exports worked on Vita.
+Iteration 72 implements that bounded quad profile, with point sampling, alpha
+test/blend, real target writes and an initial diagnostic RGB snapshot.
+Physical validation of those writes is pending. Original Present, other draw
+profiles, guest audio mixing and gameplay remain pending.
 TH08-Web's renderer/mixer are useful adaptation references, with a different
-target and host ABI. See [scope/evidence](STATUS_ITERATION71.md) and
+target and host ABI. See [scope/evidence](STATUS_ITERATION72.md) and
 [external research](RESEARCH_N0ZOM1Z0_ITERATION71.md).
+
+| Next milestone | Current evidence / remaining work |
+|---|---|
+| First EXE pixels | Quad geometry and texture upload captured on hardware 71; renderer 72 compiled, pending hardware output/hash evidence. |
+| EndFrame and Present | Original D3DX closure identified: EndScene, restore targets, apply viewport state and release saved surfaces; next actual boundary must be recorded. Present remains unsupported. |
+| Original menu | Complete required draw/state profiles and connect the game's backbuffer to Vita scanout. |
+| Interactive scene | Continuous scheduling, guest input and DirectSound mixing alongside rendering. |
+| Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
 
 Historical observations follow below.
 

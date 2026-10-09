@@ -12,6 +12,7 @@
 #include "th075_assets.h"
 #include "music_probe.h"
 #include "dat_browser.h"
+#include "exe_draw_preview.h"
 
 namespace {
 // Original 5x7 diagnostic font: rows, bit 4 at the left.
@@ -78,7 +79,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 71 - RANDOM DAT RECT",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 72 - FIRST EXE QUAD",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -89,7 +90,6 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     }
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
     if(th075::title_preview.size()==640u*480u) {
-        text(pixels,700,205,"DAT RESOURCE",neutral,2);
         for(unsigned y=0;y<180;++y)for(unsigned x=0;x<240;++x)
             pixels[(228+y)*960+700+x]=th075::title_preview[(y*480/180)*640+x*640/240];
         fprintf(log,"screen_original_dat_title=decoded_frame_preview_presented\n");
@@ -144,7 +144,22 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
         th075::DatBrowser browser;
-        const bool browser_ready=browser.open(log);browser.draw(pixels);
+        const bool browser_ready=browser.open(log);
+        bool showing_exe_draw=th075::exe_draw_ready;
+        const auto draw_resource=[&]() {
+            sceDisplayWaitVblankStart();
+            if(showing_exe_draw)th075::draw_exe_snapshot(pixels);
+            else browser.draw(pixels);
+            for(unsigned y=202;y<216;++y)for(unsigned x=690;x<950;++x)pixels[y*960+x]=0xFF20130D;
+            std::string resource=showing_exe_draw?("EXE DRAW CAPTURE "+std::to_string(th075::exe_draw_width)+"X"+std::to_string(th075::exe_draw_height)):(browser_ready?browser.label():"DAT UNAVAILABLE");
+            for(auto& c:resource)if(c=='\\')c='/';
+            text(pixels,690,202,resource,neutral,1);
+            text(pixels,690,445,"CIRCLE RANDOM DAT",neutral,2);
+            text(pixels,690,464,"LEFT RIGHT FRAME",neutral,2);
+            text(pixels,690,483,"START EXPORT",neutral,2);
+        };
+        draw_resource();
+        if(showing_exe_draw)fprintf(log,"screen_exe_draw_snapshot=presented scope:first_quad_not_guest_present\n");
         th075::MusicProbe music;
         music.start(log);
         bool released=false,square_released=false,triangle_released=false;
@@ -161,16 +176,13 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             if(browser_ready && (pressed&SCE_CTRL_CIRCLE)){browser.random(log);redraw=true;}
             if(browser_ready && (pressed&SCE_CTRL_RIGHT)){browser.frame(1,log);redraw=true;}
             if(browser_ready && (pressed&SCE_CTRL_LEFT)){browser.frame(-1,log);redraw=true;}
-            if(browser_ready && (pressed&SCE_CTRL_START))browser.export_current(log);
-            if(redraw){sceDisplayWaitVblankStart();browser.draw(pixels);}
-            if(redraw || previous_label.empty()){
-                for(unsigned y=202;y<216;++y)for(unsigned x=690;x<950;++x)pixels[y*960+x]=0xFF20130D;
-                std::string resource=browser_ready?browser.label():"DAT UNAVAILABLE";for(auto& c:resource)if(c=='\\')c='/';
-                text(pixels,690,202,resource,neutral,1);
-                text(pixels,690,445,"CIRCLE RANDOM DAT",neutral,2);
-                text(pixels,690,464,"LEFT RIGHT FRAME",neutral,2);
-                text(pixels,690,483,"START EXPORT",neutral,2);
+            if(browser_ready && (pressed&SCE_CTRL_START)){
+                // Export the DAT visible in the panel, including when leaving
+                // the initial EXE snapshot. The snapshot is not a DAT export.
+                showing_exe_draw=false;draw_resource();browser.export_current(log);
+                redraw=false;
             }
+            if(redraw){showing_exe_draw=false;draw_resource();}
             if(!(pad.buttons&SCE_CTRL_SQUARE))square_released=true;
             if(square_released&&(pad.buttons&SCE_CTRL_SQUARE)){
                 square_released=false;music.replay(log);
