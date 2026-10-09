@@ -3,6 +3,7 @@
 #include "runtime/cpu.h"
 #include "d3d8_quad_raster.h"
 #include "exe_draw_preview.h"
+#include "exe_presenter.h"
 #include <array>
 #include <vector>
 #include <new>
@@ -12,7 +13,7 @@
 #include <cmath>
 
 // Partial software graphics bridge: owned storage/state and the observed point
-// textured quad. Other Draw profiles and Present remain explicit boundaries.
+// textured quads and bounded native Present. Other profiles remain boundaries.
 class D3D8Storage {
 public:
     static constexpr uint32_t device_trap=0x00BFC000, texture_trap=0x00BFB000,
@@ -27,7 +28,7 @@ public:
         GetTexture=60, SetTexture=61, GetTextureStageState=62,
         SetTextureStageState=63, ValidateDevice=64
     };
-    D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs) { initialize_states(); }
+    D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs),presenter_(log) { initialize_states(); }
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
     bool owns(uint32_t t) const {return range(t,device_trap,97)||range(t,texture_trap,19)||range(t,surface_trap,11);}
     static const char* interface_name(uint32_t t) {
@@ -184,7 +185,7 @@ private:
         switch(s){case 3:case 4:case 34:case 35:case 52:return 1;
         case 6:case 7:case 8:case 9:case 32:case 33:case 40:case 41:case 53:case 54:case 55:case 56:case 76:case 77:return 2;
         case 16:return 4;case 20:return 8;case CreateDepthStencilSurface:return 6;case 36:return 7;
-        case 31:case 50:case 51:case GetTexture:case SetTexture:return 3;case 72:return 5;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
+        case 31:case 50:case 51:case GetTexture:case SetTexture:return 3;case 15:case 72:return 5;case GetTextureStageState:case SetTextureStageState:return 4;default:return 0;}
     }
     StartupServiceResult device_call(unsigned s,const uint32_t* w,uint32_t& value) {
         switch(s) {
@@ -194,6 +195,7 @@ private:
         case 7:return put(w[2],caps(2))?serviced():failure();
         case 8:return put(w[2],mode())?serviced():failure();
         case 9:return put(w[2],std::array<uint32_t,4>{0,2,focus_,0x20})?serviced():failure();
+        case 15:return present(w);
         case 16:if(w[2] || w[3])return unsupported();return surface_output(back_,w[4]);
         case 31: {
             const uint32_t color_handle=w[2]?w[2]:target_;
@@ -409,6 +411,24 @@ private:
         if(outgoing)--outgoing->refs;
         current=next;return true;
     }
+    StartupServiceResult present(const uint32_t* w) {
+        fprintf(log_,"startup_d3d8_present_request=source_rect:0x%08X destination_rect:0x%08X window:0x%08X dirty:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],scene_?"yes":"no");
+        if(scene_ || recording_on_ || w[5] || (w[4] && w[4]!=focus_))return unsupported();
+        std::array<int32_t,4> source={0,0,640,480},destination=source;
+        if((w[2] && (w[2]<0x10000 || !cpu_.read(w[2],source.data(),sizeof(source)))) ||
+            (w[3] && (w[3]<0x10000 || !cpu_.read(w[3],destination.data(),sizeof(destination)))))return failure();
+        fprintf(log_,"startup_d3d8_present_rect=source:%d,%d,%d,%d destination:%d,%d,%d,%d\n",source[0],source[1],source[2],source[3],destination[0],destination[1],destination[2],destination[3]);
+        if(!d3d8_present::full_rect(source,640,480) || !d3d8_present::full_rect(destination,640,480))return unsupported();
+        auto* back=find(back_);
+        if(!back || back->locked || back->width!=640 || back->height!=480 || back->format!=22)return failure();
+        if(present_calls_>=8){fprintf(log_,"startup_d3d8_present_scope_limit=frames:%u maximum:8\n",present_calls_);return unsupported();}
+        const d3d8_quad::Image image={back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,back->format};
+        if(!presenter_.present(image))return failure();
+        ++present_calls_;
+        th075::capture_presented_exe_frame(back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,present_calls_,log_);
+        fprintf(log_,"startup_d3d8_present=executed frame:%u backbuffer:0x%08X\n",present_calls_,back_);
+        return serviced();
+    }
     StartupServiceResult draw(const uint32_t* w) {
         fprintf(log_,"startup_d3d8_draw_request=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
         for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
@@ -426,7 +446,7 @@ private:
                 render_[7]==0 && render_[8]==3 && render_[9]==2 && render_[22]==1 &&
                 render_[26]==0 && render_[28]==0 && render_[29]==0 && render_[137]==0 && render_[168]==15 && render_[171]==1 &&
                 (!render_[15] || render_[25]==7) &&
-                (!render_[27] || (render_[19]==5 && render_[20]==6)) &&
+                (!render_[27] || (render_[19]==5 && render_[20]==6) || (render_[19]==2 && render_[20]==1)) &&
                 stage_[1]==4 && stage_[2]==2 && (stage_[3]==0 || stage_[3]==1) &&
                 stage_[4]==4 && stage_[5]==2 && (stage_[6]==0 || stage_[6]==1) &&
                 stage_[11]==0 && stage_[13]==1 && stage_[14]==1 && stage_[16]==1 && stage_[17]==1 && stage_[18]<=1;
@@ -441,11 +461,12 @@ private:
                 const d3d8_quad::Image image={texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
                 const d3d8_quad::Target output={target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,target->format};
                 const d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
-                const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0};
+                const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1};
                 d3d8_quad::Stats stats;
                 if(d3d8_quad::rasterize(quad,image,output,view,settings,stats)==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
                     fprintf(log_,"startup_d3d8_draw=executed renderer:point_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
                     fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
                     const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
                     if(stats.covered){probe("first",stats.first);probe("last",stats.last);}
@@ -459,6 +480,7 @@ private:
         return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
+    ExePresenter presenter_;uint32_t present_calls_=0;
     struct StateBlock {
         std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};
         std::array<bool,256> render_mask{};std::array<bool,32> stage_mask{};

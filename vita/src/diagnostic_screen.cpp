@@ -9,9 +9,6 @@
 #include <map>
 #include <string>
 #include "pe_resources.h"
-#include "th075_assets.h"
-#include "music_probe.h"
-#include "dat_browser.h"
 #include "exe_draw_preview.h"
 
 namespace {
@@ -79,7 +76,7 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
     auto* pixels=static_cast<uint32_t*>(base);
     for(unsigned i=0;i<960u*544u;++i) pixels[i]=0xFF20130D;
     text(pixels,40,38,"TOUHOU 7.5 VITA",0xFFF3EEE8,4);
-    text(pixels,40,85,"ITERATION 72 - FIRST EXE QUAD",0xFFE9C975);
+    text(pixels,40,85,"ITERATION 73 - EXE PRESENT",0xFFE9C975);
     if(th075::icon_preview.size()==1024) {
         for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x) {
             const uint32_t color=th075::icon_preview[y*32+x];
@@ -89,11 +86,6 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         fprintf(log,"screen_original_exe_icon=decoded_resource_presented\n");
     }
     const uint32_t good=0xFF99D877,bad=0xFF8080FF,neutral=0xFFC2B5AB;
-    if(th075::title_preview.size()==640u*480u) {
-        for(unsigned y=0;y<180;++y)for(unsigned x=0;x<240;++x)
-            pixels[(228+y)*960+700+x]=th075::title_preview[(y*480/180)*640+x*640/240];
-        fprintf(log,"screen_original_dat_title=decoded_frame_preview_presented\n");
-    }
     text(pixels,40,137,result==0?"RESULT: STARTUP CHECKPOINT PASS":"RESULT: FAIL - CHECK LOG",result==0?good:bad);
     const char* labels[]={"SHA256","X86 CPU","IAT BRIDGE","HEAP","FILE READ","TEB FS","TLS","PROCESS"};
     const char* keys[]={"game_sha256_result","dynarec_smoke_result","import_smoke_result",
@@ -119,11 +111,10 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
             (values.count("startup_final_eip")?values["startup_final_eip"]:"SEE LOG");
     text(pixels,40,408,"STOP: "+boundary,neutral,2);
     text(pixels,40,437,"GAME BOOT: NOT YET VERIFIED",neutral,2);
-    text(pixels,700,420,"BGM FROM DAT",neutral,2);
     std::string displayed_log=log_path;
     for(char& ch:displayed_log)if(ch>='a' && ch<='z')ch=char(ch-'a'+'A');
     text(pixels,40,467,"LOG: "+displayed_log,neutral,2);
-    text(pixels,40,500,"TRIANGLE RANDOM - SQUARE RESTART - X EXIT",0xFFF3EEE8,2);
+    text(pixels,40,500,"PRESS X TO EXIT",0xFFF3EEE8,2);
     SceDisplayFrameBuf fb={}; fb.size=sizeof(fb);fb.base=base;fb.pitch=960;
     fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
     // r1's immediate update was rejected by hardware (0x80290006).
@@ -143,63 +134,23 @@ void show_diagnostic_screen(const char* log_path,int result,FILE* log) {
         fprintf(log,"screen_result=%s\n",wait_rc>=0&&matches?"presented":"confirmation_failed");
     } else fprintf(log,"screen_result=failed\n");
     if(rc>=0) {
-        th075::DatBrowser browser;
-        const bool browser_ready=browser.open(log);
-        bool showing_exe_draw=th075::exe_draw_ready;
-        const auto draw_resource=[&]() {
-            sceDisplayWaitVblankStart();
-            if(showing_exe_draw)th075::draw_exe_snapshot(pixels);
-            else browser.draw(pixels);
-            for(unsigned y=202;y<216;++y)for(unsigned x=690;x<950;++x)pixels[y*960+x]=0xFF20130D;
-            std::string resource=showing_exe_draw?("EXE DRAW CAPTURE "+std::to_string(th075::exe_draw_width)+"X"+std::to_string(th075::exe_draw_height)):(browser_ready?browser.label():"DAT UNAVAILABLE");
-            for(auto& c:resource)if(c=='\\')c='/';
-            text(pixels,690,202,resource,neutral,1);
-            text(pixels,690,445,"CIRCLE RANDOM DAT",neutral,2);
-            text(pixels,690,464,"LEFT RIGHT FRAME",neutral,2);
-            text(pixels,690,483,"START EXPORT",neutral,2);
-        };
-        draw_resource();
-        if(showing_exe_draw)fprintf(log,"screen_exe_draw_snapshot=presented scope:first_quad_not_guest_present\n");
-        th075::MusicProbe music;
-        music.start(log);
-        bool released=false,square_released=false,triangle_released=false;
-        uint32_t previous_buttons=SCE_CTRL_CIRCLE|SCE_CTRL_LEFT|SCE_CTRL_RIGHT|SCE_CTRL_START;
+        sceDisplayWaitVblankStart();
+        if(th075::exe_draw_ready) {
+            th075::draw_exe_snapshot(pixels);
+            text(pixels,690,202,th075::exe_present_frames?"EXE PRESENT CAPTURE":"EXE DRAW CAPTURE",neutral,1);
+            fprintf(log,"screen_exe_draw_snapshot=presented scope:%s\n",th075::exe_present_frames?"guest_present_backbuffer":"first_quad_not_guest_present");
+        } else text(pixels,690,202,"EXE CAPTURE UNAVAILABLE",neutral,1);
+        text(pixels,690,420,"PRESENT FRAMES "+std::to_string(th075::exe_present_frames)+"/8",neutral,2);
+        text(pixels,690,445,"EXE ONLY",neutral,2);
+        bool released=false;
         const char* exit_reason="cross";
-        std::string previous_label;
         for(;;) {
             SceCtrlData pad={};
             if(sceCtrlPeekBufferPositive(0,&pad,1)<0) { exit_reason="controller_error";break; }
             if(!(pad.buttons&SCE_CTRL_CROSS)) released=true;
             if(released&&(pad.buttons&SCE_CTRL_CROSS)) { exit_reason="cross";break; }
-            const uint32_t pressed=pad.buttons&~previous_buttons;previous_buttons=pad.buttons;
-            bool redraw=false;
-            if(browser_ready && (pressed&SCE_CTRL_CIRCLE)){browser.random(log);redraw=true;}
-            if(browser_ready && (pressed&SCE_CTRL_RIGHT)){browser.frame(1,log);redraw=true;}
-            if(browser_ready && (pressed&SCE_CTRL_LEFT)){browser.frame(-1,log);redraw=true;}
-            if(browser_ready && (pressed&SCE_CTRL_START)){
-                // Export the DAT visible in the panel, including when leaving
-                // the initial EXE snapshot. The snapshot is not a DAT export.
-                showing_exe_draw=false;draw_resource();browser.export_current(log);
-                redraw=false;
-            }
-            if(redraw){showing_exe_draw=false;draw_resource();}
-            if(!(pad.buttons&SCE_CTRL_SQUARE))square_released=true;
-            if(square_released&&(pad.buttons&SCE_CTRL_SQUARE)){
-                square_released=false;music.replay(log);
-            }
-            if(!(pad.buttons&SCE_CTRL_TRIANGLE))triangle_released=true;
-            if(triangle_released&&(pad.buttons&SCE_CTRL_TRIANGLE)){
-                triangle_released=false;music.change(log);
-            }
-            const std::string label=music.label();
-            if(label!=previous_label){
-                sceDisplayWaitVblankStart();
-                for(unsigned y=420;y<438;++y)for(unsigned x=700;x<940;++x)pixels[y*960+x]=0xFF20130D;
-                text(pixels,700,420,label,neutral,2);previous_label=label;
-            }
             sceKernelDelayThread(16000);
         }
-        music.stop(log);
         fprintf(log,"screen_exit=%s\n",exit_reason);
         // Retain the allocation until process exit if detaching is refused;
         // never free a buffer that may still be scanned out by the display.

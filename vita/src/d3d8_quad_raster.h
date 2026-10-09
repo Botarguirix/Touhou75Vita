@@ -35,6 +35,7 @@ struct Viewport { uint32_t x, y, width, height; };
 struct Settings {
     uint32_t alpha_ref=1;
     bool alpha_test=true, alpha_blend=true;
+    bool replace_blend=false; // D3DBLEND_ONE/ZERO with ADD.
 };
 enum class Result { Unsupported, Rendered };
 enum class Reject { None, Dimensions, Format, Storage, Alias, Vertex, Quad, Settings };
@@ -136,7 +137,7 @@ inline uint16_t wrapped_point(double coordinate,uint32_t extent) {
 // The caller guarantees depth disabled, no shader/fog/lighting, solid fill,
 // no culling, MODULATE(TEXTURE,DIFFUSE/CURRENT) at stage zero, WRAP U/V,
 // POINT min/mag filtering, and only one texture level. Alpha comparison is
-// GREATEREQUAL; enabled blending is SRCALPHA/INVSRCALPHA with ADD operation.
+// GREATEREQUAL; enabled blending is SRCALPHA/INVSRCALPHA or ONE/ZERO, ADD.
 // Destinations are A8R8G8B8 or X8R8G8B8. The latter stores X=0xFF on writes;
 // it has no destination-alpha channel, so only the blended RGB is retained.
 inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
@@ -205,7 +206,7 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
             uint32_t after=before;
             if(settings.alpha_test && (color>>24)<settings.alpha_ref)++stats.alpha_rejected;
             else {
-                after=settings.alpha_blend?detail::blend(color,before):color;
+                after=settings.alpha_blend && !settings.replace_blend?detail::blend(color,before):color;
                 // X8 has no stored alpha result. Source alpha still governs
                 // the alpha test and RGB blend; rejected pixels are untouched.
                 // Hashes/probes retain the actual DWORD before and after,

@@ -7,15 +7,16 @@
 #include <algorithm>
 
 namespace th075 {
-// A diagnostic snapshot of the first rendered EXE quad, not a guest Present.
+// Diagnostic copy: first rendered quad until a native guest Present succeeds.
 inline std::array<uint32_t,260*180> exe_draw_preview{};
 inline bool exe_draw_ready=false;
 inline uint32_t exe_draw_width=0,exe_draw_height=0;
+inline uint32_t exe_present_frames=0;
 
 inline void capture_first_exe_quad(const uint8_t* bytes,size_t size,
     uint32_t width,uint32_t height,uint32_t pitch,uint32_t x0,uint32_t y0,
-    uint32_t view_width,uint32_t view_height,FILE* log) {
-    if(exe_draw_ready || !bytes || !view_width || !view_height ||
+    uint32_t view_width,uint32_t view_height,FILE* log,bool replace=false) {
+    if((exe_draw_ready && !replace) || !bytes || !view_width || !view_height ||
         uint64_t(x0)+view_width>width || uint64_t(y0)+view_height>height ||
         uint64_t(pitch)<uint64_t(width)*4 ||
         uint64_t(height-1)*pitch+uint64_t(width)*4>size)return;
@@ -32,7 +33,12 @@ inline void capture_first_exe_quad(const uint8_t* bytes,size_t size,
             0xFF000000u | ((argb&255u)<<16) | (argb&0xFF00u) | ((argb>>16)&255u);
     }
     exe_draw_width=view_width;exe_draw_height=view_height;exe_draw_ready=true;
-    fprintf(log,"startup_d3d8_draw_capture=ready viewport:%u,%u,%u,%u preview:260x180 scope:first_quad_rgb_not_present\n",x0,y0,view_width,view_height);
+    fprintf(log,"startup_d3d8_draw_capture=ready viewport:%u,%u,%u,%u preview:260x180 scope:%s\n",x0,y0,view_width,view_height,replace?"presented_backbuffer_rgb":"first_quad_rgb_not_present");
+}
+inline void capture_presented_exe_frame(const uint8_t* bytes,size_t size,
+    uint32_t width,uint32_t height,uint32_t pitch,uint32_t frame,FILE* log) {
+    capture_first_exe_quad(bytes,size,width,height,pitch,0,0,width,height,log,true);
+    exe_present_frames=frame;
 }
 inline void draw_exe_snapshot(uint32_t* target){
     if(!exe_draw_ready)return;

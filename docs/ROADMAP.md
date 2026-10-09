@@ -1,20 +1,22 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 72, version 01.76
+## Current checkpoint — iteration 73, version 01.77
 
-Hardware 71 serviced SetRect and texture binding and captured the first original
-logo quad at DrawPrimitiveUP. Random DAT selection and exports worked on Vita.
-Iteration 72 implements that bounded quad profile, with point sampling, alpha
-test/blend, real target writes and an initial diagnostic RGB snapshot.
-Physical validation of those writes is pending. Original Present, other draw
-profiles, guest audio mixing and gameplay remain pending.
+Hardware 72 executed the original logo quad, changed 223567 pixels and restored
+the backbuffer, depth and state. It stopped at the second quad's ONE/ZERO blend.
+Iteration 73 implements that blend and native Present for the complete 640×480
+client, with double buffering and scanout readback, limited to eight real frames.
+The diagnostic music player and sprite browser are removed from the build.
+Physical validation of the second draw and Present is pending. Other draw
+profiles, the continuous loop, guest audio mixing and gameplay remain pending.
 TH08-Web's renderer/mixer are useful adaptation references, with a different
-target and host ABI. See [scope/evidence](STATUS_ITERATION72.md) and
-[external research](RESEARCH_N0ZOM1Z0_ITERATION71.md).
+target and host ABI. See [scope/evidence](STATUS_ITERATION73.md),
+[EXE checklist](EXE_CHECKLIST_ITERATION73.md) and
+[decompiler/external research](RESEARCH_EXE_ITERATION73.md).
 
 | Next milestone | Current evidence / remaining work |
 |---|---|
-| First EXE pixels | Quad geometry and texture upload captured on hardware 71; renderer 72 compiled, pending hardware output/hash evidence. |
-| EndFrame and Present | Original D3DX closure identified: EndScene, restore targets, apply viewport state and release saved surfaces; next actual boundary must be recorded. Present remains unsupported. |
+| First EXE pixels | Hardware 72 confirmed coverage, writes, destination hash and visible logo. |
+| EndFrame and Present | EndFrame restoration confirmed on hardware 72; ONE/ZERO and native Present compiled in 73, six PC check groups passed, physical evidence pending. |
 | Original menu | Complete required draw/state profiles and connect the game's backbuffer to Vita scanout. |
 | Interactive scene | Continuous scheduling, guest input and DirectSound mixing alongside rendering. |
 | Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
