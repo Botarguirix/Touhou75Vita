@@ -170,6 +170,66 @@ int main(){
         puts("PASS canonical GetFormat, stopped status and unsupported reserved Play arguments");
     }
     {
+        Fixture f;f.pcm(Fixture::format);constexpr unsigned size=1048576,chunk=131072;
+        const auto b=f.allocate(size);
+        // The original refill uses ENTIREBUFFER but writes only 128 KiB at
+        // its requested offset. The returned full lock wraps at the ring end.
+        for(unsigned segment=0;segment<8;++segment){
+            const unsigned offset=segment*chunk;
+            const unsigned requested=segment==0?0:chunk; // ignored for flag 2
+            assert(f.buffer(b,11,{offset,requested,Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,2})==0);
+            const auto p=f.cpu.read_u32(Fixture::out+16),n=f.cpu.read_u32(Fixture::out+20),
+                p2=f.cpu.read_u32(Fixture::out+24),n2=f.cpu.read_u32(Fixture::out+28);
+            assert(p==DirectSoundBootstrap::pcm_staging+offset && n==size-offset);
+            assert(p2==(offset?DirectSoundBootstrap::pcm_staging:0) && n2==offset);
+            for(unsigned i=0;i<size;++i)
+                assert(f.cpu.bytes[DirectSoundBootstrap::pcm_staging+i]==(i<offset?uint8_t(i/chunk+1):0));
+            std::memset(f.cpu.hostptr(p,chunk),int(segment+1),chunk);
+            assert(f.buffer(b,19,{p,n,p2,n2})==0);
+        }
+        assert(f.buffer(b,11,{0,1,Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,2})==0);
+        for(unsigned i=0;i<size;++i)assert(f.cpu.bytes[DirectSoundBootstrap::pcm_staging+i]==i/chunk+1);
+        assert(f.buffer(b,19,{DirectSoundBootstrap::pcm_staging,size,0,0})==0);f.release(b);
+        puts("PASS ENTIREBUFFER preserves all eight original-sized refill offsets, split spans and untouched PCM");
+    }
+    {
+        Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(4096);
+        for(const auto& args:std::initializer_list<std::array<uint32_t,3>>{{1,16,2},{4096,16,2},{0xFFFFFFFCu,16,2},{0,16,1},{0,16,3},{0,0,0},{0,4097,0}}){
+            std::memset(f.cpu.hostptr(Fixture::out+16,16),0xA5,16);
+            std::memset(f.cpu.hostptr(DirectSoundBootstrap::pcm_staging,4096),0x5A,4096);
+            f.buffer(b,11,{args[0],args[1],Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,args[2]},StartupServiceResult::Unsupported);
+            for(unsigned i=0;i<16;++i)assert(f.cpu.bytes[Fixture::out+16+i]==0xA5);
+            for(unsigned i=0;i<4096;++i)assert(f.cpu.bytes[DirectSoundBootstrap::pcm_staging+i]==0x5A);
+            assert(f.sound.refill_dispatch_safe());
+        }
+        f.release(b);puts("PASS invalid lock offsets, alignment, sizes and flags stop before staging or pointer writes");
+    }
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format,2,16,48000);
+        constexpr unsigned size=8192,chunk=1024;const auto b=f.allocate(size);
+        for(unsigned segment=0;segment<8;++segment){
+            const unsigned offset=segment*chunk;
+            assert(f.buffer(b,11,{offset,chunk,Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,2})==0);
+            const auto p=f.cpu.read_u32(Fixture::out+16),n=f.cpu.read_u32(Fixture::out+20),
+                p2=f.cpu.read_u32(Fixture::out+24),n2=f.cpu.read_u32(Fixture::out+28);
+            for(unsigned i=0;i<chunk;i+=4){
+                const uint16_t left=uint16_t(1000+segment),right=uint16_t(-int(1000+segment));
+                f.cpu.bytes[p+i]=uint8_t(left);f.cpu.bytes[p+i+1]=uint8_t(left>>8);
+                f.cpu.bytes[p+i+2]=uint8_t(right);f.cpu.bytes[p+i+3]=uint8_t(right>>8);
+            }
+            assert(f.buffer(b,19,{p,n,p2,n2})==0);
+        }
+        assert(f.buffer(b,13,{size-chunk})==0 && f.buffer(b,12,{0,0,1})==0);
+        native_stub::wait_block();assert(f.buffer(b,18)==0);
+        native_stub::finish();f.sound.shutdown_playback();
+        for(unsigned frame=0;frame<1024;++frame){
+            const unsigned segment=((size-chunk+frame*4)%size)/chunk;
+            assert(native_stub::captured[0][frame*2]==int(1000+segment));
+            assert(native_stub::captured[0][frame*2+1]==-int(1000+segment));
+        }
+        f.release(b);puts("PASS shipping native output captures distinct offset refills across the loop seam without silent samples");
+    }
+    {
         native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(1048576);
         assert(f.buffer(b,11,{0,524288,Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,2})==0);
         const auto p=f.cpu.read_u32(Fixture::out+16);assert(f.cpu.read_u32(Fixture::out+20)==1048576);

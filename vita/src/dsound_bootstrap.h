@@ -304,14 +304,19 @@ private:
         }else if(slot==11){
             for(unsigned i=2;i<=8;++i)fprintf(log_,"startup_dsound_lock_arg%u=0x%08X\n",i-2,w[i]);
             if(locked_handle_ || (w[8]!=0 && w[8]!=2))return unsupported();
-            const uint32_t offset=w[8]==2?0:w[2],bytes=w[8]==2?uint32_t(b.bytes.size()):w[3];
+            // ENTIREBUFFER ignores the byte count, not the caller's offset.
+            // Original refill code writes into pointer 1 at successive 128 KiB
+            // offsets. Returning the ring start here overwrites earlier music.
+            // https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mt708932(v=vs.85)
+            const uint32_t offset=w[2],bytes=w[8]==2?uint32_t(b.bytes.size()):w[3];
             if(offset>=b.bytes.size() || !bytes || bytes>b.bytes.size() || offset%b.align || bytes%b.align)return unsupported();
             const uint32_t first=std::min(bytes,uint32_t(b.bytes.size())-offset),second=bytes-first;
             if(second && (!w[6] || !w[7]))return failure();
             if(!cpu_.write(pcm_staging,b.bytes.data(),b.bytes.size()) || !write(w[4],pcm_staging+offset) || !write(w[5],first) ||
                 (w[6] && !write(w[6],second?pcm_staging:0u)) || (w[7] && !write(w[7],second)))return failure();
             locked_handle_=w[1];lock_spans_={pcm_staging+offset,first,second?pcm_staging:0u,second};
-            fprintf(log_,"startup_dsound_pcm_lock=handle:0x%08X bytes:%u first:%u second:%u\n",w[1],bytes,first,second);
+            fprintf(log_,"startup_dsound_pcm_lock=handle:0x%08X bytes:%u first:%u second:%u offset:%u flags:0x%08X requested_bytes:%u ptr1:0x%08X ptr2:0x%08X\n",
+                w[1],bytes,first,second,offset,w[8],w[3],lock_spans_[0],lock_spans_[2]);
         }else if(slot==19){
             if(locked_handle_!=w[1] || !std::equal(lock_spans_.begin(),lock_spans_.end(),w+2))return failure();
             if(!cpu_.read(pcm_staging,b.bytes.data(),b.bytes.size()))return failure();

@@ -30,7 +30,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration84-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration85-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -96,7 +96,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration84\n");
+        fprintf(report_, "watchdog_revision=iteration85\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -755,7 +755,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     // Hardware 74 reached this infinite frame-event wait after a genuine
     // Present. Pause main with its unexecuted call intact, run the original
     // timer worker after its real timeout, then retry the same event contract.
-    for(unsigned tick=0;tick<startup_limits::frame_wait_resumes && stopped && !limit && !service_failed && worker_ok;++tick) {
+    for(unsigned tick=0;stopped && !limit && !service_failed && worker_ok;++tick) {
         const uint32_t trap=cpu.reg(d2rt::R_EIP),esp=cpu.reg(d2rt::R_ESP);
         uint32_t wait[3]{};
         if(trap<kTrap || (trap-kTrap)%16 || (trap-kTrap)/16>=image.imports().size() ||
@@ -769,6 +769,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
            worker.event!=0x00AB2000 || worker.timeout_ms!=16 ||
            !cpu.read(0x0068BE34,&timer_event,4) || timer_event!=worker.event ||
            !cpu.read(0x0066C23C,&period,4) || period!=worker.timeout_ms)break;
+        if(tick>=startup_limits::frame_wait_resumes) {
+            fprintf(log,"startup_frame_wait_stop=resume_scope_limit resumes:%u maximum:%u scope:observed_original_wait\n",
+                frame_wait_resumes,startup_limits::frame_wait_resumes);break;
+        }
         if(sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
             fprintf(log,"startup_frame_wait_stop=time_cap\n");break;
         }

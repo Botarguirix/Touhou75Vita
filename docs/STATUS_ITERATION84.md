@@ -104,3 +104,18 @@ nuevos Present/escena, contextos preservados, tiempos de dibujo y salida audio,
 cursores/uploads, siguiente frontera, memoria/shutdown y watchdog. Llegar al
 límite de 240 frames sigue siendo una comprobación acotada. Menú, controles,
 audio continuo y juego completo aún no están confirmados.
+
+## Resultado físico de la 84 (10 de octubre de 2026)
+
+239 Present y 757 dibujos, incluidos seis strips convexos. Raster/hashes:
+63,279 s de 104,133 s. 240 contextos main y 221 de despacho audio preservados;
+memoria gráfica 42896712 / 67108864 bytes. Paró al agotar 240 reanudaciones
+(la primera no presenta), en la espera infinita original. Otra imagen del
+opening visible. Los primeros 215 scanout y 593 hashes de dibujo coinciden
+con 83; desde el dibujo 594 el EXE envía coordenadas animadas diferentes.
+
+El usuario confirma progreso musical, pero entrecortado coincidiendo con
+carga CPU. 2170 bloques, 1048 silenciosos, máximo intervalo nativo 22131 us,
+cero intervalos mayores a dos bloques. Se halló un error del puente: 53 Lock
+ENTIREBUFFER con offset no cero se colocaron siempre al inicio del anillo.
+Corrección y próxima corrida: [iteración 85](STATUS_ITERATION85.md).

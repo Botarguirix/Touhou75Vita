@@ -1,56 +1,48 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 84, version 01.88
+## Current checkpoint — iteration 85, version 01.89
 
-Physical 83 reached 228 Present frames and 695 draws (465 LINEAR). All prior
-208 scanout hashes and first 397 draw hashes match 82. Those common drawings
-took 43.172 s versus 68.308 s; total raster/hashing took 60.435 s of 99.672 s.
-230 main wait contexts and 189 cooperative audio contexts were preserved.
-The new brown opening image was presented, with Japanese captions.
-The next DrawPrimitiveUP uses slightly inclined edges, failing the rectangular
-geometry contract before any writes. Graphics memory remains 42896712 / 64 MiB.
+Physical 84 reached 239 real Present and 757 draws, including six convex strips
+(1660196 covered pixels, 3.629 s). Total raster/hashing took 63.279 of 104.133 s.
+240 main-wait and 221 cooperative audio contexts were preserved. Graphics
+memory used/peak: 42896712 / 67108864 bytes; shutdown/watchdog valid.
+The run ended at the 240-resume limit, with one initial wait before Present.
 
-Original PCM lasted longer but was choppy; maximum CPU usage was reported.
-One Play, 44 active PCM uploads, 1613 blocks (34.411 s submitted), output/drain
-RC 0. Audio waits after the initial wake were median 138064 us, max 508982 us,
-request 80000 us. The 1 MiB ring spans about 5.94 s: lateness alone does not
-establish stale data or native underruns. Output-clock telemetry is needed.
+First 215 scanout and 593 draw hashes match 83. Draw 594 receives different
+animated X coordinates from the EXE (-19.0383 vs -21.8174); later hashes are
+not comparable as fixed inputs. Portable renderer digests stay identical.
 
-84 adds strictly convex four-vertex strips as two triangles, affine UVs and
-integer pixel-center/top-left coverage. Shared-edge evaluation is canonical,
-no geometry is snapped, and rectangles retain their existing tables/digests.
-Concave/folded/degenerate strips, perspective and unowned profiles stop before
-writing. Exact raw vertex DWORDs are logged for future precise replay.
-Triangle filter precision is a software model; Windows comparison is pending.
-
-Native output timing reports submission intervals, blocking, mutex wait and
-inactive/silent blocks after join, without changing audio gain/rate/ring or
-adding diagnostic music. Subsequent worker lateness is separated from the
-first wait that predates Play. These are host-clock observations, not a native
-hardware underrun counter. Long native draws remain non-preemptible.
-
-77 portable groups, ASan/UBSan, -Werror, 500 oracle comparisons, 200000 bilinear
-comparisons, 1312 ownership calls and matching -O0/-O2 digests passed. VitaSDK
-and ZIP/SFO/PNG/SELF checks passed. Confirmed playability remains absent.
+Music progressed but was choppy with reported CPU load. Native delivery:
+2170 blocks, maximum interval 22131 us, no intervals over two blocks, 1048
+silent blocks, zero inactive blocks. Postinitial worker waits reached 687872 us.
+The timing data does not establish CPU starvation as the sole audible cause.
+53 ENTIREBUFFER refill locks used nonzero offsets that the bridge incorrectly
+replaced with zero. 85 fixes the offset and preserves the full split ring;
+[Microsoft contract](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mt708932(v=vs.85)).
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original startup/display | 228 real Present frames; 208 previous scanout hashes preserved. |
-| Resource ownership | 64 MiB graphic budget respected; sustained lifecycle pending. |
-| Original audio | Audible but choppy; measure native output gaps and silence. |
-| Opening graphics | Rectangles execute; inclined strips implemented, hardware confirmation pending. |
-| Performance | CPU raster dominates; measure new triangle cost and then plan native GPU acceleration. |
-| Interactive menu | Reach original scene and accept actual guest selections. |
-| Playable match | Controls, character logic/collisions, audio, round and menu return. |
+| Original startup/display | 239 Present, another opening image; extend original scene progression. |
+| Resource ownership | 64 MiB graphics budget respected; sustained lifecycle pending. |
+| Original PCM | Offset correction tested locally; physical silence/continuity pending. |
+| Opening graphics | Six convex strips now executed on Vita; Windows precision comparison pending. |
+| Performance | Raster dominates; design native GPU backend preserving filters/alpha/state. |
+| Interactive menu | Reach original scene and accept genuine guest selections. |
+| Playable match | Controls, character logic/collisions, audio, round and return to menu. |
 
-Limits: 240 real Present/waits, 130 s, watchdog 150 s, 2048 draws,
-384 Mi covered pixels, 1024 between-call audio dispatches and 64 CPU slices.
-The extra 30 seconds lets the geometry encountered at 99.672 s run within a
-bounded session. Memory and call budgets remain unchanged. PCM ends at the
-diagnostic stop. Checkpoint PASS is not a completion percentage or a playable
-game. User data and freshly decoded Alice LiveArea remain outside Git.
+Limits now: 360 Present, 361 original wait resumes, 180 s, watchdog 210 s,
+6144 draws, 768 Mi covered pixels, 1024 audio trap dispatches and 64 CPU slices.
+The initial wait is counted separately; original events/timeouts/scenes remain.
+Memory remains bounded independently. PCM ends when the diagnostic stops.
 
-See [status/package](STATUS_ITERATION84.md), [checks](EXE_CHECKLIST_ITERATION84.md)
+80 portable groups with ASan/UBSan and -Werror, 1312-call replay, 500 strip
+oracles and 200000 bilinear comparisons passed. The new offset regression
+fails with 84's header and passes with 85. POINT/LINEAR/triangle digests match
+-O0/-O2. VitaSDK and ZIP/SFO/PNG/SELF validations passed. Alice is freshly
+decoded from the user's DAT; user data/art/builds remain outside Git.
+
+Hardware 85, uninterrupted guest audio, menu and playability remain pending.
+[Status/package](STATUS_ITERATION85.md), [checks](EXE_CHECKLIST_ITERATION85.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.
