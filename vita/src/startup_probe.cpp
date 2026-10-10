@@ -30,7 +30,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration83-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration84-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -96,7 +96,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration83\n");
+        fprintf(report_, "watchdog_revision=iteration84\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -308,7 +308,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool priority_dispatch_requested = false;
     bool audio_created=false,audio_yield=false,worker_ok=true;
     unsigned audio_dispatches=0,audio_trap_dispatches=0;
-    uint64_t audio_max_lateness_us=0;
+    uint64_t audio_max_lateness_us=0,audio_running_lateness_us=0;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
@@ -562,7 +562,11 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 service_failed=true;fprintf(log,"startup_audio_trap_context=invalid_callframe\n");break;
             }
             const uint64_t elapsed=sceKernelGetProcessTimeWide()-audio_worker.wait_started_us;
-            audio_max_lateness_us=std::max(audio_max_lateness_us,elapsed-uint64_t(audio_worker.timeout_ms)*1000);
+            const uint64_t lateness=elapsed-uint64_t(audio_worker.timeout_ms)*1000;
+            audio_max_lateness_us=std::max(audio_max_lateness_us,lateness);
+            // The first blocked wait can predate Play by a long initialization
+            // interval. Report subsequent active scheduling separately.
+            if(audio_trap_dispatches)audio_running_lateness_us=std::max(audio_running_lateness_us,lateness);
             ++audio_trap_dispatches;++audio_dispatches;
             fprintf(log,"startup_audio_trap_yield=before_unexecuted_call trap:0x%08X return:0x%08X elapsed_us:%llu dispatch:%u\n",
                 cpu.reg(d2rt::R_EIP),words[0],(unsigned long long)elapsed,audio_trap_dispatches);
@@ -829,6 +833,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);
     fprintf(log,"startup_audio_trap_dispatches=%u maximum:%u max_lateness_us:%llu scope:between_main_calls_no_recursive_cpu_run\n",
         audio_trap_dispatches,startup_limits::audio_trap_dispatches,(unsigned long long)audio_max_lateness_us);
+    fprintf(log,"startup_audio_running_lateness_us=%llu scope:after_initial_trap_dispatch\n",
+        (unsigned long long)audio_running_lateness_us);
     fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
     fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());

@@ -1,55 +1,56 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 83, version 01.87
+## Current checkpoint — iteration 84, version 01.88
 
-Physical 82 executed 208 real Present frames and preserved 209 main contexts.
-Its first 203 scanout hashes match 81. There were 397 draws (167 LINEAR),
-using 42896712 graphics bytes within 64 MiB. Raster/hashing took 68.308 s;
-full-screen LINEAR calls reached 786 ms and a frame cycle took 4.338 s.
-The time cap stopped the run at 104.245 s; watchdog disarmed, final capture
-black, menu not reached.
+Physical 83 reached 228 Present frames and 695 draws (465 LINEAR). All prior
+208 scanout hashes and first 397 draw hashes match 82. Those common drawings
+took 43.172 s versus 68.308 s; total raster/hashing took 60.435 s of 99.672 s.
+230 main wait contexts and 189 cooperative audio contexts were preserved.
+The new brown opening image was presented, with Japanese captions.
+The next DrawPrimitiveUP uses slightly inclined edges, failing the rectangular
+geometry contract before any writes. Graphics memory remains 42896712 / 64 MiB.
 
-The user heard original music in 3–4 second segments repeated about 3–4 times.
-One Play produced 1191 accepted blocks (25.408 s submitted), output/drain RC 0.
-Six worker dispatches during frames produced two original stream refills.
-Actual audio-worker waits reached 3.852–4.288 s instead of the requested 80 ms.
-These delays can explain stale-ring repetition; continuity remains unverified.
+Original PCM lasted longer but was choppy; maximum CPU usage was reported.
+One Play, 44 active PCM uploads, 1613 blocks (34.411 s submitted), output/drain
+RC 0. Audio waits after the initial wake were median 138064 us, max 508982 us,
+request 80000 us. The 1 MiB ring spans about 5.94 s: lateness alone does not
+establish stale data or native underruns. Output-clock telemetry is needed.
 
-83 dispatches the original worker after elapsed timeouts between known main
-imports/COM calls, only with no guest critical section, WndProc callback or
-PCM Lock in flight. Cpu::run returns before switching context. Main registers,
-flags, FS/FPU, callframe and LastError are checked before retrying its untouched
-call. This is bounded cooperative scheduling, not general thread emulation.
-Long native calls or x86 stretches without imports can still delay audio.
+84 adds strictly convex four-vertex strips as two triangles, affine UVs and
+integer pixel-center/top-left coverage. Shared-edge evaluation is canonical,
+no geometry is snapped, and rectangles retain their existing tables/digests.
+Concave/folded/degenerate strips, perspective and unowned profiles stop before
+writing. Exact raw vertex DWORDs are logged for future precise replay.
+Triangle filter precision is a software model; Windows comparison is pending.
 
-LINEAR retains the previous double calculation for general weights. Exactly
-dyadic weights use an equivalent integer calculation; texel centers and equal
-neighbors avoid interpolation. No coefficients are quantized. LiveArea uses
-Alice's original frame 6 from selectchar.dat, freshly decoded with provenance;
-no earlier generated cover is reused.
+Native output timing reports submission intervals, blocking, mutex wait and
+inactive/silent blocks after join, without changing audio gain/rate/ring or
+adding diagnostic music. Subsequent worker lateness is separated from the
+first wait that predates Play. These are host-clock observations, not a native
+hardware underrun counter. Long native draws remain non-preemptible.
 
-66 portable groups, 200000 sample comparisons, ASan/UBSan, -Werror, a 1312-call
-ownership replay and matching POINT/LINEAR -O0/-O2 outputs passed. VitaSDK and
-package inspection passed. Runner/context timing, rendering acceleration and
-continuous music in physical 83 remain pending.
+77 portable groups, ASan/UBSan, -Werror, 500 oracle comparisons, 200000 bilinear
+comparisons, 1312 ownership calls and matching -O0/-O2 digests passed. VitaSDK
+and ZIP/SFO/PNG/SELF checks passed. Confirmed playability remains absent.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original loader, timer and display | 208 real frames, complete logo exit, 209 preserved contexts on 82. |
-| Resource lifetime and memory | Logo released and opening images uploaded; sustained lifecycle pending. |
-| Original audio/refill | Audible but repetitive on 82; timely original refills and continuity pending. |
-| Opening graphics | POINT/LINEAR rectangular profile executed; finish scene and compare Windows. |
-| Interactive menu | Reach original scene, measure timing and accept an actual guest selection. |
+| Original startup/display | 228 real Present frames; 208 previous scanout hashes preserved. |
+| Resource ownership | 64 MiB graphic budget respected; sustained lifecycle pending. |
+| Original audio | Audible but choppy; measure native output gaps and silence. |
+| Opening graphics | Rectangles execute; inclined strips implemented, hardware confirmation pending. |
+| Performance | CPU raster dominates; measure new triangle cost and then plan native GPU acceleration. |
+| Interactive menu | Reach original scene and accept actual guest selections. |
 | Playable match | Controls, character logic/collisions, audio, round and menu return. |
 
-Limits: 240 real frames/waits, 100 s, watchdog 120 s, 2048 draws,
-384 Mi covered pixels, 1024 audio dispatches between main calls and 64 CPU
-resume slices. The drawing budget covers the observed 28 calls per opening
-frame; graphics memory remains 64 MiB. PCM ends when the bounded run stops.
-Diagnostic music and DAT browsing remain removed. A checkpoint PASS does
-not establish playability or a completion percentage.
+Limits: 240 real Present/waits, 130 s, watchdog 150 s, 2048 draws,
+384 Mi covered pixels, 1024 between-call audio dispatches and 64 CPU slices.
+The extra 30 seconds lets the geometry encountered at 99.672 s run within a
+bounded session. Memory and call budgets remain unchanged. PCM ends at the
+diagnostic stop. Checkpoint PASS is not a completion percentage or a playable
+game. User data and freshly decoded Alice LiveArea remain outside Git.
 
-See [status/package](STATUS_ITERATION83.md), [checks](EXE_CHECKLIST_ITERATION83.md)
+See [status/package](STATUS_ITERATION84.md), [checks](EXE_CHECKLIST_ITERATION84.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.

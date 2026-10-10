@@ -186,6 +186,15 @@ int main(int argc,char** argv) {
         assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
         assert(f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28})==0);
         assert(th075::exe_draw_ready && th075::exe_draw_preview[(180-180)/2*260+10]==0xFF808080);
+        q[0].x=-.504439f;q[1].y=-.498f;q[2].x=-.505992f;q[3].y=479.502f;
+        assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
+        assert(f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28})==0);
+        std::fflush(f.log);std::rewind(f.log);std::string trace;char record[512];
+        while(std::fgets(record,sizeof(record),f.log))trace+=record;
+        assert(trace.find("startup_d3d8_draw_geometry=convex_triangle_strip")!=std::string::npos);
+        assert(trace.find("startup_d3d8_vertex_bits=0")!=std::string::npos);
+        std::fseek(f.log,0,SEEK_END);
+        puts("PASS shipping skewed triangle strip COM ABI and raw vertex-bit diagnostics");
         // The actual COM method must reject unknown/mixed filters without ABI changes.
         assert(f.dev(63,{0,16,3})==0);
         f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);

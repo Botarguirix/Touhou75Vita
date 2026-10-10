@@ -519,7 +519,8 @@ private:
             uint32_t hash=2166136261u;const auto* bytes=reinterpret_cast<const uint8_t*>(vertices.data());for(unsigned i=0;i<count*28;++i)hash=(hash^bytes[i])*16777619u;
             fprintf(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
             for(unsigned i=0;i<std::min(count,8u);++i){const auto* v=vertices.data()+i*7;float f[7]{};std::memcpy(f,v,28);
-                fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));}
+                fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));
+                fprintf(log_,"startup_d3d8_vertex_bits=%u x:%08X y:%08X z:%08X rhw:%08X color:%08X u:%08X v:%08X\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6]);}
             const bool profile=scene_ && !recording_on_ && w[2]==5 && w[3]==2 &&
                 render_[7]==0 && render_[8]==3 && render_[9]==2 && render_[22]==1 &&
                 render_[26]==0 && render_[28]==0 && render_[29]==0 && render_[137]==0 && render_[168]==15 && render_[171]==1 &&
@@ -547,6 +548,7 @@ private:
                     ++draw_calls_;draw_pixels_+=stats.covered;
                     fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:raster_and_pixel_hashes\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_);
                     fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    fprintf(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
                     fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
                     if(settings.filter==2)fprintf(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
                     fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");

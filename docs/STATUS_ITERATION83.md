@@ -94,3 +94,31 @@ no demuestra arranque completo, un menú interactivo ni un juego jugable.
 Referencias de contratos/decompiladores y proyectos previamente revisados:
 [investigación](RESEARCH_EXE_ITERATION73.md),
 [LINEAR](STATUS_ITERATION82.md), [checklist](EXE_CHECKLIST_ITERATION83.md).
+
+## Resultado físico de la 83 (10 de octubre de 2026)
+
+228 Present reales, 695 dibujos (465 LINEAR), 105233024 píxeles cubiertos,
+230 contextos de espera main y 189 contextos de despacho audio preservados.
+Los primeros 208 hashes scanout coinciden con 82; también los hashes de sus
+primeros 397 dibujos. Esos mismos dibujos consumieron 43,172 s frente a
+68,308 s en 82. Es una medición de estas corridas, no una tasa garantizada.
+El total del raster/hashes de 83 fue 60,435 s y la ejecución 99,672 s.
+
+Paró antes de DrawPrimitiveUP número 696, textura 00ABCAB8: sus cuatro vértices
+forman un strip ligeramente inclinado. La ruta rectangular lo rechazó sin
+escribir. La escena final ya muestra una imagen marrón del opening con texto
+japonés, no la captura negra anterior. No hay menú o combate confirmado.
+
+Un Play, 44 uploads PCM activos, 1613 bloques aceptados (34,411 s enviados),
+output/drain/join/delete/release RC 0. El usuario confirma que duró algo más,
+pero seguía entrecortada, y observó uso de CPU al máximo. Tras el primer wake,
+los despachos de audio tuvieron mediana 138064 us y máximo 508982 us frente
+a 80000 us solicitados. El primer wake incluye 55,094 s de inicialización
+previa a Play: no equivale a una pausa audible de 55 s.
+
+El anillo mide 1 MiB, aproximadamente 5,94 s a 44100 Hz estéreo/16 bits;
+estos retrasos por sí solos no demuestran que faltasen datos de música.
+No se registraron intervalos de salida nativa en 83: continuidad y causa de
+los cortes siguen pendientes. El 1 FPS de la foto de resultados no mide
+por sí solo el FPS del EXE. Watchdog desarmado y memoria gráfica 42896712
+de 67108864 bytes. Logs/foto completos archivados fuera de Git.

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <limits>
 
-// Owned software path for the axis-aligned, pre-transformed four-vertex strip
+// Owned software path for the convex, pre-transformed four-vertex strip
 // observed in the original TH075 startup. The caller must first check the FVF,
 // scene, stage and render state profile; this helper is not a general renderer.
 // Pixel centers are integer positions, and right/bottom edges are excluded.
@@ -59,6 +59,7 @@ struct Stats {
         hash_source=2166136261u;
     Probe first{}, last{};
     uint32_t linear_exact=0,linear_constant=0,linear_reference=0;
+    bool triangle_strip=false;
 };
 
 inline const char* reject_name(Reject r) {
@@ -182,10 +183,144 @@ inline uint32_t bilinear_exact(uint32_t a,uint32_t b,uint32_t c,uint32_t d,
     }
     return color;
 }
+
+// Shared sampling/blending/hash path. Geometry only supplies wrapped UV axes.
+// Keep the refactor in the native pixel loop: ARM -O2 otherwise outlined this
+// many-argument helper, adding a call and stack arguments to every pixel.
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+inline void shade(uint32_t x,uint32_t y,const LinearAxis& ax,const LinearAxis& ay,
+    const uint8_t* source_row,const uint8_t* next_row,uint8_t* target_row,
+    const Image& source,const Target& target,const Settings& settings,
+    unsigned bpp,uint32_t diffuse,Stats& stats) {
+    uint32_t texel=sample(source_row+size_t(ax.first)*bpp,source.format);
+    if(settings.filter==2) {
+        if(ax.exact_weight==0 && ay.exact_weight==0)++stats.linear_exact;
+        else {
+            const uint32_t b=sample(source_row+size_t(ax.second)*bpp,source.format),
+                c=sample(next_row+size_t(ax.first)*bpp,source.format),
+                d=sample(next_row+size_t(ax.second)*bpp,source.format);
+            if(texel==b && texel==c && texel==d)++stats.linear_constant;
+            else if(ax.exact_weight!=0xFFFFFFFFu && ay.exact_weight!=0xFFFFFFFFu) {
+                texel=bilinear_exact(texel,b,c,d,ax.exact_weight,ay.exact_weight);
+                ++stats.linear_exact;
+            }else {
+                texel=bilinear(texel,b,c,d,ax.weight,ay.weight);
+                ++stats.linear_reference;
+            }
+        }
+    }
+    const uint32_t color=modulate(texel,diffuse),
+        before=load32(target_row+size_t(x)*4);
+    uint32_t after=before;
+    if(settings.alpha_test && (color>>24)<settings.alpha_ref)++stats.alpha_rejected;
+    else {
+        after=settings.alpha_blend && !settings.replace_blend?blend(color,before):color;
+        // X8 has no stored alpha result. Source alpha still governs
+        // the alpha test and RGB blend; rejected pixels are untouched.
+        // Hashes/probes retain the actual DWORD before and after,
+        // including normalization of an existing undefined X byte.
+        if(target.format==22)after|=0xFF000000u;
+        store32(target_row+size_t(x)*4,after);
+        ++stats.written;
+        if(after!=before)++stats.changed;
+    }
+    const Probe probe{x,y,ax.first,ay.first,color,before,after};
+    if(!stats.covered)stats.first=probe;
+    stats.last=probe;
+    ++stats.covered;
+    stats.hash_source=hash(stats.hash_source,color);
+    stats.hash_before=hash(stats.hash_before,before);
+    stats.hash_after=hash(stats.hash_after,after);
+}
+
+struct Edge {
+    double x,y,dx,dy;
+    bool reverse,top_left;
+    double at(double px,double py)const {
+        // Both triangles evaluate their common edge from the same canonical
+        // endpoints, then negate. No tolerance or snapping opens a seam.
+        const double value=dx*(py-y)-dy*(px-x);
+        return reverse?-value:value;
+    }
+    bool inside(double value)const {return value>0 || (value==0 && top_left);}
+};
+inline Edge edge(const Vertex (&v)[4],unsigned a,unsigned b) {
+    const double dx=double(v[b].x)-v[a].x,dy=double(v[b].y)-v[a].y;
+    const bool reverse=a>b;const unsigned lo=std::min(a,b),hi=std::max(a,b);
+    return {v[lo].x,v[lo].y,double(v[hi].x)-v[lo].x,
+        double(v[hi].y)-v[lo].y,reverse,dy<0 || (dy==0 && dx>0)};
+}
+struct Triangle {
+    const Vertex *a,*b,*c;
+    Edge ab,bc,ca;
+    double area,inverse_area;
+    bool uv(double x,double y,double& u,double& v)const {
+        const double e0=ab.at(x,y),e1=bc.at(x,y),e2=ca.at(x,y);
+        if(!ab.inside(e0) || !bc.inside(e1) || !ca.inside(e2))return false;
+        const double wb=e2*inverse_area,wc=e0*inverse_area;
+        u=double(a->u)+(double(b->u)-a->u)*wb+(double(c->u)-a->u)*wc;
+        v=double(a->v)+(double(b->v)-a->v)*wb+(double(c->v)-a->v)*wc;
+        return true;
+    }
+};
+inline Triangle triangle(const Vertex (&v)[4],unsigned a,unsigned b,unsigned c) {
+    if(edge(v,a,b).at(v[c].x,v[c].y)<0)std::swap(b,c);
+    const auto ab=edge(v,a,b);
+    const double area=ab.at(v[c].x,v[c].y);
+    return {&v[a],&v[b],&v[c],ab,edge(v,b,c),edge(v,c,a),area,1/area};
+}
+inline Result triangles(const Vertex (&v)[4],const Image& source,
+    const Target& target,const Viewport& viewport,const Settings& settings,
+    unsigned bpp,Stats& stats) {
+    // Strip order 0,1,2,3 has boundary polygon 0,1,3,2. Limit support to
+    // strictly convex geometry: folded/concave/degenerate strips never write.
+    constexpr unsigned order[]={0,1,3,2};double winding=0;
+    for(unsigned i=0;i<4;++i) {
+        const double turn=edge(v,order[i],order[(i+1)%4]).at(
+            v[order[(i+2)%4]].x,v[order[(i+2)%4]].y);
+        if(!std::isfinite(turn) || turn==0 || (i && (turn>0)!=(winding>0)))
+            return reject(stats,Reject::Quad);
+        winding=turn;
+    }
+    const Triangle strip[]={triangle(v,0,1,2),triangle(v,2,1,3)};
+    for(const auto& tri:strip)if(!(tri.area>0) || !std::isfinite(1/tri.area))
+        return reject(stats,Reject::Quad);
+    stats.triangle_strip=true;
+    double left=v[0].x,right=left,top=v[0].y,bottom=top;
+    for(const auto& vertex:v) {
+        left=std::min(left,double(vertex.x));right=std::max(right,double(vertex.x));
+        top=std::min(top,double(vertex.y));bottom=std::max(bottom,double(vertex.y));
+    }
+    const double xb=std::max(std::ceil(left),double(viewport.x)),
+        xe=std::min(std::ceil(right),double(viewport.x+viewport.width)),
+        yb=std::max(std::ceil(top),double(viewport.y)),
+        ye=std::min(std::ceil(bottom),double(viewport.y+viewport.height));
+    if(xb>=xe || yb>=ye)return Result::Rendered;
+    // Pixel centers are integer screen coordinates. The shared diagonal is
+    // owned exactly once by the top-left edge rule. Hash order stays row-major.
+    for(uint32_t y=uint32_t(yb);y<uint32_t(ye);++y) {
+        uint8_t* target_row=target.bytes+size_t(y)*target.pitch;
+        for(uint32_t x=uint32_t(xb);x<uint32_t(xe);++x) {
+            double u=0,t=0;
+            if(!strip[0].uv(x,y,u,t) && !strip[1].uv(x,y,u,t))continue;
+            LinearAxis ax{},ay{};
+            if(settings.filter==2){ax=wrapped_linear(u,source.width);ay=wrapped_linear(t,source.height);}
+            else{ax.first=wrapped_point(u,source.width);ay.first=wrapped_point(t,source.height);}
+            const uint8_t* source_row=source.bytes+size_t(ay.first)*source.pitch;
+            const uint8_t* next_row=settings.filter==2?source.bytes+size_t(ay.second)*source.pitch:source_row;
+            shade(x,y,ax,ay,source_row,next_row,target_row,source,target,settings,bpp,v[0].diffuse,stats);
+        }
+    }
+    return Result::Rendered;
+}
 } // namespace detail
 
 // Validates every failure condition before the first destination write.
-// Accepted geometry: TL,TR,BL,BR with constant Z/diffuse, RHW=1, separable UVs.
+// Accepted geometry: a strictly convex four-vertex strip, constant Z/diffuse,
+// RHW=1. Exact TL/TR/BL/BR rectangles with separable UVs retain the axis tables;
+// other accepted strips use two triangles and affine UVs, with no snapping.
 // The caller guarantees depth disabled, no shader/fog/lighting, solid fill,
 // no culling, MODULATE(TEXTURE,DIFFUSE/CURRENT) at stage zero, WRAP U/V,
 // Matching POINT or LINEAR min/mag filters, and only one texture level.
@@ -231,7 +366,7 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
     if(tl.x!=bl.x || tr.x!=br.x || tl.y!=tr.y || bl.y!=br.y ||
         !(tl.x<tr.x) || !(tl.y<bl.y) || tl.u!=bl.u || tr.u!=br.u ||
         tl.v!=tr.v || bl.v!=br.v)
-        return detail::reject(stats,Reject::Quad);
+        return detail::triangles(vertices,source,target,viewport,settings,bpp,stats);
 
     const double left=tl.x,right=tr.x,top=tl.y,bottom=bl.y;
     const double x_begin=std::max(std::ceil(left),double(viewport.x)),
@@ -263,45 +398,8 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
             source.bytes+size_t(ys[y].second)*source.pitch:source_row;
         uint8_t* target_row=target.bytes+size_t(y)*target.pitch;
         for(uint32_t x=x0;x<x1;++x) {
-            uint32_t texel=detail::sample(source_row+size_t(xs[x].first)*bpp,source.format);
-            if(settings.filter==2) {
-                if(xs[x].exact_weight==0 && ys[y].exact_weight==0)++stats.linear_exact;
-                else {
-                    const uint32_t b=detail::sample(source_row+size_t(xs[x].second)*bpp,source.format),
-                        c=detail::sample(next_row+size_t(xs[x].first)*bpp,source.format),
-                        d=detail::sample(next_row+size_t(xs[x].second)*bpp,source.format);
-                    if(texel==b && texel==c && texel==d)++stats.linear_constant;
-                    else if(xs[x].exact_weight!=0xFFFFFFFFu && ys[y].exact_weight!=0xFFFFFFFFu) {
-                        texel=detail::bilinear_exact(texel,b,c,d,xs[x].exact_weight,ys[y].exact_weight);
-                        ++stats.linear_exact;
-                    }else {
-                        texel=detail::bilinear(texel,b,c,d,xs[x].weight,ys[y].weight);
-                        ++stats.linear_reference;
-                    }
-                }
-            }
-            const uint32_t color=detail::modulate(texel,tl.diffuse),
-                before=detail::load32(target_row+size_t(x)*4);
-            uint32_t after=before;
-            if(settings.alpha_test && (color>>24)<settings.alpha_ref)++stats.alpha_rejected;
-            else {
-                after=settings.alpha_blend && !settings.replace_blend?detail::blend(color,before):color;
-                // X8 has no stored alpha result. Source alpha still governs
-                // the alpha test and RGB blend; rejected pixels are untouched.
-                // Hashes/probes retain the actual DWORD before and after,
-                // including normalization of an existing undefined X byte.
-                if(target.format==22)after|=0xFF000000u;
-                detail::store32(target_row+size_t(x)*4,after);
-                ++stats.written;
-                if(after!=before)++stats.changed;
-            }
-            const Probe probe{x,y,xs[x].first,ys[y].first,color,before,after};
-            if(!stats.covered)stats.first=probe;
-            stats.last=probe;
-            ++stats.covered;
-            stats.hash_source=detail::hash(stats.hash_source,color);
-            stats.hash_before=detail::hash(stats.hash_before,before);
-            stats.hash_after=detail::hash(stats.hash_after,after);
+            detail::shade(x,y,xs[x],ys[y],source_row,next_row,target_row,
+                source,target,settings,bpp,tl.diffuse,stats);
         }
     }
     return Result::Rendered;

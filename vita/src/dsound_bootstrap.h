@@ -51,6 +51,10 @@ public:
         fprintf(log_,"startup_dsound_output_summary=blocks:%llu nonzero_samples:%llu first_fnv1a:0x%08X first_peak:%u max_fill_us:%llu rc:0x%08X drain_rc:0x%08X scope:original_guest_pcm_native_output audible:pending_user\n",
             (unsigned long long)output_blocks_,(unsigned long long)nonzero_samples_,first_hash_,first_peak_,
             (unsigned long long)max_fill_us_,unsigned(audio_error_.load()),unsigned(drain_rc_));
+        fprintf(log_,"startup_dsound_output_timing=max_submit_interval_us:%llu intervals_over_two_blocks:%llu max_native_call_us:%llu max_mutex_wait_us:%llu inactive_blocks:%llu silent_blocks:%llu block_period_us:21333 scope:host_clock_not_hardware_underrun_counter\n",
+            (unsigned long long)max_submit_interval_us_,(unsigned long long)late_submit_intervals_,
+            (unsigned long long)max_native_call_us_,(unsigned long long)max_mutex_wait_us_,
+            (unsigned long long)inactive_blocks_,(unsigned long long)silent_blocks_);
     }
     StartupServiceResult create(bool apartment_ready){
         uint32_t w[6]{};const uint32_t esp=cpu_.reg(d2rt::R_ESP);
@@ -133,6 +137,8 @@ private:
     dsound_pcm::Buffers buffers_{};unsigned buffer_count_=0;uint32_t pcm_used_=0,locked_handle_=0;
     std::mutex audio_mutex_;std::atomic<bool> quit_{false};std::atomic<int> audio_error_{0};
     SceUID audio_thread_=-1;uint64_t output_blocks_=0,nonzero_samples_=0,max_fill_us_=0;
+    uint64_t max_submit_interval_us_=0,late_submit_intervals_=0,max_native_call_us_=0,
+        max_mutex_wait_us_=0,inactive_blocks_=0,silent_blocks_=0;
     uint32_t first_hash_=0,first_peak_=0;int drain_rc_=0;
     static int output_entry(SceSize size,void* arg){
         DirectSoundBootstrap* self=nullptr;
@@ -141,18 +147,31 @@ private:
     }
     int output_loop(){
         alignas(64) std::array<dsound_pcm::Block,2> blocks{};unsigned index=0;
+        uint64_t last_submit=0;
         do {
             dsound_pcm::Commit pending{};
             const uint64_t before=sceKernelGetProcessTimeWide();
             {
                 std::lock_guard<std::mutex> guard(audio_mutex_);
+                max_mutex_wait_us_=std::max(max_mutex_wait_us_,sceKernelGetProcessTimeWide()-before);
                 const int rest=sceAudioOutGetRestSample(port_);
                 if(rest<0){audio_error_.store(rest,std::memory_order_release);break;}
                 dsound_pcm::positions(buffers_,unsigned(rest));
-                dsound_pcm::prepare(buffers_,blocks[index],pending);
+                if(!dsound_pcm::prepare(buffers_,blocks[index],pending))++inactive_blocks_;
             }
-            max_fill_us_=std::max(max_fill_us_,sceKernelGetProcessTimeWide()-before);
+            const uint64_t submit=sceKernelGetProcessTimeWide();
+            max_fill_us_=std::max(max_fill_us_,submit-before);
+            if(last_submit){
+                const uint64_t interval=submit-last_submit;
+                max_submit_interval_us_=std::max(max_submit_interval_us_,interval);
+                // Queue depth and native blocking affect this interval. It is
+                // a scheduling clue, not proof of an audio hardware underrun.
+                if(interval>uint64_t(2)*dsound_pcm::block_frames*1000000/dsound_pcm::output_hz)
+                    ++late_submit_intervals_;
+            }
+            last_submit=submit;
             const int rc=sceAudioOutOutput(port_,blocks[index].data());
+            max_native_call_us_=std::max(max_native_call_us_,sceKernelGetProcessTimeWide()-submit);
             if(rc<0){audio_error_.store(rc,std::memory_order_release);break;}
             {
                 std::lock_guard<std::mutex> guard(audio_mutex_);
@@ -165,6 +184,7 @@ private:
                 peak=std::max(peak,uint32_t(v<0?-int(v):int(v)));
             }
             if(!output_blocks_){first_hash_=hash;first_peak_=peak;}
+            if(!peak)++silent_blocks_;
             ++output_blocks_;index^=1;
         }while(!quit_.load(std::memory_order_acquire));
         drain_rc_=sceAudioOutOutput(port_,nullptr);
