@@ -1,45 +1,49 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 77, version 01.81
+## Current checkpoint — iteration 78, version 01.82
 
-Hardware 76 confirmed sixteen original Present calls and sixteen genuine
-timer/main continuations. Native set/vblank/query returned success with active
-scanout matching on every frame. The first eight hashes match hardware 75.
-The original fade completed at frame 11: state 2004 became 0004 and transition
-counter 66C240 became -1. Frames 11..16 show the fully visible logo.
-The bounded run stopped before Present 17, after 21.21 s, with preserved main
-contexts, no CPU fault/limit and a disarmed watchdog.
+Hardware 77 confirmed 203 original Present calls and 203 genuine timer/main
+continuations with preserved contexts. Every native set/vblank/query returned
+success and matched active scanout. The first sixteen hashes match hardware 76.
+The original logo reached age 181, requested state 220D and faded to black.
+Loading the next scene started, then CreateTexture(512x512, A8R8G8B8) returned
+8876017C with 33197384 bytes allocated against the 33554432-byte bridge budget.
+MessageBoxA followed. The run took 70.83 s; no CPU fault/limit, watchdog disarmed.
 
-The original logo update at 4255D0 increments a WORD at scene+0C after
-Present. It requests 220D when that age exceeds 180. The main then fades out
-the old scene and constructs scene 0D through branch 603498 / ctor 4275D0.
-These are static observations of the pinned Japanese EXE; that handoff has
-not run to completion on hardware. Sixteen frames cannot reach this condition.
+The released 1024x512 logo retained 2 MiB because the bridge's cached level
+surface held an extra parent reference. Iteration 78 forwards level-surface
+AddRef/Release to the parent texture, frees owned storage at the last reference,
+invalidates dead interfaces and reduces the allocation/device counts. Bindings,
+state blocks and render/depth targets retain their own references. Implicit
+device surfaces and final device destruction remain separate boundaries.
+The resource budget is still 32 MiB; valid live allocations are not evicted.
 
-Iteration 77 permits up to 240 real frames/waits, with a 75 s time cap and
-90 s watchdog. Native conversion/preview are reused only after full byte
-equality with the last confirmed source. Every guest draw, original counter
-update, timer signal, frame wait and native Present still executes.
-The new scene/age logs observe the original logic without changing it.
-512 draw calls and 128 Mi covered pixels bound the longer diagnostic run;
-the existing owned-resource allocation budget stays at 32 MiB.
-See [evidence and package](STATUS_ITERATION77.md),
-[checks](EXE_CHECKLIST_ITERATION77.md) and
+Thirty-four focused PC groups passed with ASan/UBSan. A replay of 1,286 ownership
+and state calls from physical 77 freed the logo and made the formerly rejected
+allocation succeed. It does not run the EXE, reproduce resource contents or
+exercise the Vita SDK. Native compilation and ZIP/SFO/PNG inspection passed.
+Physical validation of the combined execution and next scene is still needed.
+The cap is 240 real frames/waits and 100 s, with a separate 120 s watchdog;
+512 draws and 128 Mi covered pixels retain the rendering work bounds.
+
+The 77 cache prepared 22 native images and reused 181 byte-identical sources.
+Every original draw/update/wait/Present still ran. The median measured Present
+duration was 26229 us; the mixed runs are not a controlled performance benchmark.
+See [evidence and package](STATUS_ITERATION78.md),
+[checks](EXE_CHECKLIST_ITERATION78.md) and
 [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| First EXE pixels | Hardware 72/73 confirmed original logo and fade draws. |
-| Message/frame loop | Hardware 74 confirmed PeekMessage; 75 confirmed eight and 76 sixteen timer/main continuations with native Present. |
-| Logo handoff | Initial fade confirmed in 76. 77 targets the original 181-update condition and next scene; physical validation pending. |
-| Original menu | Capture the next scene's resource/service/draw contracts and compare with Windows. |
-| Interactive scene | Continuous timer/audio scheduling, keyboard/controller bridge and DirectSound mixing with rendering. |
-| Playable match | Character logic, collision, effects, timing, round completion and return to menu. |
+| Original EXE loading and first pixels | Confirmed on hardware, including real logo/fade quads. |
+| Timer, messages and presentation | 203 real continuations and confirmed native frames in 77. Continuous scheduler for every worker remains incomplete. |
+| Logo exit | Original age 181 and complete fade-out confirmed in 77. |
+| Next scene loading | Started in 77; 78 fixes the observed allocation failure. Next scene's draw/Present and resource contracts need hardware validation. |
+| Original interactive menu | Continue scene transitions, compare with Windows, accept a real guest input selection. |
+| Playable match | Continuous guest audio mixing, character logic, collision, effects, frame timing, round completion and return to menu. |
 
-23 focused portable groups passed with ASan/UBSan; renderer output matched
-between -O0 and -O2. VitaSDK compilation and ZIP/SFO/PNG inspection passed.
-The cache's native display behavior and speed still need a physical run.
-The auxiliary music player and sprite browser remain removed. A startup
-checkpoint PASS does not establish gameplay or a completion percentage.
+Auxiliary music and DAT browsing remain removed. MessageBoxA observes bounded
+raw text and stops; it does not supply an invented button result. A checkpoint
+PASS does not establish gameplay or a completion percentage.
 
 Historical observations follow below.
 

@@ -1,6 +1,7 @@
 #include "startup_probe.h"
 #include "startup_resume_policy.h"
 #include "startup_limits.h"
+#include "guest_string_probe.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
 #include "dinput8_bridge.h"
@@ -29,7 +30,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration77-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration78-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -95,7 +96,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration77\n");
+        fprintf(report_, "watchdog_revision=iteration78\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -401,6 +402,21 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
             fprintf(log, "startup_stop_import=%s\n", tag.c_str());
             return false;
+        }
+        if(imp.dll=="USER32.dll" && imp.name=="MessageBoxA") {
+            uint32_t args[4]{};
+            if(stack_range(esp,20) && c.read(esp+4,args,sizeof(args))) {
+                fprintf(log,"startup_messagebox=observed_only window:0x%08X text:0x%08X caption:0x%08X type:0x%08X\n",args[0],args[1],args[2],args[3]);
+                for(unsigned i=1;i<=2;++i) {
+                    const auto snapshot=guest_string_probe::observe(args[i],
+                        [&](uint32_t address,uint8_t& b){return c.read(address,&b,1);});
+                    fprintf(log,"startup_messagebox_%s=status:%s bytes:%u encoding:raw_CP932 hex:",
+                        i==1?"text":"caption",guest_string_probe::name(snapshot.status),unsigned(snapshot.length));
+                    for(size_t j=0;j<snapshot.length;++j)fprintf(log,"%02X",unsigned(snapshot.bytes[j]));
+                    fputc('\n',log);
+                }
+            }else fprintf(log,"startup_messagebox=observation_rejected_invalid_stack\n");
+            // No native dialog, button result or guest continuation is supplied.
         }
         // The original game entry calls 0x4239F0; its timer import returns to
         // 0x423A23. Validate both saved return addresses before recording entry.

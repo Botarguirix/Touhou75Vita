@@ -92,7 +92,8 @@ public:
             !cpu_.map(staging,staging_size,nullptr,d2rt::P_RW))return failure();
         uint32_t back=0,depth=0;
         if(!allocate(640,480,22,1,0,false,back) || !allocate(640,480,80,2,0,false,depth))return unsupported();
-        back_=target_=back;depth_=depth;++find(back)->refs;++find(depth)->refs;focus_=w[4];refs_=1;++root_refs_;
+        back_=target_=back;depth_=depth;++find(back)->refs;++find(depth)->refs;
+        find(back)->intrinsic=find(depth)->intrinsic=true;focus_=w[4];refs_=1;++root_refs_;
         if(!put(w[7],device))return failure();
         hr=0;
         fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
@@ -118,14 +119,13 @@ public:
         uint32_t value=0;StartupServiceResult result=serviced();
         if(s==0)return unsupported(); // exact IID support is a later boundary.
         if(s==1) {
-            uint32_t& refs=dev?refs_:r->refs;
-            if(refs==std::numeric_limits<uint32_t>::max())return failure();
-            value=++refs;
+            if(dev){if(refs_==0xFFFFFFFFu)return failure();value=++refs_;}
+            else if(!add_reference(*r,value))return failure();
         } else if(s==2) {
-            // Full device/resource destruction is an explicit boundary for now.
-            uint32_t& refs=dev?refs_:r->refs;
-            if(refs<=1)return unsupported();
-            value=--refs;
+            // Device destruction remains a boundary; owned resources can now
+            // reach zero. Texture-level surfaces forward their refs to parent.
+            if(dev){if(refs_<=1)return unsupported();value=--refs_;}
+            else if(!release_reference(*r,value))return failure();
         } else if(dev)result=device_call(s,w,value);
         else result=resource_call(tex,s,*r,w,value);
         if(result!=StartupServiceResult::Serviced)return result;
@@ -140,7 +140,7 @@ public:
 private:
     struct Resource {
         uint32_t handle=0,refs=0,width=0,height=0,format=0,usage=0,pool=0,pitch=0,surface=0,parent=0;
-        bool texture=false,locked=false;std::vector<uint8_t> bytes;
+        bool texture=false,locked=false,intrinsic=false,device_ref=false;std::vector<uint8_t> bytes;
     };
     static StartupServiceResult serviced(){return StartupServiceResult::Serviced;}
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
@@ -162,13 +162,66 @@ private:
         if(h<handles || (h-handles)%8 || (h-handles)/8>=count_)return nullptr;
         auto& r=resources_[(h-handles)/8];return r.refs?&r:nullptr;
     }
+    Resource* reference_owner(Resource& r){return r.parent?find(r.parent):&r;}
+    bool add_reference(Resource& r,uint32_t& value) {
+        auto* owner=reference_owner(r);
+        if(!owner || owner->refs==0xFFFFFFFFu)return false;
+        value=++owner->refs;
+        fprintf(log_,"startup_d3d8_ref=add object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
+        return true;
+    }
+    bool can_drop(Resource& r) {
+        auto* owner=reference_owner(r);
+        return owner && owner->refs && (owner->refs>1 ||
+            (!owner->intrinsic && !owner->locked && owner->bytes.size()<=used_ &&
+             (!owner->device_ref || refs_>1)));
+    }
+    bool pinned(uint32_t h) {
+        const auto* target=find(target_);const auto* depth=find(depth_);
+        if(bound_texture_==h || (recording_on_ && recording_.texture_mask && recording_.texture==h) ||
+            (target && (target->handle==h || target->parent==h)) ||
+            (depth && (depth->handle==h || depth->parent==h)))return true;
+        for(const auto& block:state_blocks_)if(block.alive && block.texture_mask && block.texture==h)return true;
+        return false;
+    }
+    bool release_reference(Resource& r,uint32_t& value) {
+        auto* owner=reference_owner(r);
+        if(!can_drop(r))return false;
+        if(owner->refs>1) {
+            value=--owner->refs;
+            fprintf(log_,"startup_d3d8_ref=release object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
+            return true;
+        }
+        if(pinned(owner->handle))return false; // Never free a bound/recorded resource.
+        const uint32_t handle=owner->handle,child_handle=owner->surface;
+        auto* child=child_handle?find(child_handle):nullptr;
+        if(child_handle && (!child || child->parent!=handle))return false;
+        if((child && !put(child_handle,0u)) || !put(handle,0u))return false;
+        const uint32_t bytes=uint32_t(owner->bytes.size());
+        used_-=bytes;if(owner->device_ref)--refs_;
+        if(child)*child=Resource{};
+        *owner=Resource{};value=0; // Vector destruction releases native storage.
+        fprintf(log_,"startup_d3d8_resource_destroyed=object:0x%08X surface:0x%08X bytes:%u used:%u scope:last_owned_reference\n",handle,child_handle,bytes,used_);
+        return true;
+    }
+    bool replace_surface(uint32_t& current,uint32_t next) {
+        auto* incoming=next?find(next):nullptr;auto* outgoing=current?find(current):nullptr;
+        if((next && (!incoming || incoming->texture)) || (current && (!outgoing || outgoing->texture)))return false;
+        if(current==next)return true;
+        if((incoming && (!reference_owner(*incoming) || reference_owner(*incoming)->refs==0xFFFFFFFFu)) ||
+            (outgoing && !can_drop(*outgoing)))return false;
+        uint32_t ignored=0;
+        if(incoming && !add_reference(*incoming,ignored))return false;
+        current=next;
+        return !outgoing || release_reference(*outgoing,ignored);
+    }
     bool allocate(uint32_t width,uint32_t height,uint32_t format,uint32_t usage,uint32_t pool,bool texture,uint32_t& output) {
-        if(count_==capacity)return false;
+        if(count_==capacity){fprintf(log_,"startup_d3d8_allocation_denied=handle_capacity count:%u maximum:%u\n",count_,capacity);return false;}
         const unsigned bpp=(format==25 || format==80)?2:4;
         const uint64_t bytes=uint64_t(width)*height*bpp;
-        if(bytes>budget-used_)return false;
+        if(bytes>budget-used_){fprintf(log_,"startup_d3d8_allocation_denied=storage_budget request:%llu used:%u maximum:%u\n",(unsigned long long)bytes,used_,budget);return false;}
         auto& r=resources_[count_];
-        try {r.bytes.resize(bytes);}catch(const std::bad_alloc&){return false;}
+        try {r.bytes.resize(bytes);}catch(const std::bad_alloc&){fprintf(log_,"startup_d3d8_allocation_denied=native_heap request:%llu\n",(unsigned long long)bytes);return false;}
         r.handle=handles+count_*8;r.refs=1;r.width=width;r.height=height;r.format=format;
         r.usage=usage;r.pool=pool;r.texture=texture;r.pitch=width*bpp;
         const uint32_t vt=texture?texture_table:surface_table;
@@ -208,8 +261,7 @@ private:
                 (color_data->format!=21 && color_data->format!=22) ||
                 (w[3] && (!depth || depth->texture || !depth_data || depth_data->format!=80 ||
                  depth_data->width<color_data->width || depth_data->height<color_data->height))){value=0x8876086C;return serviced();}
-            if(color_handle!=target_){auto* old=find(target_);if(!old || old->refs<2 || color->refs==0xFFFFFFFFu)return failure();++color->refs;--old->refs;target_=color_handle;}
-            if(w[3]!=depth_){auto* old=depth_?find(depth_):nullptr;if((old && old->refs<2) || (depth && depth->refs==0xFFFFFFFFu))return failure();if(depth)++depth->refs;if(old)--old->refs;depth_=w[3];}
+            if(!replace_surface(target_,color_handle) || !replace_surface(depth_,w[3]))return failure();
             viewport_={0,0,color_data->width,color_data->height,0,0x3F800000};
             fprintf(log_,"startup_d3d8_render_target=color:0x%08X depth:0x%08X dimensions:%ux%u viewport_reset:yes\n",target_,depth_,color_data->width,color_data->height);return serviced();
         }
@@ -234,6 +286,7 @@ private:
             uint32_t h=0;if(!allocate(w[2],w[3],80,2,0,false,h)){value=0x8876017C;return serviced();}
             if(!put(w[6],h))return failure();
             ++refs_;
+            find(h)->device_ref=true;
             fprintf(log_,"startup_d3d8_depth_surface=owned object=0x%08X width=%u height=%u format=D16\n",h,w[2],w[3]);
             return serviced();
         }
@@ -243,7 +296,7 @@ private:
                 w[4]!=1 || (w[5]!=0 && w[5]!=1) || (w[6]!=21 && w[6]!=25) || w[7]>1 ||
                 (w[5] && (w[6]!=21 || w[7]!=0)))return unsupported();
             uint32_t h=0;if(!allocate(w[2],w[3],w[6],w[5],w[7],true,h)) {value=0x8876017C;return serviced();}
-            ++refs_;if(!put(w[8],h))return failure();
+            ++refs_;find(h)->device_ref=true;if(!put(w[8],h))return failure();
             fprintf(log_,"startup_d3d8_texture=allocated object=0x%08X width=%u height=%u format=%u pitch=%u bytes=%u used=%u\n",h,w[2],w[3],w[6],find(h)->pitch,unsigned(find(h)->bytes.size()),used_);
             return serviced();
         }
@@ -328,7 +381,10 @@ private:
         }
     }
     StartupServiceResult surface_output(uint32_t h,uint32_t out) {
-        auto* r=find(h);if(!r || r->texture || !put(out,h))return failure();++r->refs;return serviced();
+        auto* r=find(h);uint32_t ignored=0;
+        if(!r || r->texture || !reference_owner(*r) || reference_owner(*r)->refs==0xFFFFFFFFu ||
+            !put(out,h) || !add_reference(*r,ignored))return failure();
+        return serviced();
     }
     StartupServiceResult desc(Resource& r,uint32_t out) {
         Resource* data=r.parent?find(r.parent):&r;if(!data)return failure();
@@ -350,7 +406,8 @@ private:
                 auto& child=resources_[count_];
                 child.handle=handles+count_*8;child.refs=1;child.parent=r.handle;
                 if(!put(child.handle,surface_table))return failure();
-                ++count_;r.surface=child.handle;++r.refs;
+                ++count_;r.surface=child.handle;
+                fprintf(log_,"startup_d3d8_surface=level0_alias object:0x%08X parent:0x%08X references:forwarded\n",child.handle,r.handle);
             }
             return surface_output(r.surface,w[3]);
         }
@@ -408,10 +465,11 @@ private:
         auto* incoming=next?find(next):nullptr;auto* outgoing=current?find(current):nullptr;
         if((next && (!incoming || !incoming->texture)) || (current && (!outgoing || !outgoing->texture)))return false;
         if(current==next)return true;
-        if((incoming && incoming->refs==0xFFFFFFFFu) || (outgoing && outgoing->refs<=1))return false;
-        if(incoming)++incoming->refs;
-        if(outgoing)--outgoing->refs;
-        current=next;return true;
+        if((incoming && incoming->refs==0xFFFFFFFFu) || (outgoing && !can_drop(*outgoing)))return false;
+        uint32_t ignored=0;
+        if(incoming && !add_reference(*incoming,ignored))return false;
+        current=next;
+        return !outgoing || release_reference(*outgoing,ignored);
     }
     StartupServiceResult present(const uint32_t* w) {
         fprintf(log_,"startup_d3d8_present_request=source_rect:0x%08X destination_rect:0x%08X window:0x%08X dirty:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],scene_?"yes":"no");
