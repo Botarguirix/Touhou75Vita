@@ -30,7 +30,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration78-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration79-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -96,7 +96,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration78\n");
+        fprintf(report_, "watchdog_revision=iteration79\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -770,6 +770,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
     fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
+    d3d8.report_usage();
     fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
     fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());
     fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);

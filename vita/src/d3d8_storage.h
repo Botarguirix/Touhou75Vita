@@ -5,6 +5,7 @@
 #include "exe_draw_preview.h"
 #include "exe_presenter.h"
 #include "startup_limits.h"
+#include "native_memory_probe.h"
 #include <psp2/kernel/processmgr.h>
 #include <array>
 #include <vector>
@@ -22,7 +23,7 @@ public:
         surface_trap=0x00BFA000, device=0x00ABA000, device_table=device+0x100,
         texture_table=0x00ABB000, surface_table=0x00ABB100,
         handles=0x00ABC000, staging=0x01400000, staging_size=0x00400000,
-        budget=32u*1024u*1024u;
+        budget=64u*1024u*1024u;
     static constexpr unsigned capacity=512;
     // Slots counted from IUnknown in the primary IDirect3DDevice8 declaration.
     enum DeviceSlot : unsigned {
@@ -31,6 +32,13 @@ public:
         SetTextureStageState=63, ValidateDevice=64
     };
     D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs),presenter_(log) { initialize_states(); }
+    void report_usage() const {
+        unsigned owned=0,aliases=0;
+        for(const auto& r:resources_)if(r.refs){if(r.parent)++aliases;else ++owned;}
+        fprintf(log_,"startup_d3d8_storage_summary=used:%u peak:%u maximum:%u owned:%u aliases:%u handles_allocated:%u handle_capacity:%u\n",
+            used_,peak_,budget,owned,aliases,count_,capacity);
+        report_native_memory(log_,"startup_stop",used_,budget);
+    }
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
     bool owns(uint32_t t) const {return range(t,device_trap,97)||range(t,texture_trap,19)||range(t,surface_trap,11);}
     static const char* interface_name(uint32_t t) {
@@ -98,6 +106,7 @@ public:
         hr=0;
         fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
         fprintf(log_,"startup_d3d8_rasterizer=bounded_point_quad\nstartup_d3d8_caps_shader_versions=zero\n");
+        report_native_memory(log_,"device_created",used_,budget);
         return serviced();
     }
     StartupServiceResult call(uint32_t t) {
@@ -216,17 +225,24 @@ private:
         return !outgoing || release_reference(*outgoing,ignored);
     }
     bool allocate(uint32_t width,uint32_t height,uint32_t format,uint32_t usage,uint32_t pool,bool texture,uint32_t& output) {
-        if(count_==capacity){fprintf(log_,"startup_d3d8_allocation_denied=handle_capacity count:%u maximum:%u\n",count_,capacity);return false;}
+        if(count_==capacity){fprintf(log_,"startup_d3d8_allocation_denied=handle_capacity count:%u maximum:%u\n",count_,capacity);report_native_memory(log_,"handle_capacity",used_,budget);return false;}
         const unsigned bpp=(format==25 || format==80)?2:4;
         const uint64_t bytes=uint64_t(width)*height*bpp;
-        if(bytes>budget-used_){fprintf(log_,"startup_d3d8_allocation_denied=storage_budget request:%llu used:%u maximum:%u\n",(unsigned long long)bytes,used_,budget);return false;}
+        if(bytes>budget-used_){fprintf(log_,"startup_d3d8_allocation_denied=storage_budget request:%llu used:%u maximum:%u\n",(unsigned long long)bytes,used_,budget);report_native_memory(log_,"storage_budget",used_,budget);return false;}
         auto& r=resources_[count_];
-        try {r.bytes.resize(bytes);}catch(const std::bad_alloc&){fprintf(log_,"startup_d3d8_allocation_denied=native_heap request:%llu\n",(unsigned long long)bytes);return false;}
+        try {r.bytes.resize(bytes);}catch(const std::bad_alloc&){fprintf(log_,"startup_d3d8_allocation_denied=native_heap request:%llu\n",(unsigned long long)bytes);report_native_memory(log_,"allocation_failed",used_,budget);return false;}
         r.handle=handles+count_*8;r.refs=1;r.width=width;r.height=height;r.format=format;
         r.usage=usage;r.pool=pool;r.texture=texture;r.pitch=width*bpp;
         const uint32_t vt=texture?texture_table:surface_table;
         if(!put(r.handle,vt)){r.bytes.clear();r.refs=0;return false;}
-        ++count_;used_+=bytes;output=r.handle;return true;
+        ++count_;used_+=bytes;output=r.handle;
+        if(used_>peak_) {
+            peak_=used_;
+            fprintf(log_,"startup_d3d8_storage_peak=bytes:%u maximum:%u handles:%u\n",peak_,budget,count_);
+            const unsigned bucket=peak_/(8u*1024u*1024u);
+            if(bucket>reported_memory_bucket_){reported_memory_bucket_=bucket;report_native_memory(log_,"storage_growth",used_,budget);}
+        }
+        return true;
     }
     // Counts include `this`, as required by stdcall COM on x86.
     static unsigned arguments(bool dev,bool tex,unsigned s) {
@@ -561,5 +577,6 @@ private:
     uint32_t draw_calls_=0,draw_pixels_=0;
     std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
+    uint32_t peak_=0;unsigned reported_memory_bucket_=0;
     bool scene_=false;
 };

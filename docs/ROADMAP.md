@@ -1,49 +1,51 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 78, version 01.82
+## Current checkpoint — iteration 79, version 01.83
 
-Hardware 77 confirmed 203 original Present calls and 203 genuine timer/main
-continuations with preserved contexts. Every native set/vblank/query returned
-success and matched active scanout. The first sixteen hashes match hardware 76.
-The original logo reached age 181, requested state 220D and faded to black.
-Loading the next scene started, then CreateTexture(512x512, A8R8G8B8) returned
-8876017C with 33197384 bytes allocated against the 33554432-byte bridge budget.
-MessageBoxA followed. The run took 70.83 s; no CPU fault/limit, watchdog disarmed.
+Hardware 78 confirmed 203 original Present calls, 203 genuine timer/main
+continuations and preserved contexts. All scanout hashes match 77; every native
+set/vblank/query returned success with active scanout matching. Logo age 181,
+state 220D and complete fade-out are confirmed again. The new last-reference
+release freed the logo's 2097152 bytes; eighteen images of opening.dat loaded.
+The nineteenth requested 1 MiB with 33459528 bytes used of the 33554432 cap.
+MessageBoxA reports DGraphics-Error / texture creation failure. The run took
+74.26 s, with no CPU fault/limit and a disarmed watchdog.
 
-The released 1024x512 logo retained 2 MiB because the bridge's cached level
-surface held an extra parent reference. Iteration 78 forwards level-surface
-AddRef/Release to the parent texture, frees owned storage at the last reference,
-invalidates dead interfaces and reduces the allocation/device counts. Bindings,
-state blocks and render/depth targets retain their own references. Implicit
-device surfaces and final device destruction remain separate boundaries.
-The resource budget is still 32 MiB; valid live allocations are not evicted.
+Opening.dat contains 24 image headers. Their power-of-two allocation sizes
+match all eighteen reached on hardware. Full loading projects 15483392 bytes
+for opening images plus 27413320 retained common graphics bytes: 42896712
+bytes, approximately 40.91 MiB. This is a sizing projection, not a completed
+original load or rendered scene. The former 32 MiB cap cannot fit it.
 
-Thirty-four focused PC groups passed with ASan/UBSan. A replay of 1,286 ownership
-and state calls from physical 77 freed the logo and made the formerly rejected
-allocation succeed. It does not run the EXE, reproduce resource contents or
-exercise the Vita SDK. Native compilation and ZIP/SFO/PNG inspection passed.
-Physical validation of the combined execution and next scene is still needed.
-The cap is 240 real frames/waits and 100 s, with a separate 120 s watchdog;
-512 draws and 128 Mi covered pixels retain the rendering work bounds.
+Iteration 79 permits up to 64 MiB of owned texture/depth/backbuffer storage.
+The existing SDK heap initialization in the linked ELF reserves 128 MiB;
+the application does not enlarge that heap. Allocations remain real vectors,
+bad_alloc returns the observed D3D failure and last-reference releases reclaim
+space. Kernel USER_RW free space is a separate accounting domain.
+New logs capture heap reserved/managed/in-use/free chunks, kernel USER/CDRAM/
+PHYCONT, graphics peak/used and handles. They must be validated in hardware.
 
-The 77 cache prepared 22 native images and reused 181 byte-identical sources.
-Every original draw/update/wait/Present still ran. The median measured Present
-duration was 26229 us; the mixed runs are not a controlled performance benchmark.
-See [evidence and package](STATUS_ITERATION78.md),
-[checks](EXE_CHECKLIST_ITERATION78.md) and
-[external/decompiler research](RESEARCH_EXE_ITERATION73.md).
+34 focused PC groups passed with ASan/UBSan. The 1295-call ownership/state
+replay from 78 now services its last allocation. The five further allocation
+sizes projected from remaining resource headers also fit, ending at 42896712
+bytes. These checks do not execute x86, upload game pixels or call the SDK.
+The renderer comparison at -O0/-O2, VitaSDK build and ZIP/SFO/PNG audit passed.
+Physical 79 and the next draw/service/resource contracts remain pending.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original EXE loading and first pixels | Confirmed on hardware, including real logo/fade quads. |
-| Timer, messages and presentation | 203 real continuations and confirmed native frames in 77. Continuous scheduler for every worker remains incomplete. |
-| Logo exit | Original age 181 and complete fade-out confirmed in 77. |
-| Next scene loading | Started in 77; 78 fixes the observed allocation failure. Next scene's draw/Present and resource contracts need hardware validation. |
-| Original interactive menu | Continue scene transitions, compare with Windows, accept a real guest input selection. |
-| Playable match | Continuous guest audio mixing, character logic, collision, effects, frame timing, round completion and return to menu. |
+| Original loading, timer and display | Confirmed on hardware through 203 frames and complete logo exit. |
+| Resource lifetime | 78 confirmed destruction of the old logo; live resources remain retained. Sustained scene/menu lifecycle needs further coverage. |
+| Opening scene loading | 18 of 24 image allocations matched resource headers in 78. 79 expands the measured insufficient cap and records native memory. |
+| Opening scene pixels | Continue original construction/update/draw and native Present; unknown profiles must remain explicit boundaries. |
+| Original interactive menu | Scene transitions, Windows comparison, guest input selection and continuous scheduler. |
+| Playable match | Guest audio mixing, character logic, collision/effects, frame timing, round completion and return to menu. |
 
-Auxiliary music and DAT browsing remain removed. MessageBoxA observes bounded
-raw text and stops; it does not supply an invented button result. A checkpoint
-PASS does not establish gameplay or a completion percentage.
+Limits remain 240 real frames/waits, 100 s, 120 s watchdog, 512 draws and
+128 Mi covered pixels. Auxiliary music/sprite browsing remains removed.
+MessageBoxA records bounded raw text and stops. A checkpoint PASS does not
+establish gameplay or a completion percentage.
+See [status/package](STATUS_ITERATION79.md), [checks](EXE_CHECKLIST_ITERATION79.md)
+and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.
 

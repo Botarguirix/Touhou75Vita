@@ -170,7 +170,7 @@ int main(int argc,char** argv) {
         assert(f.dev(4,{})==f.initial_available);
         puts("PASS observed 2 MiB logo release makes room for formerly rejected 1 MiB allocation");
     }
-    if(argc==2) {
+    if(argc>=2) {
         // Optional local trace contains only method/argument words. It stays
         // outside Git. Replay ownership/state calls, never draw or run the EXE.
         Fixture f;std::ifstream input(argv[1]);assert(input);
@@ -192,6 +192,18 @@ int main(int argc,char** argv) {
             if(trap==D3D8Storage::device_trap+20*16)assert(final_result==0);
         }
         assert(count>1000 && logo_destroyed && final_result==0);
-        printf("PASS local physical-77 ownership replay: %u calls; logo freed; final CreateTexture succeeds\n",count);
+        printf("PASS local physical ownership replay: %u calls; logo freed; final CreateTexture succeeds\n",count);
+        if(argc==3) {
+            // Project only allocation sizes of unexecuted remaining frames,
+            // supplied from a local resource-header analysis outside Git.
+            std::ifstream projection(argv[2]);assert(projection);
+            uint32_t width=0,height=0,expected_used=0;unsigned projected=0;
+            while(projection>>width>>height>>expected_used) {
+                f.texture(width,height);++projected;
+                assert(D3D8Storage::budget-f.dev(4,{})==expected_used);
+            }
+            assert(projected>0);
+            printf("PASS resource-size allocation projection: %u additional images; no EXE/draw/upload executed\n",projected);
+        }
     }
 }
