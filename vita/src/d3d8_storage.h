@@ -105,7 +105,7 @@ public:
         if(!put(w[7],device))return failure();
         hr=0;
         fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
-        fprintf(log_,"startup_d3d8_rasterizer=bounded_point_quad\nstartup_d3d8_caps_shader_versions=zero\n");
+        fprintf(log_,"startup_d3d8_rasterizer=bounded_point_or_linear_quad\nstartup_d3d8_caps_shader_versions=zero\n");
         report_native_memory(log_,"device_created",used_,budget);
         return serviced();
     }
@@ -527,7 +527,8 @@ private:
                 (!render_[27] || (render_[19]==5 && render_[20]==6) || (render_[19]==2 && render_[20]==1)) &&
                 stage_[1]==4 && stage_[2]==2 && (stage_[3]==0 || stage_[3]==1) &&
                 stage_[4]==4 && stage_[5]==2 && (stage_[6]==0 || stage_[6]==1) &&
-                stage_[11]==0 && stage_[13]==1 && stage_[14]==1 && stage_[16]==1 && stage_[17]==1 && stage_[18]<=1;
+                stage_[11]==0 && stage_[13]==1 && stage_[14]==1 &&
+                d3d8_quad::single_level_filter(stage_[16],stage_[17],stage_[18]);
             auto* texture=find(bound_texture_);auto* surface=find(target_);
             auto* target=surface && surface->parent?find(surface->parent):surface;
             if(profile && texture && texture->texture && target && !texture->locked && !target->locked){
@@ -539,13 +540,14 @@ private:
                 const d3d8_quad::Image image={texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
                 const d3d8_quad::Target output={target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,target->format};
                 const d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
-                const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1};
+                const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1,stage_[16]};
                 d3d8_quad::Stats stats;
                 const uint64_t started=sceKernelGetProcessTimeWide();
                 if(d3d8_quad::rasterize(quad,image,output,view,settings,stats)==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
                     fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:raster_and_pixel_hashes\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_);
-                    fprintf(log_,"startup_d3d8_draw=executed renderer:point_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
                     fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
                     fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
                     const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};

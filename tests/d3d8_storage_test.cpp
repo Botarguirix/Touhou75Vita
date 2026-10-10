@@ -14,7 +14,7 @@ int sceDisplayWaitVblankStart(){assert(false);return -1;}
 SceUID sceKernelAllocMemBlock(const char*,int,uint32_t,void*){assert(false);return -1;}
 int sceKernelGetMemBlockBase(SceUID,void**){assert(false);return -1;}
 int sceKernelFreeMemBlock(SceUID){assert(false);return -1;}
-uint64_t sceKernelGetProcessTimeWide(){assert(false);return 0;}
+uint64_t sceKernelGetProcessTimeWide(){static uint64_t time=0;return ++time;}
 
 class HostCpu final:public d2rt::Cpu {
 public:
@@ -169,6 +169,32 @@ int main(int argc,char** argv) {
         for(auto h:retained)assert(f.release(h)==0);
         assert(f.dev(4,{})==f.initial_available);
         puts("PASS observed 2 MiB logo release makes room for formerly rejected 1 MiB allocation");
+    }
+    {
+        Fixture f;const auto h=f.texture(2,2),s=f.surface(h);
+        assert(f.call(D3D8Storage::texture_trap,16,{h,0,Fixture::out,0,0})==0);
+        const uint32_t colors[]={0xFFFF0000,0xFF00FF00,0xFF0000FF,0xFFFFFFFF};
+        assert(f.cpu.write(D3D8Storage::staging,colors,sizeof(colors)));
+        assert(f.call(D3D8Storage::texture_trap,17,{h,0})==0);
+        assert(f.dev(61,{0,h})==0 && f.dev(76,{0x144})==0 && f.dev(34,{})==0);
+        assert(f.dev(50,{7,0})==0 && f.dev(50,{137,0})==0 && f.dev(50,{22,1})==0);
+        assert(f.dev(50,{15,0})==0 && f.dev(50,{27,0})==0);
+        for(const auto stage:std::initializer_list<std::array<uint32_t,2>>{{1,4},{2,2},{3,0},{4,4},{5,2},{6,1},{13,1},{14,1},{16,2},{17,2},{18,2}})
+            assert(f.dev(63,{0,stage[0],stage[1]})==0);
+        d3d8_quad::Vertex q[4]={{-.5f,-.5f,.5f,1,0xFFFFFFFF,.5f,.5f},{639.5f,-.5f,.5f,1,0xFFFFFFFF,.5f,.5f},
+            {-.5f,479.5f,.5f,1,0xFFFFFFFF,.5f,.5f},{639.5f,479.5f,.5f,1,0xFFFFFFFF,.5f,.5f}};
+        assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
+        assert(f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28})==0);
+        assert(th075::exe_draw_ready && th075::exe_draw_preview[(180-180)/2*260+10]==0xFF808080);
+        // The actual COM method must reject unknown/mixed filters without ABI changes.
+        assert(f.dev(63,{0,16,3})==0);
+        f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);
+        assert(f.dev(63,{0,16,1})==0);
+        f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);
+        assert(f.dev(63,{0,16,2})==0 && f.dev(63,{0,18,3})==0);
+        f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);
+        assert(f.dev(35,{})==0 && f.dev(61,{0,0})==0 && f.release(s,true)==1 && f.release(h)==0);
+        puts("PASS shipping DrawPrimitiveUP LINEAR single-level profile COM ABI and rejections");
     }
     if(argc>=2) {
         // Optional local trace contains only method/argument words. It stays

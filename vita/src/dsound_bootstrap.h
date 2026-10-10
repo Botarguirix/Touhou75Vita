@@ -247,7 +247,7 @@ private:
         }else if(slot==4){
             const uint32_t next=dsound_pcm::write_cursor(b,queued);
             if((w[2] && !write(w[2],b.position)) || (w[3] && !write(w[3],next)))return failure();
-            fprintf(log_,"startup_dsound_pcm_cursor=handle:0x%08X play:%u write:%u native_queued_frames:%u source:submitted_minus_native_queue block_resolution:1024\n",w[1],b.position,next,queued);
+            fprintf(log_,"startup_dsound_pcm_cursor=handle:0x%08X play:%u write:%u native_queued_frames:%u source:submitted_minus_native_queue block_resolution:1024 monotonic_phase:%llu\n",w[1],b.position,next,queued,(unsigned long long)b.played_phase);
         }else if(slot==5){
             std::array<uint8_t,18> fmt{};put16(fmt.data(),1);put16(fmt.data()+2,b.channels);
             put32(fmt.data()+4,b.original_hz);put32(fmt.data()+8,b.original_hz*b.align);

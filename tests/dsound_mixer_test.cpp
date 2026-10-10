@@ -69,4 +69,21 @@ int main(){
         assert(b[0].phase==uint64_t(1000)*48000+uint64_t(1024)*200000);
         positions(b,0);assert(b[0].position==21064);puts("PASS seek anchor and supported DirectSound frequency changes");
     }
+    {
+        Buffers b{};b[0]=voice(4096,2,16,44100);b[0].looping=true;
+        b[0].phase=uint64_t(3000)*output_hz;
+        positions(b,0);assert(b[0].position==12000);
+        // Queue grew before the next block's phase commit: no backward cursor.
+        positions(b,1024);assert(b[0].position==12000);
+        Block output{};Commit pending{};prepare(b,output,pending);commit(b,pending);
+        positions(b,1024);assert(b[0].position==12000);
+        positions(b,0);assert(b[0].position==15760);
+        const auto played=b[0].played_phase;
+        prepare(b,output,pending);commit(b,pending);positions(b,0);
+        assert(b[0].played_phase>played && b[0].position==uint32_t((4881u%4096)*4));
+        positions(b,1024);assert(b[0].played_phase>played && b[0].position==3140);
+        seek(b[0],64);positions(b,1024);assert(b[0].position==64 && b[0].played_phase==uint64_t(16)*output_hz);
+        stop(b[0]);assert(b[0].position==64 && b[0].played_phase==b[0].phase);
+        puts("PASS growing native queue preserves monotonic phase across ring wrap and explicit seek resets it");
+    }
 }

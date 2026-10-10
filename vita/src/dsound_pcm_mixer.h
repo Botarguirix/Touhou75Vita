@@ -13,6 +13,7 @@ struct Buffer {
     std::vector<uint8_t> bytes;
     bool playing=false,looping=false;
     uint64_t phase=0,start_phase=0,epoch=0; // source-frame units / 48000
+    uint64_t played_phase=0; // Monotonic within a playback/seek epoch, before ring modulo.
 };
 struct Pending {uint64_t phase=0,epoch=0;bool active=false;};
 using Buffers=std::array<Buffer,capacity>;
@@ -65,10 +66,15 @@ inline void commit(Buffers& buffers,const Commit& pending) {
 inline void positions(Buffers& buffers,unsigned queued_frames) {
     for(auto& b:buffers)if(b.refs && b.playing) {
         const uint64_t lead=uint64_t(queued_frames)*b.hz;
-        const uint64_t played=std::max(b.start_phase,b.phase>lead?b.phase-lead:0);
+        // Native queue occupancy can grow before Output's accepted phase is
+        // committed. Keep the last estimate through that gap: physical81
+        // otherwise reported a backward cursor (11052 -> 7524 bytes).
+        const uint64_t played=std::max(b.played_phase,
+            std::max(b.start_phase,b.phase>lead?b.phase-lead:0));
+        b.played_phase=played;
         const uint64_t frames=b.bytes.size()/b.align;
         if(!b.looping && played>=frames*output_hz) {
-            b.playing=false;b.phase=0;b.position=0;++b.epoch;
+            b.playing=false;b.phase=b.start_phase=b.played_phase=0;b.position=0;++b.epoch;
         }else b.position=uint32_t((played/output_hz)%frames)*b.align;
     }
 }
@@ -81,7 +87,7 @@ inline uint32_t write_cursor(const Buffer& b,unsigned queued_frames) {
     return uint32_t((uint64_t(b.position)+lead*b.align)%b.bytes.size());
 }
 inline void seek(Buffer& b,uint32_t byte_offset) {
-    b.position=byte_offset;b.phase=b.start_phase=uint64_t(byte_offset/b.align)*output_hz;++b.epoch;
+    b.position=byte_offset;b.phase=b.start_phase=b.played_phase=uint64_t(byte_offset/b.align)*output_hz;++b.epoch;
 }
 inline void stop(Buffer& b) {b.playing=false;seek(b,b.position);}
 }

@@ -36,7 +36,14 @@ struct Settings {
     uint32_t alpha_ref=1;
     bool alpha_test=true, alpha_blend=true;
     bool replace_blend=false; // D3DBLEND_ONE/ZERO with ADD.
+    uint32_t filter=1; // D3DTEXF_POINT=1, D3DTEXF_LINEAR=2.
 };
+
+// Storage owns exactly one mip level. MIP NONE/POINT/LINEAR all select that
+// level; different min/mag modes and anisotropic modes remain unsupported.
+inline bool single_level_filter(uint32_t mag,uint32_t min,uint32_t mip) {
+    return (mag==1 || mag==2) && min==mag && mip<=2;
+}
 enum class Result { Unsupported, Rendered };
 enum class Reject { None, Dimensions, Format, Storage, Alias, Vertex, Quad, Settings };
 struct Probe {
@@ -130,13 +137,39 @@ inline uint16_t wrapped_point(double coordinate,uint32_t extent) {
     const double texel=std::floor(fraction*extent);
     return uint16_t(std::min(double(extent-1),texel));
 }
+struct LinearAxis { uint16_t first=0,second=0; double weight=0; };
+inline LinearAxis wrapped_linear(double coordinate,uint32_t extent) {
+    // Texel centers are (i+.5)/N. Wrap EACH neighbor at the texture seam.
+    // Reducing UV before scaling also bounds negative/large coordinates.
+    const double texel=(coordinate-std::floor(coordinate))*extent-.5;
+    const double lower=std::floor(texel);
+    const int index=int(lower); // Bounded to [-1,1023].
+    const uint16_t first=uint16_t(index<0?int(extent)-1:index);
+    return {first,uint16_t((uint32_t(first)+1)%extent),texel-lower};
+}
+inline uint32_t bilinear(uint32_t a,uint32_t b,uint32_t c,uint32_t d,
+    double wx,double wy) {
+    uint32_t color=0;
+    // Interpolate straight RGBA before MODULATE/alpha test/blending. Round
+    // only the final channel, never each intermediate horizontal sample.
+    // This is a software model; hardware filter precision can differ by 1.
+    for(unsigned shift=0;shift<32;shift+=8) {
+        const double top=((a>>shift)&255)*(1-wx)+((b>>shift)&255)*wx,
+            bottom=((c>>shift)&255)*(1-wx)+((d>>shift)&255)*wx;
+        const uint32_t channel=uint32_t(std::floor(top*(1-wy)+bottom*wy+.5));
+        color|=std::min(channel,255u)<<shift;
+    }
+    return color;
+}
 } // namespace detail
 
 // Validates every failure condition before the first destination write.
 // Accepted geometry: TL,TR,BL,BR with constant Z/diffuse, RHW=1, separable UVs.
 // The caller guarantees depth disabled, no shader/fog/lighting, solid fill,
 // no culling, MODULATE(TEXTURE,DIFFUSE/CURRENT) at stage zero, WRAP U/V,
-// POINT min/mag filtering, and only one texture level. Alpha comparison is
+// Matching POINT or LINEAR min/mag filters, and only one texture level.
+// Linear probes report the upper-left wrapped neighbor and filtered color.
+// Alpha comparison is
 // GREATEREQUAL; enabled blending is SRCALPHA/INVSRCALPHA or ONE/ZERO, ADD.
 // Destinations are A8R8G8B8 or X8R8G8B8. The latter stores X=0xFF on writes;
 // it has no destination-alpha channel, so only the blended RGB is retained.
@@ -161,7 +194,8 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
         tb=reinterpret_cast<uintptr_t>(target.bytes);
     if(sb<tb+target.size && tb<sb+source.size)
         return detail::reject(stats,Reject::Alias);
-    if(settings.alpha_ref>255)return detail::reject(stats,Reject::Settings);
+    if(settings.alpha_ref>255 || (settings.filter!=1 && settings.filter!=2))
+        return detail::reject(stats,Reject::Settings);
     for(const auto& v:vertices) {
         if(!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z) ||
             !std::isfinite(v.rhw) || !std::isfinite(v.u) || !std::isfinite(v.v) ||
@@ -190,18 +224,31 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
     const double du=(double(tr.u)-tl.u)/(right-left),
         dv=(double(bl.v)-tl.v)/(bottom-top);
     // Bounded stack tables remove sampling divides/floors from the pixel loop.
-    std::array<uint16_t,1024> xs{},ys{};
-    for(uint32_t x=x0;x<x1;++x)
-        xs[x]=detail::wrapped_point(double(tl.u)+(double(x)-left)*du,source.width);
-    for(uint32_t y=y0;y<y1;++y)
-        ys[y]=detail::wrapped_point(double(tl.v)+(double(y)-top)*dv,source.height);
+    std::array<detail::LinearAxis,1024> xs{},ys{};
+    for(uint32_t x=x0;x<x1;++x) {
+        const double u=double(tl.u)+(double(x)-left)*du;
+        if(settings.filter==2)xs[x]=detail::wrapped_linear(u,source.width);
+        else xs[x].first=detail::wrapped_point(u,source.width);
+    }
+    for(uint32_t y=y0;y<y1;++y) {
+        const double v=double(tl.v)+(double(y)-top)*dv;
+        if(settings.filter==2)ys[y]=detail::wrapped_linear(v,source.height);
+        else ys[y].first=detail::wrapped_point(v,source.height);
+    }
 
     for(uint32_t y=y0;y<y1;++y) {
-        const uint8_t* source_row=source.bytes+size_t(ys[y])*source.pitch;
+        const uint8_t* source_row=source.bytes+size_t(ys[y].first)*source.pitch;
+        const uint8_t* next_row=settings.filter==2?
+            source.bytes+size_t(ys[y].second)*source.pitch:source_row;
         uint8_t* target_row=target.bytes+size_t(y)*target.pitch;
         for(uint32_t x=x0;x<x1;++x) {
-            const uint32_t texel=detail::sample(source_row+size_t(xs[x])*bpp,source.format),
-                color=detail::modulate(texel,tl.diffuse),
+            uint32_t texel=detail::sample(source_row+size_t(xs[x].first)*bpp,source.format);
+            if(settings.filter==2)texel=detail::bilinear(texel,
+                detail::sample(source_row+size_t(xs[x].second)*bpp,source.format),
+                detail::sample(next_row+size_t(xs[x].first)*bpp,source.format),
+                detail::sample(next_row+size_t(xs[x].second)*bpp,source.format),
+                xs[x].weight,ys[y].weight);
+            const uint32_t color=detail::modulate(texel,tl.diffuse),
                 before=detail::load32(target_row+size_t(x)*4);
             uint32_t after=before;
             if(settings.alpha_test && (color>>24)<settings.alpha_ref)++stats.alpha_rejected;
@@ -216,7 +263,7 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
                 ++stats.written;
                 if(after!=before)++stats.changed;
             }
-            const Probe probe{x,y,xs[x],ys[y],color,before,after};
+            const Probe probe{x,y,xs[x].first,ys[y].first,color,before,after};
             if(!stats.covered)stats.first=probe;
             stats.last=probe;
             ++stats.covered;
