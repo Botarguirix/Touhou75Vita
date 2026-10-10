@@ -20,6 +20,7 @@ public:
     StartupServiceResult call(const d2rt::ImportRef& import);
     bool window_pending() const { return window_pending_; }
     bool finish_window_creation(); // Call only after Cpu::run has returned.
+    bool worker_dispatch_safe(); // No guest critical section or WndProc callback in flight.
     void attach_worker(StartupWorker* worker) { worker_ = worker; }
     void attach_audio_worker(StartupWorker* worker) { audio_worker_ = worker; }
     unsigned priority_calls() const { return priority_calls_; }

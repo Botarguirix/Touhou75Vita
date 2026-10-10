@@ -548,6 +548,7 @@ private:
                     fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:raster_and_pixel_hashes\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_);
                     fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
                     fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
+                    if(settings.filter==2)fprintf(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
                     fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
                     fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
                     const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};

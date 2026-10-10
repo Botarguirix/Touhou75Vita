@@ -112,3 +112,13 @@ artifacts/iteration82/livearea-generation.txt, fuera de Git.
 Hardware 82 está pendiente. No se garantiza alcanzar 240 frames ni entrar
 al menú. Continuidad del audio y demo jugable siguen pendientes.
 Véanse [checklist](EXE_CHECKLIST_ITERATION82.md) y [roadmap](ROADMAP.md).
+
+## Resultado físico posterior
+
+Instalación confirmada por el usuario tras resolver el problema en su consola.
+Se recibieron tres logs, log.txt y foto: 208 Present, 209 contextos preservados,
+397 dibujos (167 LINEAR), primeros 203 hashes iguales a 81, límite de tiempo
+a 104,245 s y watchdog desarmado. Música audible en tramos de 3–4 s repetidos;
+1191 bloques enviados, seis despachos durante frames y sólo dos reposiciones
+originales. Esperas del audio de 3,852–4,288 s; captura final negra y menú pendiente.
+Detalle y medidas para la siguiente versión: [iteración 83](STATUS_ITERATION83.md).

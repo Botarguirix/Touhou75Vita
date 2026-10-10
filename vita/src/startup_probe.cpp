@@ -30,7 +30,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration82-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration83-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -96,7 +96,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration82\n");
+        fprintf(report_, "watchdog_revision=iteration83\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -306,6 +306,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     StartupWorker audio_worker;audio_worker.handle=0x00AB4010;audio_worker.id=13;
     uint32_t audio_create_frame=0;
     bool priority_dispatch_requested = false;
+    bool audio_created=false,audio_yield=false,worker_ok=true;
+    unsigned audio_dispatches=0,audio_trap_dispatches=0;
+    uint64_t audio_max_lateness_us=0;
     const d2rt::ImportRef dynamic_critical = {
         "KERNEL32.dll", "InitializeCriticalSectionAndSpinCount", 0, 0, 0};
     const d2rt::ImportRef dynamic_processor = {
@@ -320,6 +323,17 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(!sound.healthy()) {
             service_failed=true;expected_boundary=false;
             fprintf(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");return false;
+        }
+        const bool owned_boundary=sound.owns(trap) || input.owns(trap) || d3d8.owns_trap(trap) ||
+            (trap>=kTrap && (trap-kTrap)%16==0 && (trap-kTrap)/16<image.imports().size()) ||
+            trap==StartupServices::critical_init_trap || trap==StartupServices::processor_feature_trap;
+        if(owned_boundary && audio_created && startup_wait::audio_trap_due(true,
+            sound.playback_active(),audio_worker.blocked,audio_worker.unsupported_boundary,
+            wx86_cur_tib(),audio_worker.wait_started_us,audio_worker.timeout_ms,sceKernelGetProcessTimeWide()) &&
+            sound.refill_dispatch_safe() && services.worker_dispatch_safe()) {
+            // Stop before servicing this call. Cpu::run must return before
+            // the same emulator can run a different original guest context.
+            audio_yield=true;return false;
         }
         if(sound.owns(trap)) {
             ++main_import_calls;import_hit=true;
@@ -529,10 +543,43 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     unsigned frame_wait_resumes=0;
     fprintf(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
     fprintf(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
+    auto run_until_boundary=[&](uint32_t entry,uint64_t budget) {
+        for(;;) {
+            audio_yield=false;
+            cpu.take_limit_hit();cpu.set_run_limit(budget);
+            stopped=cpu.run(entry,&fault);limit=cpu.take_limit_hit();
+            if(!audio_yield)break;
+            if(!stopped || limit || audio_trap_dispatches>=startup_limits::audio_trap_dispatches ||
+                sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
+                fprintf(log,"startup_audio_trap_stop=execution_or_scope_limit dispatches:%u\n",audio_trap_dispatches);
+                expected_boundary=true;break;
+            }
+            d2rt::X86Context saved{},restored{};cpu.save_context(saved);saved.fs_base=wx86_cur_tib();
+            const uint32_t esp=cpu.reg(d2rt::R_ESP),error=wx86_get_lasterr(cpu);
+            uint32_t words[3]{},after[3]{};
+            if(!stack_range(esp,sizeof(words)) || !cpu.read(esp,words,sizeof(words)) ||
+                !original_code_address(exe,nt,image,words[0]) || saved.fs_base!=kDiagnosticTeb) {
+                service_failed=true;fprintf(log,"startup_audio_trap_context=invalid_callframe\n");break;
+            }
+            const uint64_t elapsed=sceKernelGetProcessTimeWide()-audio_worker.wait_started_us;
+            audio_max_lateness_us=std::max(audio_max_lateness_us,elapsed-uint64_t(audio_worker.timeout_ms)*1000);
+            ++audio_trap_dispatches;++audio_dispatches;
+            fprintf(log,"startup_audio_trap_yield=before_unexecuted_call trap:0x%08X return:0x%08X elapsed_us:%llu dispatch:%u\n",
+                cpu.reg(d2rt::R_EIP),words[0],(unsigned long long)elapsed,audio_trap_dispatches);
+            worker_ok=wake_worker_slice(cpu,image,services,audio_worker,log,&sound);
+            cpu.set_trap(kTrap,kTrapEnd,startup_trap);
+            cpu.save_context(restored);restored.fs_base=wx86_cur_tib();
+            const bool preserved=startup_wait::same_context(saved,restored) &&
+                wx86_get_lasterr(cpu)==error && cpu.read(esp,after,sizeof(after)) &&
+                !std::memcmp(words,after,sizeof(words));
+            fprintf(log,"startup_audio_trap_context=%s scope:gpr_flags_fs_fpu_callframe_lasterror\n",preserved?"preserved":"failed");
+            if(!worker_ok || !preserved){worker_ok=false;service_failed=true;break;}
+            if(audio_worker.unsupported_boundary){expected_boundary=true;break;}
+            entry=cpu.reg(d2rt::R_EIP); // Retry the untouched call exactly once.
+        }
+    };
     auto run_main = [&](uint32_t entry, uint64_t budget) {
-        cpu.take_limit_hit(); cpu.set_run_limit(budget);
-        stopped = cpu.run(entry, &fault);
-        limit = cpu.take_limit_hit();
+        run_until_boundary(entry,budget);
         fflush(log);boundaries_since_flush=0;
         uint32_t previous = 0;
         bool have_previous = false;
@@ -610,14 +657,11 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fflush(log);
             // run() recharges its block budget on the same emulator. All
             // registers, stack, flags and x87 state remain owned by it.
-            cpu.set_run_limit(kRunBudget);
-            stopped = cpu.run(cpu.reg(d2rt::R_EIP), &fault);
-            limit = cpu.take_limit_hit();
+            run_until_boundary(cpu.reg(d2rt::R_EIP),kRunBudget);
             fflush(log);boundaries_since_flush=0;
         }
     };
     run_main(kEntry, kRunBudget);
-    bool worker_ok = true;
     bool thread_created = false;
     if (worker_create_frame && stopped && !limit && !service_failed) {
         const uint32_t create_frame = worker_create_frame;
@@ -677,7 +721,6 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             run_main(cpu.reg(d2rt::R_EIP), kRunBudget);
         }
     }
-    bool audio_created=false;
     if(audio_create_frame && stopped && !limit && !service_failed && worker_ok) {
         d2rt::X86Context saved{},restored{};cpu.save_context(saved);
         saved.fs_base=wx86_cur_tib();
@@ -698,7 +741,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             expected_boundary=false;run_main(ret,kRunBudget);
             // The new thread runs at the same priority as the timer. Dispatch
             // its first elapsed wait before reporting the main boundary.
-            if(stopped && !limit && !service_failed && audio_worker.priority>0) {
+            if(stopped && !limit && !service_failed && worker_ok && audio_worker.priority>0 &&
+                audio_worker.blocked && !audio_worker.unsupported_boundary) {
                 worker_ok=wake_worker_slice(cpu,image,services,audio_worker,log,&sound);
                 cpu.set_trap(kTrap,kTrapEnd,startup_trap);
             }
@@ -707,7 +751,6 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     // Hardware 74 reached this infinite frame-event wait after a genuine
     // Present. Pause main with its unexecuted call intact, run the original
     // timer worker after its real timeout, then retry the same event contract.
-    unsigned audio_dispatches=0;
     for(unsigned tick=0;tick<startup_limits::frame_wait_resumes && stopped && !limit && !service_failed && worker_ok;++tick) {
         const uint32_t trap=cpu.reg(d2rt::R_EIP),esp=cpu.reg(d2rt::R_ESP);
         uint32_t wait[3]{};
@@ -784,6 +827,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     sound.shutdown_playback();
     if(!sound.healthy()){service_failed=true;expected_boundary=false;fprintf(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");}
     fprintf(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);
+    fprintf(log,"startup_audio_trap_dispatches=%u maximum:%u max_lateness_us:%llu scope:between_main_calls_no_recursive_cpu_run\n",
+        audio_trap_dispatches,startup_limits::audio_trap_dispatches,(unsigned long long)audio_max_lateness_us);
     fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
     fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());

@@ -39,6 +39,15 @@ bool cp932_ctype1(uint16_t unit, uint16_t& flags) {
 }
 }
 
+bool StartupServices::worker_dispatch_safe() {
+    if(window_pending_ || window_show_pending_ || window_paint_pending_)return false;
+    for(const uint32_t address:critical_sections_) {
+        uint32_t state[6]{};
+        if(!cpu_.read(address,state,sizeof(state)) || !startup_wait::critical_dispatch_safe(state))return false;
+    }
+    return true;
+}
+
 StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool metrics = import.dll == "USER32.dll" && import.name == "GetSystemMetrics";
     const bool icon_load = import.dll == "USER32.dll" && import.name == "LoadIconA";
@@ -1074,7 +1083,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             return StartupServiceResult::ContractFailure;
         }
         // x86 RTL_CRITICAL_SECTION: DebugInfo, LockCount, RecursionCount,
-        // OwningThread, LockSemaphore, SpinCount. Current scope: one guest thread.
+        // OwningThread, LockSemaphore, SpinCount. Contended waits remain unsupported.
         const uint32_t state[6] = {0, 0xFFFFFFFFu, 0, 0, 0, spin};
         uint32_t copy[6] = {};
         if (!cpu_.write(arg, state, sizeof(state)) || !cpu_.read(arg, copy, sizeof(copy)) ||

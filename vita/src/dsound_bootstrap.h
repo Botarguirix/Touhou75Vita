@@ -33,6 +33,7 @@ public:
     }
     unsigned serviced_calls()const{return calls_;}
     bool playback_active(){std::lock_guard<std::mutex> guard(audio_mutex_);for(const auto& b:buffers_)if(b.refs && b.playing)return true;return false;}
+    bool refill_dispatch_safe()const{return locked_handle_==0;}
     bool healthy()const{return audio_error_.load(std::memory_order_acquire)>=0;}
     void shutdown_playback(){
         if(audio_thread_<0)return;

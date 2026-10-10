@@ -30,6 +30,22 @@ int main() {
     assert(one(tiny,.375f,.375f)==0xFF9F4040);
     puts("PASS LINEAR four-neighbor weights and final channel rounding");
 
+    uint32_t random=0x19283746;
+    auto next=[&](){random^=random<<13;random^=random>>17;random^=random<<5;return random;};
+    for(unsigned n=0;n<200000;++n) {
+        const uint32_t a=next(),b=next(),c=next(),d=next(),wx=next()&65535,wy=next()&65535;
+        assert(detail::bilinear_exact(a,b,c,d,wx,wy)==detail::bilinear(a,b,c,d,double(wx)/65536,double(wy)/65536));
+    }
+    for(uint32_t a:{0u,1u,0xFFFFFFFFu,0x80808080u,0x00FF8001u})
+        for(double wx:{0.,.0000001,.1,.333333333333,.5,.9,.9999999})
+            for(double wy:{0.,.1,.5,.9999999})assert(detail::bilinear(a,a,a,a,wx,wy)==a);
+    for(double u:{0.,.25,.375,.5,.9999847412109375}) {
+        const auto axis=detail::wrapped_linear(u,2);
+        assert(axis.exact_weight!=0xFFFFFFFFu && double(axis.exact_weight)/65536==axis.weight);
+    }
+    assert(detail::wrapped_linear(.123456789,512).exact_weight==0xFFFFFFFFu);
+    puts("PASS 200000 exact dyadic samples match double and non-dyadic coefficients retain reference");
+
     for(float u:{-2.f,-1.f,0.f,1.f,2.f})assert(one(tiny,u,0)==0xFF808080);
     assert(one(tiny,-.125f,.25f)==0xFF40BF00);
     assert(one(tiny,65536.f,-65536.f)==0xFF808080);
@@ -54,6 +70,14 @@ int main() {
     const uint32_t constant=0x87654321;
     const Image singleton{reinterpret_cast<const uint8_t*>(&constant),4,1,1,4,21};
     assert(one(singleton,-.123f,12.75f)==constant);
+    pixel=0;rect(q,0,0,1,1,.25f,.25f,.25f,.25f);
+    assert(rasterize(q,tiny,out,{0,0,1,1},Settings{0,false,false,false,2},stats)==Result::Rendered);
+    assert(stats.linear_exact==1 && stats.linear_constant==0 && stats.linear_reference==0);
+    rect(q,0,0,1,1,.123456789f,.234567891f,.123456789f,.234567891f);
+    assert(rasterize(q,tiny,out,{0,0,1,1},Settings{0,false,false,false,2},stats)==Result::Rendered);
+    assert(stats.linear_reference==1 && stats.linear_exact==0 && stats.linear_constant==0);
+    assert(rasterize(q,singleton,out,{0,0,1,1},Settings{0,false,false,false,2},stats)==Result::Rendered);
+    assert(stats.linear_constant==1 && stats.linear_exact==0 && stats.linear_reference==0 && pixel==constant);
     puts("PASS A1R5G5B5 normalization and one-texel degenerate wrap");
 
     // Latest physical81 quad geometry, synthetic gradient. Reference below
@@ -66,6 +90,7 @@ int main() {
     rect(q,-128.495f,-116.5f,383.505f,395.5f);
     assert(rasterize(q,image,out,{0,0,640,480},Settings{1,true,true,false,2},stats)==Result::Rendered);
     assert(stats.covered==152064 && stats.written==152064 && stats.alpha_rejected==0);
+    assert(stats.linear_exact+stats.linear_constant+stats.linear_reference==stats.covered);
     for(unsigned y=0;y<480;++y)for(unsigned x=0;x<640;++x) {
         if(x>=384 || y>=396){assert(at(target,640,x,y)==0x55555555);continue;}
         const double s=(double(x)-q[0].x)*512/(double(q[1].x)-q[0].x)-.5,

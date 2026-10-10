@@ -58,6 +58,7 @@ struct Stats {
     uint32_t hash_before=2166136261u, hash_after=2166136261u,
         hash_source=2166136261u;
     Probe first{}, last{};
+    uint32_t linear_exact=0,linear_constant=0,linear_reference=0;
 };
 
 inline const char* reject_name(Reject r) {
@@ -137,7 +138,11 @@ inline uint16_t wrapped_point(double coordinate,uint32_t extent) {
     const double texel=std::floor(fraction*extent);
     return uint16_t(std::min(double(extent-1),texel));
 }
-struct LinearAxis { uint16_t first=0,second=0; double weight=0; };
+struct LinearAxis {
+    uint16_t first=0,second=0;
+    double weight=0;
+    uint32_t exact_weight=0xFFFFFFFFu; // Exact multiple of 1/65536, never quantized.
+};
 inline LinearAxis wrapped_linear(double coordinate,uint32_t extent) {
     // Texel centers are (i+.5)/N. Wrap EACH neighbor at the texture seam.
     // Reducing UV before scaling also bounds negative/large coordinates.
@@ -145,7 +150,9 @@ inline LinearAxis wrapped_linear(double coordinate,uint32_t extent) {
     const double lower=std::floor(texel);
     const int index=int(lower); // Bounded to [-1,1023].
     const uint16_t first=uint16_t(index<0?int(extent)-1:index);
-    return {first,uint16_t((uint32_t(first)+1)%extent),texel-lower};
+    const double weight=texel-lower,scaled=weight*65536;
+    return {first,uint16_t((uint32_t(first)+1)%extent),weight,
+        scaled==std::floor(scaled)?uint32_t(scaled):0xFFFFFFFFu};
 }
 inline uint32_t bilinear(uint32_t a,uint32_t b,uint32_t c,uint32_t d,
     double wx,double wy) {
@@ -158,6 +165,20 @@ inline uint32_t bilinear(uint32_t a,uint32_t b,uint32_t c,uint32_t d,
             bottom=((c>>shift)&255)*(1-wx)+((d>>shift)&255)*wx;
         const uint32_t channel=uint32_t(std::floor(top*(1-wy)+bottom*wy+.5));
         color|=std::min(channel,255u)<<shift;
+    }
+    return color;
+}
+inline uint32_t bilinear_exact(uint32_t a,uint32_t b,uint32_t c,uint32_t d,
+    uint32_t wx,uint32_t wy) {
+    uint32_t color=0;
+    // Exact dyadic weights reproduce the reference double operations: all
+    // intermediate integer significands fit within 48 bits (double has 53).
+    // No coefficient rounding or intermediate channel rounding is allowed.
+    for(unsigned shift=0;shift<32;shift+=8) {
+        const uint32_t top=((a>>shift)&255)*(65536-wx)+((b>>shift)&255)*wx;
+        const uint32_t bottom=((c>>shift)&255)*(65536-wx)+((d>>shift)&255)*wx;
+        const uint64_t channel=uint64_t(top)*(65536-wy)+uint64_t(bottom)*wy;
+        color|=uint32_t((channel+(uint64_t(1)<<31))>>32)<<shift;
     }
     return color;
 }
@@ -243,11 +264,22 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
         uint8_t* target_row=target.bytes+size_t(y)*target.pitch;
         for(uint32_t x=x0;x<x1;++x) {
             uint32_t texel=detail::sample(source_row+size_t(xs[x].first)*bpp,source.format);
-            if(settings.filter==2)texel=detail::bilinear(texel,
-                detail::sample(source_row+size_t(xs[x].second)*bpp,source.format),
-                detail::sample(next_row+size_t(xs[x].first)*bpp,source.format),
-                detail::sample(next_row+size_t(xs[x].second)*bpp,source.format),
-                xs[x].weight,ys[y].weight);
+            if(settings.filter==2) {
+                if(xs[x].exact_weight==0 && ys[y].exact_weight==0)++stats.linear_exact;
+                else {
+                    const uint32_t b=detail::sample(source_row+size_t(xs[x].second)*bpp,source.format),
+                        c=detail::sample(next_row+size_t(xs[x].first)*bpp,source.format),
+                        d=detail::sample(next_row+size_t(xs[x].second)*bpp,source.format);
+                    if(texel==b && texel==c && texel==d)++stats.linear_constant;
+                    else if(xs[x].exact_weight!=0xFFFFFFFFu && ys[y].exact_weight!=0xFFFFFFFFu) {
+                        texel=detail::bilinear_exact(texel,b,c,d,xs[x].exact_weight,ys[y].exact_weight);
+                        ++stats.linear_exact;
+                    }else {
+                        texel=detail::bilinear(texel,b,c,d,xs[x].weight,ys[y].weight);
+                        ++stats.linear_reference;
+                    }
+                }
+            }
             const uint32_t color=detail::modulate(texel,tl.diffuse),
                 before=detail::load32(target_row+size_t(x)*4);
             uint32_t after=before;

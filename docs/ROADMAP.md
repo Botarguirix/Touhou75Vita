@@ -1,48 +1,55 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 82, version 01.86
+## Current checkpoint — iteration 83, version 01.87
 
-Physical 81 played PCM belonging to the original EXE. The user heard it
-briefly; output accepted 13 blocks (1024 frames at 48 kHz each, 0.277 s),
-26342 nonzero samples, output/drain RC 0. The original audio worker resumed
-once at its real timeout and read another 131072 bytes into the stream.
-This establishes brief audibility and one refill, not continuous music.
+Physical 82 executed 208 real Present frames and preserved 209 main contexts.
+Its first 203 scanout hashes match 81. There were 397 draws (167 LINEAR),
+using 42896712 graphics bytes within 64 MiB. Raster/hashing took 68.308 s;
+full-screen LINEAR calls reached 786 ms and a frame cycle took 4.338 s.
+The time cap stopped the run at 104.245 s; watchdog disarmed, final capture
+black, menu not reached.
 
-The 203 scanout hashes and all texture uploads still match 80. Main contexts
-were preserved 204 times. Draw 230 executed; draw 231 stopped at LINEAR
-min/mag/mip filtering, using a 512² A8R8G8B8 texture and a clipped rectangle.
-No Present 204 was executed; the final capture remains the black frame 203.
-The run took 70.34 s, used 42896712 graphics bytes, had no CPU limit and
-disarmed the watchdog. A menu has not been reached.
+The user heard original music in 3–4 second segments repeated about 3–4 times.
+One Play produced 1191 accepted blocks (25.408 s submitted), output/drain RC 0.
+Six worker dispatches during frames produced two original stream refills.
+Actual audio-worker waits reached 3.852–4.288 s instead of the requested 80 ms.
+These delays can explain stale-ring repetition; continuity remains unverified.
 
-82 implements four-neighbor bilinear sampling with WRAP on each neighbor,
-straight alpha interpolation, existing MODULATE/test/blend and X8 handling.
-Only matching POINT/LINEAR min/mag and one mip level are accepted. Mixed
-filters, anisotropic filtering, additional levels and other geometries remain
-explicit boundaries. Cursor estimates now preserve absolute forward phase
-through queue growth; seek/Stop reset that anchor and ring wrap remains valid.
-This does not turn the block estimate into an exact audio hardware clock.
+83 dispatches the original worker after elapsed timeouts between known main
+imports/COM calls, only with no guest critical section, WndProc callback or
+PCM Lock in flight. Cpu::run returns before switching context. Main registers,
+flags, FS/FPU, callframe and LastError are checked before retrying its untouched
+call. This is bounded cooperative scheduling, not general thread emulation.
+Long native calls or x86 stretches without imports can still delay audio.
 
-64 portable groups, ASan/UBSan, -Werror, a 1312-call ownership replay and
-matching POINT/LINEAR -O0/-O2 outputs passed. VitaSDK/package inspection
-passed. Hardware 82 and comparison against a Windows D3D8 capture are pending.
+LINEAR retains the previous double calculation for general weights. Exactly
+dyadic weights use an equivalent integer calculation; texel centers and equal
+neighbors avoid interpolation. No coefficients are quantized. LiveArea uses
+Alice's original frame 6 from selectchar.dat, freshly decoded with provenance;
+no earlier generated cover is reused.
+
+66 portable groups, 200000 sample comparisons, ASan/UBSan, -Werror, a 1312-call
+ownership replay and matching POINT/LINEAR -O0/-O2 outputs passed. VitaSDK and
+package inspection passed. Runner/context timing, rendering acceleration and
+continuous music in physical 83 remain pending.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original loader, timer and display | 203 real frames, complete logo exit, 204 preserved contexts on 81. |
-| Resource lifetime and memory | Logo released and 24 opening images uploaded; sustained lifecycle pending. |
-| Original audio and refill worker | Brief sound confirmed on 81, one original refill; continuity and cursor timing pending. |
-| Opening scene pixels | POINT background executed on 81; LINEAR rectangular profile implemented in 82, awaiting Vita. |
-| Original interactive menu | Reach its scene, compare against Windows and accept a real guest selection. |
-| Playable match | Controls, character logic/collisions, timing, audio, round completion and menu return. |
+| Original loader, timer and display | 208 real frames, complete logo exit, 209 preserved contexts on 82. |
+| Resource lifetime and memory | Logo released and opening images uploaded; sustained lifecycle pending. |
+| Original audio/refill | Audible but repetitive on 82; timely original refills and continuity pending. |
+| Opening graphics | POINT/LINEAR rectangular profile executed; finish scene and compare Windows. |
+| Interactive menu | Reach original scene, measure timing and accept an actual guest selection. |
+| Playable match | Controls, character logic/collisions, audio, round and menu return. |
 
-Limits remain 240 real frames/waits, 100 s, 120 s watchdog, 512 draws,
-128 Mi covered pixels and 64 main resume slices. Guest PCM output ends when
-the bounded EXE run stops. Continued music requires continued original
-execution and timely refills. Diagnostic music and DAT browsing are removed.
+Limits: 240 real frames/waits, 100 s, watchdog 120 s, 2048 draws,
+384 Mi covered pixels, 1024 audio dispatches between main calls and 64 CPU
+resume slices. The drawing budget covers the observed 28 calls per opening
+frame; graphics memory remains 64 MiB. PCM ends when the bounded run stops.
+Diagnostic music and DAT browsing remain removed. A checkpoint PASS does
+not establish playability or a completion percentage.
 
-A checkpoint PASS does not establish playability or a completion percentage.
-See [status/package](STATUS_ITERATION82.md), [checks](EXE_CHECKLIST_ITERATION82.md)
+See [status/package](STATUS_ITERATION83.md), [checks](EXE_CHECKLIST_ITERATION83.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.
