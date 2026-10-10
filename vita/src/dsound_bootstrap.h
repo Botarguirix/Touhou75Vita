@@ -113,12 +113,15 @@ private:
     static uint16_t le16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
     static uint32_t le32(const uint8_t* p){return uint32_t(le16(p))|uint32_t(le16(p+2))<<16;}
     StartupServiceResult allocate_secondary(const std::array<uint32_t,9>& d,const uint32_t* w){
-        std::array<uint8_t,18> fmt{};
+        // PCM may use PCMWAVEFORMAT's 16-byte prefix. cbSize is ignored for
+        // WAVE_FORMAT_PCM; reading it can consume the following RIFF chunk.
+        // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/ns-mmeapi-waveformatex
+        std::array<uint8_t,16> fmt{};
         if(!cpu_.read(d[4],fmt.data(),fmt.size()))return failure();
-        const uint32_t tag=le16(fmt.data()),channels=le16(fmt.data()+2),hz=le32(fmt.data()+4),rate=le32(fmt.data()+8),align=le16(fmt.data()+12),bits=le16(fmt.data()+14),extra=le16(fmt.data()+16);
-        fprintf(log_,"startup_dsound_pcm_format=tag:%u channels:%u hz:%u rate:%u align:%u bits:%u extra:%u\n",tag,channels,hz,rate,align,bits,extra);
+        const uint32_t tag=le16(fmt.data()),channels=le16(fmt.data()+2),hz=le32(fmt.data()+4),rate=le32(fmt.data()+8),align=le16(fmt.data()+12),bits=le16(fmt.data()+14);
+        fprintf(log_,"startup_dsound_pcm_format=tag:%u channels:%u hz:%u rate:%u align:%u bits:%u format_bytes_read:16 cbsize:%s\n",tag,channels,hz,rate,align,bits,tag==1?"ignored_pcm":"unsupported_format");
         if(w[4] || d[3] || d[5] || d[6] || d[7] || d[8] || tag!=1 || (channels!=1 && channels!=2) ||
-            (bits!=8 && bits!=16) || hz<11025 || hz>48000 || align!=channels*bits/8 || rate!=hz*align || extra ||
+            (bits!=8 && bits!=16) || hz<11025 || hz>48000 || align!=channels*bits/8 || rate!=hz*align ||
             d[2]>pcm_capacity || d[2]%align || buffer_count_>=buffers_.size() || d[2]>16u*1024*1024-pcm_used_)return unsupported();
         if(!buffer_count_){
             if(!cpu_.hostptr(pcm_staging,pcm_capacity) || !cpu_.map(pcm_staging,pcm_capacity,nullptr,d2rt::P_RW) ||

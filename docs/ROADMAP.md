@@ -1,50 +1,47 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 79, version 01.83
 
-Hardware 78 confirmed 203 original Present calls, 203 genuine timer/main
-continuations and preserved contexts. All scanout hashes match 77; every native
-set/vblank/query returned success with active scanout matching. Logo age 181,
-state 220D and complete fade-out are confirmed again. The new last-reference
-release freed the logo's 2097152 bytes; eighteen images of opening.dat loaded.
-The nineteenth requested 1 MiB with 33459528 bytes used of the 33554432 cap.
-MessageBoxA reports DGraphics-Error / texture creation failure. The run took
-74.26 s, with no CPU fault/limit and a disarmed watchdog.
+## Current checkpoint — iteration 80, version 01.84
 
-Opening.dat contains 24 image headers. Their power-of-two allocation sizes
-match all eighteen reached on hardware. Full loading projects 15483392 bytes
-for opening images plus 27413320 retained common graphics bytes: 42896712
-bytes, approximately 40.91 MiB. This is a sizing projection, not a completed
-original load or rendered scene. The former 32 MiB cap cannot fit it.
+Hardware 79 confirmed all 24 original opening.dat texture allocations and
+uploads, totaling 42896712 live graphics bytes within the 64 MiB cap. No
+allocation was denied. The logo's final release again freed 2097152 bytes.
+All 203 scanout hashes and genuine timer/main continuations matched 78;
+native set/vblank/query returned success and active scanout matched each frame.
+The run took 70.31 s with no CPU limit and a disarmed watchdog. The capture
+remains black after the logo fade because the next scene has not drawn yet.
 
-Iteration 79 permits up to 64 MiB of owned texture/depth/backbuffer storage.
-The existing SDK heap initialization in the linked ELF reserves 128 MiB;
-the application does not enlarge that heap. Allocations remain real vectors,
-bad_alloc returns the observed D3D failure and last-reference releases reclaim
-space. Kernel USER_RW free space is a separate accounting domain.
-New logs capture heap reserved/managed/in-use/free chunks, kernel USER/CDRAM/
-PHYCONT, graphics peak/used and handles. They must be validated in hardware.
+Native memory observations now ran on Vita: heap reserve 134217728 bytes,
+managed 57831424, in use 57415616, free chunks 415808, top chunk 170160.
+Kernel free USER_RW was 62914560 bytes, separately from the reserved heap.
+These counters do not establish contiguous allocation capacity.
 
-34 focused PC groups passed with ASan/UBSan. The 1295-call ownership/state
-replay from 78 now services its last allocation. The five further allocation
-sizes projected from remaining resource headers also fit, ending at 42896712
-bytes. These checks do not execute x86, upload game pixels or call the SDK.
-The renderer comparison at -O0/-O2, VitaSDK build and ZIP/SFO/PNG audit passed.
-Physical 79 and the next draw/service/resource contracts remain pending.
+The next boundary is CreateSoundBuffer: 1048576 bytes, stereo PCM 44100 Hz,
+16 bits, block alignment 4 and byte rate 176400. The existing bridge read
+18 format bytes and rejected the final word 24932 (bytes 64 61 / da).
+The original WAV files have 16-byte PCM formats followed by data chunks.
+Microsoft specifies that cbSize is ignored for WAVE_FORMAT_PCM.
+
+Iteration 80 reads only that PCM prefix, while retaining actual owned buffers,
+silence initialization, format/alignment/size checks, QI and lock/upload
+contracts. The new test reproduces the old rejection and passes after the fix.
+41 portable groups, a 1312-call D3D ownership replay, renderer -O0/-O2 output
+comparison, VitaSDK compilation and package inspection passed. No EXE or
+native audio playback runs in the portable checks. Hardware 80 is pending.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original loading, timer and display | Confirmed on hardware through 203 frames and complete logo exit. |
-| Resource lifetime | 78 confirmed destruction of the old logo; live resources remain retained. Sustained scene/menu lifecycle needs further coverage. |
-| Opening scene loading | 18 of 24 image allocations matched resource headers in 78. 79 expands the measured insufficient cap and records native memory. |
-| Opening scene pixels | Continue original construction/update/draw and native Present; unknown profiles must remain explicit boundaries. |
-| Original interactive menu | Scene transitions, Windows comparison, guest input selection and continuous scheduler. |
-| Playable match | Guest audio mixing, character logic, collision/effects, frame timing, round completion and return to menu. |
+| Original loading, timer and display | Confirmed through 203 real frames and complete logo exit. |
+| Resource lifetime and memory | Logo released on 78/79; all 24 opening images uploaded on 79. Sustained scene/menu lifecycle remains incomplete. |
+| Opening scene construction | Texture loading completed; 80 fixes the observed PCM format rejection. Original constructor return and following services need hardware validation. |
+| Guest music and scheduler | 39 effect buffers uploaded with unchanged hashes. Stereo stream storage prepared; Play, cursor progression, mixing and continuous workers remain pending. |
+| Opening scene pixels | Continue original update/draw and native Present after frame 203. |
+| Original interactive menu | Scene transitions, Windows comparison and a real guest input selection. |
+| Playable match | Character logic, collision/effects, guest audio, frame timing, round completion and return to menu. |
 
 Limits remain 240 real frames/waits, 100 s, 120 s watchdog, 512 draws and
-128 Mi covered pixels. Auxiliary music/sprite browsing remains removed.
-MessageBoxA records bounded raw text and stops. A checkpoint PASS does not
-establish gameplay or a completion percentage.
-See [status/package](STATUS_ITERATION79.md), [checks](EXE_CHECKLIST_ITERATION79.md)
+128 Mi covered pixels. Diagnostic music and sprite browsing remain removed.
+A checkpoint PASS does not establish a playable game or a completion percentage.
+See [status/package](STATUS_ITERATION80.md), [checks](EXE_CHECKLIST_ITERATION80.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.

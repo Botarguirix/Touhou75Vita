@@ -174,7 +174,7 @@ int main(int argc,char** argv) {
         // Optional local trace contains only method/argument words. It stays
         // outside Git. Replay ownership/state calls, never draw or run the EXE.
         Fixture f;std::ifstream input(argv[1]);assert(input);
-        std::string line;unsigned count=0;uint32_t final_result=~0u;
+        std::string line;unsigned count=0;uint32_t final_result=~0u,last_create_result=~0u;
         bool logo_destroyed=false;
         while(std::getline(input,line)) {
             std::istringstream record(line);record>>std::hex;
@@ -189,9 +189,10 @@ int main(int argc,char** argv) {
             if(trap==D3D8Storage::texture_trap+2*16 && w[1]==0x00ABC938) {
                 assert(final_result==0 && f.cpu.read_u32(w[1])==0);logo_destroyed=true;
             }
-            if(trap==D3D8Storage::device_trap+20*16)assert(final_result==0);
+            if(trap==D3D8Storage::device_trap+20*16){last_create_result=final_result;assert(last_create_result==0);}
         }
-        assert(count>1000 && logo_destroyed && final_result==0);
+        // A completed trace may end with Release (a refcount), not an HRESULT.
+        assert(count>1000 && logo_destroyed && last_create_result==0);
         printf("PASS local physical ownership replay: %u calls; logo freed; final CreateTexture succeeds\n",count);
         if(argc==3) {
             // Project only allocation sizes of unexecuted remaining frames,
