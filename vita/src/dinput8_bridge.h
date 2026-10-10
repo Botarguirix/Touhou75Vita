@@ -21,6 +21,7 @@ public:
         if(range(t,root_trap,11)) {
             static const char* n[]={"QueryInterface","AddRef","Release","CreateDevice","EnumDevices","GetDeviceStatus","RunControlPanel","Initialize","FindDevice","EnumDevicesBySemantics","ConfigureDevices"};return n[(t-root_trap)/16];
         }
+        if(!range(t,keyboard_trap,32))return "Unknown";
         static const char* n[]={"QueryInterface","AddRef","Release","GetCapabilities","EnumObjects","GetProperty","SetProperty","Acquire","Unacquire","GetDeviceState","GetDeviceData","SetDataFormat","SetEventNotification","SetCooperativeLevel","GetObjectInfo","GetDeviceInfo","RunControlPanel","Initialize","CreateEffect","EnumEffects","GetEffectInfo","GetForceFeedbackState","SendForceFeedbackCommand","EnumCreatedEffectObjects","Escape","Poll","SendDeviceData","EnumEffectsInFile","WriteEffectToFile","BuildActionMap","SetActionMap","GetImageInfo"};
         return n[(t-keyboard_trap)/16];
     }
@@ -42,9 +43,11 @@ public:
         if(!output(w[4],root))return failure();
         fprintf(log_,"startup_dinput_root=owned object=0x%08X vtable_readback=passed\n",root);
         fprintf(log_,"startup_dinput_scope=native_pad_snapshot_keyboard_adapter joystick_callbacks_pending\n");
+        fprintf(log_,"startup_dinput_bindings=dpad_left_stick:arrows cross:Z circle:X square:C triangle:A start:Return select:Escape L:LeftShift R:Space\n");
         return finish(0,sizeof(w),w[0],esp);
     }
     StartupServiceResult call(uint32_t t) {
+        if(!owns(t))return unsupported();
         const bool is_root=range(t,root_trap,11);
         const unsigned slot=(t-(is_root?root_trap:keyboard_trap))/16;
         // Counts include `this`; unimplemented methods preserve their frame.
@@ -122,7 +125,10 @@ public:
                 else {
                     if((!snapshot_pending_ && !sample()) || !output(w[3],keys_))return failure();
                     snapshot_pending_=false;
-                    fprintf(log_,"startup_dinput_keyboard_state=bytes:256 snapshot:%u native_buttons:0x%08X\n",samples_,pad_.buttons);
+                    fprintf(log_,"startup_dinput_keyboard_state=bytes:256 snapshot:%u native_buttons:0x%08X analog:%u,%u\n",samples_,pad_.buttons,pad_.lx,pad_.ly);
+                    for(unsigned key=0;key<keys_.size();++key)if(keys_[key]!=delivered_[key])
+                        fprintf(log_,"startup_dinput_key=scan:0x%02X down:%u snapshot:%u\n",key,keys_[key]?1u:0u,samples_);
+                    delivered_=keys_;
                 }
             } else if(slot==25) {
                 if(!acquired_)hr=0x8007000C;
@@ -175,5 +181,5 @@ private:
     StartupServiceResult unsupported(){fprintf(log_,"startup_dinput_method_executed=no\n");return StartupServiceResult::Unsupported;}
     d2rt::Cpu& cpu_;FILE* log_;uint32_t root_refs_=0,keyboard_refs_=0,samples_=0;unsigned calls_=0;
     bool configured_=false,cooperative_=false,acquired_=false,snapshot_pending_=false;
-    SceCtrlData pad_{};std::array<uint8_t,256> keys_{};
+    SceCtrlData pad_{};std::array<uint8_t,256> keys_{},delivered_{};
 };

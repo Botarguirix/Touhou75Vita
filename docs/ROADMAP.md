@@ -1,48 +1,43 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 85, version 01.89
+## Current checkpoint — iteration 86, version 01.90
 
-Physical 84 reached 239 real Present and 757 draws, including six convex strips
-(1660196 covered pixels, 3.629 s). Total raster/hashing took 63.279 of 104.133 s.
-240 main-wait and 221 cooperative audio contexts were preserved. Graphics
-memory used/peak: 42896712 / 67108864 bytes; shutdown/watchdog valid.
-The run ended at the 240-resume limit, with one initial wait before Present.
+Physical 85 reached 339 Present, 2999 draws and the original TitleScene for
+97 observed waits. The user saw part of the menu and heard complete music
+without problems. All 343 main-wait and 626 audio-dispatch contexts preserved.
+The run stopped by time cap, 180.532 s. Native output: 5777 blocks, maximum
+interval 21759 us, no intervals over two blocks; 473 silent blocks, all inactive.
+Graphics final 28.1 MiB, peak 40.9 MiB, cap 64 MiB; earlier intro storage released.
 
-First 215 scanout and 593 draw hashes match 83. Draw 594 receives different
-animated X coordinates from the EXE (-19.0383 vs -21.8174); later hashes are
-not comparable as fixed inputs. Portable renderer digests stay identical.
+Raster/hashing took 99.620 s. Approximate grouping by scene at the prior wait:
+29.559 s logo, 35.589 s opening, 33.704 s title. Skipping intro saves total work,
+but the per-frame renderer is still CPU-bound and needs GPU acceleration.
 
-Music progressed but was choppy with reported CPU load. Native delivery:
-2170 blocks, maximum interval 22131 us, no intervals over two blocks, 1048
-silent blocks, zero inactive blocks. Postinitial worker waits reached 687872 us.
-The timing data does not establish CPU starvation as the sole audible cause.
-53 ENTIREBUFFER refill locks used nonzero offsets that the bridge incorrectly
-replaced with zero. 85 fixes the offset and preserves the full split ring;
-[Microsoft contract](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mt708932(v=vs.85)).
+86 applies the user's requested menu boot to the mapped known Japanese EXE:
+four validated sites, ten changed bytes; shorten logo, change its original
+transition to title, suppress timed attract demo and keep menu confirmation
+available. Original title constructor/resources/update/draw/input/destructor
+remain. Fingerprints validated against the local target and its dispatcher.
+Disk EXE/DAT are intact. Opening music is omitted with the opening scene.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original startup/display | 239 Present, another opening image; extend original scene progression. |
-| Resource ownership | 64 MiB graphics budget respected; sustained lifecycle pending. |
-| Original PCM | Offset correction tested locally; physical silence/continuity pending. |
-| Opening graphics | Six convex strips now executed on Vita; Windows precision comparison pending. |
-| Performance | Raster dominates; design native GPU backend preserving filters/alpha/state. |
-| Interactive menu | Reach original scene and accept genuine guest selections. |
-| Playable match | Controls, character logic/collisions, audio, round and return to menu. |
+| Original menu | TitleScene observed in 85; menu boot and selections need physical 86. |
+| Audio | Complete opening music confirmed in 85; effects/combats need validation. |
+| Input | Keyboard adapter exists; nine shipping COM groups pass, key-edge/title-state logs added. |
+| Ownership | Storage drops after intro; subsequent scene lifetimes pending. |
+| Performance | Intro work bypassed; CPU raster remains, implement native GPU preserving contracts. |
+| Playable match | Accept genuine selection, controls, logic/collisions, round and menu return. |
 
-Limits now: 360 Present, 361 original wait resumes, 180 s, watchdog 210 s,
-6144 draws, 768 Mi covered pixels, 1024 audio trap dispatches and 64 CPU slices.
-The initial wait is counted separately; original events/timeouts/scenes remain.
-Memory remains bounded independently. PCM ends when the diagnostic stops.
+96 portable groups, ASan/UBSan, -Werror, local fingerprints, 1312-call replay,
+500 strip oracles and 200000 bilinear comparisons passed. POINT/LINEAR/triangle
+-O0/-O2 digests match. VitaSDK/package checks passed. Hardware preset, menu
+interaction and combat remain pending. Alice is freshly decoded from DAT;
+user data/art/builds/decompiler output remain outside Git.
 
-80 portable groups with ASan/UBSan and -Werror, 1312-call replay, 500 strip
-oracles and 200000 bilinear comparisons passed. The new offset regression
-fails with 84's header and passes with 85. POINT/LINEAR/triangle digests match
--O0/-O2. VitaSDK and ZIP/SFO/PNG/SELF validations passed. Alice is freshly
-decoded from the user's DAT; user data/art/builds remain outside Git.
-
-Hardware 85, uninterrupted guest audio, menu and playability remain pending.
-[Status/package](STATUS_ITERATION85.md), [checks](EXE_CHECKLIST_ITERATION85.md)
+Limits remain 360 Present / 361 waits / 180 s, watchdog 210 s,
+6144 draws / 768 Mi pixels / 64 MiB graphics, 1024 audio dispatches / 64 slices.
+[Status/package/controls](STATUS_ITERATION86.md), [checks](EXE_CHECKLIST_ITERATION86.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.

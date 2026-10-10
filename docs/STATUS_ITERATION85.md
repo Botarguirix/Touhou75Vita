@@ -115,3 +115,14 @@ mejora de rendimiento requiere un backend GPU que conserve filtrado, alpha,
 estado y ownership. Menú, controles y combate siguen sin confirmar. Las
 referencias/decompiladores investigados se conservan en
 [investigación](RESEARCH_EXE_ITERATION73.md), sin asumir un motor TH075 completo.
+
+## Resultado físico de la 85 (10 de octubre de 2026)
+
+339 Present, 2999 dibujos y 343 esperas reanudadas. TitleScene original
+observado durante 97 esperas; el usuario vio parte del menú. Música completa
+sin problemas confirmada: 5777 bloques, 473 silenciosos, todos sin voces
+activas; máximo intervalo 21759 us, ninguno mayor a dos bloques.
+343 contextos main y 626 de despacho audio preservados. Raster/hashes:
+99,620 s de 180,532 s. Memoria gráfica final 28,1 MiB frente a pico 40,9 MiB.
+Paró por time_cap en la espera original. Se prepara salto al menú solicitado
+por el usuario y pruebas de controles: [iteración 86](STATUS_ITERATION86.md).

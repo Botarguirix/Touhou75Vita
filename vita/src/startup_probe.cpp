@@ -5,6 +5,7 @@
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
 #include "dinput8_bridge.h"
+#include "exe_boot_options.h"
 #include "dsound_bootstrap.h"
 #include "worker_probe.h"
 #include "seh_chain.h"
@@ -24,13 +25,13 @@ namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
-// Allow the original logo's 181 updates and scene handoff, retaining a
+// Allow the requested menu boot and subsequent original scene handoffs, retaining a
 // separately bounded native watchdog as the hard safety bound.
 constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_timeout_us;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration85-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration86-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -96,7 +97,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration85\n");
+        fprintf(report_, "watchdog_revision=iteration86\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -296,7 +297,15 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     }
     fprintf(log, "startup_iat_intercept_count=%u\n", (unsigned)image.imports().size());
     fprintf(log, "startup_guest_image=restored_from_verified_pe\n");
-    fprintf(log, "startup_text_patch=none\n");
+    const auto menu_preset=exe_boot::apply_menu_preset(
+        [&](uint32_t a,void* p,unsigned n){return cpu.read(a,p,n);},
+        [&](uint32_t a,const void* p,unsigned n){return cpu.write(a,p,n);});
+    if(menu_preset!=exe_boot::Result::Applied) {
+        fprintf(log,"startup_intro_patch=failed result:%u execution:refused\n",unsigned(menu_preset));return false;
+    }
+    for(const auto& patch:exe_boot::menu_patches)cpu.discard_code(patch.address,patch.size);
+    fprintf(log,"startup_text_patch=user_requested_menu_boot sites:4 modified_bytes:10 scope:mapped_verified_exe disk:unchanged\n");
+    fprintf(log,"startup_intro_patch=applied logo_updates:1 transition:0x2202 idle_demo:disabled menu_input:native\n");
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;
@@ -795,7 +804,14 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             fprintf(log,"startup_frame_scene=object:0x%08X vtable:0x%08X update:0x%08X draw:0x%08X scope:observed_guest_object\n",scene,vtable,methods[1],methods[2]);
             uint16_t age=0;
             if(vtable==0x00657BE0 && cpu.read(scene+0xC,&age,2))
-                fprintf(log,"startup_frame_logo_age=%u transition_after:180 scope:original_guest_counter\n",unsigned(age));
+                fprintf(log,"startup_frame_logo_age=%u transition_after:0 scope:user_requested_menu_boot\n",unsigned(age));
+            if(vtable==0x00658308) {
+                uint8_t selected=0;uint32_t elapsed=0,vertical=0,escape=0;
+                if(cpu.read(scene+0x38,&selected,1) && cpu.read(scene+0xC,&elapsed,4) &&
+                   cpu.read(scene+0x18,&vertical,4) && cpu.read(scene+0x1C,&escape,4))
+                    fprintf(log,"startup_frame_title_state=selection:%u elapsed_ms:%u vertical:%d escape_frames:%u scope:read_only_original_fields\n",
+                        unsigned(selected),elapsed,int32_t(vertical),escape);
+            }
         }
         fprintf(log,"startup_frame_wait=blocked frame:%u handle:0x%08X timeout:infinite producer:timer_worker\n",frame_wait_resumes+1,wait[1]);
         // Cooperatively run the original refill worker only at an observed
