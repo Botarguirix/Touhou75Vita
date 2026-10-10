@@ -4,6 +4,7 @@
 #include "runtime/guest_thread.h"
 namespace d2rt { class Cpu; class PeImage; }
 class StartupServices;
+class DirectSoundBootstrap;
 struct StartupWorker {
     d2rt::X86Context context{};
     uint32_t handle = 0x00AB4000, id = 12, event = 0, timeout_ms = 0;
@@ -13,4 +14,4 @@ struct StartupWorker {
     bool unsupported_boundary = false;
 };
 bool run_worker_probe(d2rt::Cpu&, const d2rt::PeImage&, uint32_t, StartupServices&, StartupWorker&, FILE*);
-bool wake_worker_slice(d2rt::Cpu&, const d2rt::PeImage&, StartupServices&, StartupWorker&, FILE*);
+bool wake_worker_slice(d2rt::Cpu&, const d2rt::PeImage&, StartupServices&, StartupWorker&, FILE*, DirectSoundBootstrap* = nullptr);

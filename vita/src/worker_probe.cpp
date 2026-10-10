@@ -1,5 +1,6 @@
 #include "worker_probe.h"
 #include "startup_services.h"
+#include "dsound_bootstrap.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread.h"
@@ -98,7 +99,7 @@ bool run_worker_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image, uint32_t frame
 }
 
 bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices& services,
-                       StartupWorker& worker,FILE* log) {
+                       StartupWorker& worker,FILE* log,DirectSoundBootstrap* sound) {
     const uint32_t stack=worker.id==13?0x00A20000:0x00A00000,top=stack+0x20000;
     if(!worker.blocked || worker.timeout_ms!=(worker.id==13?80u:16u) || !services.event_unsignaled(worker.event)) {
         fprintf(log,"worker_wake_result=unsupported_wait_state\n"); return false;
@@ -138,12 +139,23 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
     bool boundary=false,failed=false;
     unsigned calls=0;
     cpu.set_trap(0x00B00000,0x00C00000,[&](d2rt::Cpu& c,uint32_t trap){
-        if(trap<0x00B00000 || (trap-0x00B00000)%16 || (trap-0x00B00000)/16>=image.imports().size()) {failed=true;return false;}
-        const auto& imp=image.imports()[(trap-0x00B00000)/16];
         const uint32_t sp=c.reg(d2rt::R_ESP);
         uint32_t return_va=0;
         if(sp<stack || uint64_t(sp)+12>top || !c.read(sp,&return_va,4) ||
            return_va<image.load_base() || uint64_t(return_va)>=uint64_t(image.load_base())+image.image_size()) {failed=true;return false;}
+        if(sound && sound->owns(trap)) {
+            fprintf(log,"worker_resumed_com=%s::%s return:0x%08X id:%u\n",sound->interface_name(trap),sound->method_name(trap),return_va,worker.id);
+            if(++calls>32){failed=true;return false;}
+            const auto result=sound->call(trap);
+            if(result==StartupServiceResult::Serviced)return true;
+            if(result==StartupServiceResult::ContractFailure){failed=true;return false;}
+            worker.unsupported_boundary=true;c.save_context(worker.context);boundary=true;
+            worker.context.fs_base=wx86_cur_tib();
+            fprintf(log,"startup_stop_import=%s::%s\nstartup_stop_worker_eip=0x%08X esp:0x%08X id:%u\nstartup_stop_thread=worker\n",sound->interface_name(trap),sound->method_name(trap),trap,sp,worker.id);
+            return false;
+        }
+        if(trap<0x00B00000 || (trap-0x00B00000)%16 || (trap-0x00B00000)/16>=image.imports().size()) {failed=true;return false;}
+        const auto& imp=image.imports()[(trap-0x00B00000)/16];
         fprintf(log,"worker_resumed_import=%s!%s\n",imp.dll.c_str(),imp.name.c_str());
         fprintf(log,"worker_resumed_return_va=0x%08X\n",return_va);
         if(imp.dll=="KERNEL32.dll" && imp.name=="WaitForSingleObject") {
@@ -174,6 +186,8 @@ bool wake_worker_slice(d2rt::Cpu& cpu,const d2rt::PeImage& image,StartupServices
     const char* fault=nullptr;
     const bool stopped=cpu.run(ret,&fault);
     const bool limit=cpu.take_limit_hit();
+    fprintf(log,"worker_wake_execution=stopped:%s limit:%s calls:%u eip:0x%08X esp:0x%08X id:%u\n",stopped?"yes":"no",limit?"yes":"no",calls,cpu.reg(d2rt::R_EIP),cpu.reg(d2rt::R_ESP),worker.id);
+    if(limit)fprintf(log,"startup_stop_import=WORKER CPU BUDGET\nstartup_stop_thread=worker\n");
     if(fault)fprintf(log,"worker_wake_fault=%s\n",fault);
     const bool passed=stopped&&!limit&&!failed&&boundary;
     fprintf(log,"worker_wake_result=%s\n",passed?"next_boundary_reached":"failed");

@@ -1,15 +1,21 @@
 #pragma once
 #include "startup_services.h"
 #include "runtime/cpu.h"
+#include "dsound_pcm_mixer.h"
 #include <psp2/audioout.h>
+#include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/processmgr.h>
 #include <array>
 #include <limits>
 #include <vector>
 #include <algorithm>
 #include <new>
+#include <mutex>
+#include <atomic>
+#include <cstring>
 
 // Restricted original TH075 COM activation and native audio-port ownership.
-// PCM storage and upload are owned; mixing and playback remain boundaries.
+// PCM storage belongs to the original EXE; output never opens or selects a DAT.
 class DirectSoundBootstrap {
 public:
     static constexpr uint32_t object=0x00AD1000, vtable=object+0x100, trap_base=0x00BF6000,
@@ -26,6 +32,25 @@ public:
         return names[(t-trap_base)/16];
     }
     unsigned serviced_calls()const{return calls_;}
+    bool playback_active(){std::lock_guard<std::mutex> guard(audio_mutex_);for(const auto& b:buffers_)if(b.refs && b.playing)return true;return false;}
+    bool healthy()const{return audio_error_.load(std::memory_order_acquire)>=0;}
+    void shutdown_playback(){
+        if(audio_thread_<0)return;
+        quit_.store(true,std::memory_order_release);
+        const int wait=sceKernelWaitThreadEnd(audio_thread_,nullptr,nullptr);
+        fprintf(log_,"startup_dsound_output_join_rc=0x%08X\n",unsigned(wait));
+        // Do not release the object while an unjoined output thread may use it.
+        if(wait<0)sceKernelExitProcess(1);
+        const int deleted=sceKernelDeleteThread(audio_thread_);audio_thread_=-1;
+        fprintf(log_,"startup_dsound_output_delete_rc=0x%08X\n",unsigned(deleted));
+        if(deleted<0)audio_error_.store(deleted,std::memory_order_release);
+        std::lock_guard<std::mutex> guard(audio_mutex_);
+        dsound_pcm::positions(buffers_,0);
+        for(auto& b:buffers_)if(b.refs)dsound_pcm::stop(b);
+        fprintf(log_,"startup_dsound_output_summary=blocks:%llu nonzero_samples:%llu first_fnv1a:0x%08X first_peak:%u max_fill_us:%llu rc:0x%08X drain_rc:0x%08X scope:original_guest_pcm_native_output audible:pending_user\n",
+            (unsigned long long)output_blocks_,(unsigned long long)nonzero_samples_,first_hash_,first_peak_,
+            (unsigned long long)max_fill_us_,unsigned(audio_error_.load()),unsigned(drain_rc_));
+    }
     StartupServiceResult create(bool apartment_ready){
         uint32_t w[6]{};const uint32_t esp=cpu_.reg(d2rt::R_ESP);
         if(!frame(esp,sizeof(w)) || !cpu_.read(esp,w,sizeof(w)))return failure();
@@ -43,6 +68,7 @@ public:
         return finish(0,sizeof(w),w[0],esp);
     }
     StartupServiceResult call(uint32_t t){
+        if(!healthy()){fprintf(log_,"startup_dsound_async_error=0x%08X\n",unsigned(audio_error_.load()));return failure();}
         if(t<primary_trap)return secondary_call(t);
         if(t<trap_base)return primary_call(t);
         const unsigned slot=(t-trap_base)/16;
@@ -103,9 +129,63 @@ public:
         return finish(hr,cleanup,w[0],esp);
     }
 private:
-    struct PcmBuffer{uint32_t refs=0,flags=0,hz=0,original_hz=0,channels=0,bits=0,align=0,position=0;int32_t volume=0,pan=0;
-        std::vector<uint8_t> bytes;};
-    std::array<PcmBuffer,128> buffers_{};unsigned buffer_count_=0;uint32_t pcm_used_=0,locked_handle_=0;
+    dsound_pcm::Buffers buffers_{};unsigned buffer_count_=0;uint32_t pcm_used_=0,locked_handle_=0;
+    std::mutex audio_mutex_;std::atomic<bool> quit_{false};std::atomic<int> audio_error_{0};
+    SceUID audio_thread_=-1;uint64_t output_blocks_=0,nonzero_samples_=0,max_fill_us_=0;
+    uint32_t first_hash_=0,first_peak_=0;int drain_rc_=0;
+    static int output_entry(SceSize size,void* arg){
+        DirectSoundBootstrap* self=nullptr;
+        if(size!=sizeof(self) || !arg)return -1;
+        std::memcpy(&self,arg,sizeof(self));return self?self->output_loop():-1;
+    }
+    int output_loop(){
+        alignas(64) std::array<dsound_pcm::Block,2> blocks{};unsigned index=0;
+        do {
+            dsound_pcm::Commit pending{};
+            const uint64_t before=sceKernelGetProcessTimeWide();
+            {
+                std::lock_guard<std::mutex> guard(audio_mutex_);
+                const int rest=sceAudioOutGetRestSample(port_);
+                if(rest<0){audio_error_.store(rest,std::memory_order_release);break;}
+                dsound_pcm::positions(buffers_,unsigned(rest));
+                dsound_pcm::prepare(buffers_,blocks[index],pending);
+            }
+            max_fill_us_=std::max(max_fill_us_,sceKernelGetProcessTimeWide()-before);
+            const int rc=sceAudioOutOutput(port_,blocks[index].data());
+            if(rc<0){audio_error_.store(rc,std::memory_order_release);break;}
+            {
+                std::lock_guard<std::mutex> guard(audio_mutex_);
+                dsound_pcm::commit(buffers_,pending);
+            }
+            uint32_t hash=2166136261u,peak=0;
+            for(const int16_t v:blocks[index]){
+                const uint16_t word=uint16_t(v);hash=(hash^uint8_t(word))*16777619u;hash=(hash^uint8_t(word>>8))*16777619u;
+                if(v)++nonzero_samples_;
+                peak=std::max(peak,uint32_t(v<0?-int(v):int(v)));
+            }
+            if(!output_blocks_){first_hash_=hash;first_peak_=peak;}
+            ++output_blocks_;index^=1;
+        }while(!quit_.load(std::memory_order_acquire));
+        drain_rc_=sceAudioOutOutput(port_,nullptr);
+        if(drain_rc_<0)audio_error_.store(drain_rc_,std::memory_order_release);
+        return audio_error_.load();
+    }
+    bool start_output(){
+        if(audio_thread_>=0)return healthy();
+        quit_.store(false,std::memory_order_release);
+        int volume[2]={SCE_AUDIO_OUT_MAX_VOL,SCE_AUDIO_OUT_MAX_VOL};
+        const int rc=sceAudioOutSetVolume(port_,static_cast<SceAudioOutChannelFlag>(SCE_AUDIO_VOLUME_FLAG_L_CH|SCE_AUDIO_VOLUME_FLAG_R_CH),volume);
+        fprintf(log_,"startup_dsound_output_volume_rc=0x%08X gain:guest_volume\n",unsigned(rc));
+        if(rc<0)return false;
+        audio_thread_=sceKernelCreateThread("th075_guest_pcm",output_entry,0x10000100,64*1024,0,0,nullptr);
+        fprintf(log_,"startup_dsound_output_thread_create_rc=0x%08X\n",unsigned(audio_thread_));
+        if(audio_thread_<0)return false;
+        auto* self=this;const int started=sceKernelStartThread(audio_thread_,sizeof(self),&self);
+        fprintf(log_,"startup_dsound_output_thread_start_rc=0x%08X\n",unsigned(started));
+        if(started<0){sceKernelDeleteThread(audio_thread_);audio_thread_=-1;return false;}
+        fprintf(log_,"startup_dsound_output_pipeline=guest_owned_pcm linear_48000_stereo blocks:1024 double_buffer:64byte_aligned cursor:submitted_minus_native_queue\n");
+        return true;
+    }
     std::array<uint32_t,4> lock_spans_{};
     static void put16(uint8_t* p,uint32_t v){p[0]=uint8_t(v);p[1]=uint8_t(v>>8);}
     static void put32(uint8_t* p,uint32_t v){put16(p,v);put16(p+2,v>>16);}
@@ -113,6 +193,7 @@ private:
     static uint16_t le16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
     static uint32_t le32(const uint8_t* p){return uint32_t(le16(p))|uint32_t(le16(p+2))<<16;}
     StartupServiceResult allocate_secondary(const std::array<uint32_t,9>& d,const uint32_t* w){
+        std::lock_guard<std::mutex> guard(audio_mutex_);
         // PCM may use PCMWAVEFORMAT's 16-byte prefix. cbSize is ignored for
         // WAVE_FORMAT_PCM; reading it can consume the following RIFF chunk.
         // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/ns-mmeapi-waveformatex
@@ -139,12 +220,17 @@ private:
     }
     StartupServiceResult secondary_call(uint32_t t){
         const unsigned slot=(t-secondary_trap)/16;
-        unsigned argc=0;switch(slot){case 0:argc=3;break;case 1:case 2:argc=1;break;case 3:case 6:case 7:case 8:case 9:case 13:case 15:case 16:case 17:argc=2;break;case 4:argc=3;break;case 5:argc=4;break;case 18:case 20:argc=1;break;case 11:argc=8;break;case 19:argc=5;break;default:return unsupported();}
+        unsigned argc=0;switch(slot){case 0:argc=3;break;case 1:case 2:argc=1;break;case 3:case 6:case 7:case 8:case 9:case 13:case 15:case 16:case 17:argc=2;break;case 4:argc=3;break;case 5:case 12:argc=4;break;case 18:case 20:argc=1;break;case 11:argc=8;break;case 19:argc=5;break;default:return unsupported();}
         uint32_t w[9]{},vt=0;const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=4*(argc+1);
         fprintf(log_,"startup_dsound_method=IDirectSoundBuffer::%s secondary slot=%u\n",method_name(t),slot);
         if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || w[1]<secondary || (w[1]-secondary)%8 ||
             (w[1]-secondary)/8>=buffer_count_ || !cpu_.read(w[1],&vt,4) || vt!=secondary_table)return failure();
+        std::lock_guard<std::mutex> guard(audio_mutex_);
         auto& b=buffers_[(w[1]-secondary)/8];if(!b.refs)return failure();uint32_t hr=0;
+        unsigned queued=0;
+        if(audio_thread_>=0){const int rest=sceAudioOutGetRestSample(port_);
+            if(rest<0){audio_error_.store(rest,std::memory_order_release);fprintf(log_,"startup_dsound_native_queue_rc=0x%08X\n",unsigned(rest));return failure();}
+            queued=unsigned(rest);dsound_pcm::positions(buffers_,queued);}
         if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();const bool match=iid==unknown_iid || iid==buffer_iid || iid==buffer8_iid;
             fprintf(log_,"startup_dsound_pcm_qi=iid:%08X-%08X-%08X-%08X supported:%s\n",iid[0],iid[1],iid[2],iid[3],match?"yes":"no");
             if(match && b.refs==0xFFFFFFFFu)return failure();
@@ -152,14 +238,16 @@ private:
             if(match)++b.refs;else hr=0x80004002;
         }else if(slot==1){if(b.refs==0xFFFFFFFFu)return failure();hr=++b.refs;
         }else if(slot==2){if(locked_handle_==w[1])return unsupported();hr=--b.refs;
-            if(!b.refs){pcm_used_-=b.bytes.size();std::vector<uint8_t>().swap(b.bytes);if(!write(w[1],0u) || !refs_)return failure();--refs_;}
+            if(!b.refs){dsound_pcm::stop(b);pcm_used_-=b.bytes.size();std::vector<uint8_t>().swap(b.bytes);if(!write(w[1],0u) || !refs_)return failure();--refs_;}
         }else if(slot==3){
             uint32_t size=0;if(!cpu_.read(w[2],&size,4))return failure();
             if(size!=20)hr=0x80070057;
             else{std::array<uint32_t,5> caps={20,(b.flags&~0x40004u)|8u,uint32_t(b.bytes.size()),0,0};
                 if(!output(w[2],caps.data(),sizeof(caps)))return failure();}
         }else if(slot==4){
-            if((w[2] && !write(w[2],b.position)) || (w[3] && !write(w[3],b.position)))return failure();
+            const uint32_t next=dsound_pcm::write_cursor(b,queued);
+            if((w[2] && !write(w[2],b.position)) || (w[3] && !write(w[3],next)))return failure();
+            fprintf(log_,"startup_dsound_pcm_cursor=handle:0x%08X play:%u write:%u native_queued_frames:%u source:submitted_minus_native_queue block_resolution:1024\n",w[1],b.position,next,queued);
         }else if(slot==5){
             std::array<uint8_t,18> fmt{};put16(fmt.data(),1);put16(fmt.data()+2,b.channels);
             put32(fmt.data()+4,b.original_hz);put32(fmt.data()+8,b.original_hz*b.align);
@@ -175,11 +263,19 @@ private:
             if(!(b.flags&0x20u))hr=0x8878001E;
             else if(w[2] && (w[2]<100 || w[2]>200000))hr=0x80070057;
             else b.hz=w[2]?w[2]:b.original_hz;
-        }else if(slot==18 || slot==20){
-            // No Play is serviced yet, and buffers have no device-loss transition.
-            // Stop is idempotent; Restore preserves owned sample storage.
-        }else if(slot==9){if(!write(w[2],0u))return failure(); // Never played: stopped status.
-        }else if(slot==13){if(w[2]>=b.bytes.size() || w[2]%b.align)return unsupported();b.position=w[2];
+        }else if(slot==12){
+            fprintf(log_,"startup_dsound_play=handle:0x%08X reserved1:%u reserved2:%u flags:0x%08X bytes:%u hz:%u volume:%d\n",w[1],w[2],w[3],w[4],unsigned(b.bytes.size()),b.hz,b.volume);
+            if(w[2] || w[3] || w[4]>1 || locked_handle_==w[1])return unsupported();
+            // Repeating the observed flags must retain an in-flight commit.
+            // Switching loop mode mid-stream needs a separate end/queue anchor.
+            if(b.playing && b.looping!=(w[4]==1))return unsupported();
+            if(!b.playing)dsound_pcm::seek(b,b.position);
+            b.looping=w[4]==1;b.playing=true;
+            if(!start_output()){dsound_pcm::stop(b);return failure();}
+        }else if(slot==18){dsound_pcm::stop(b);
+        }else if(slot==20){ // No device-loss transition; retain owned samples.
+        }else if(slot==9){if(!write(w[2],b.playing?(1u|(b.looping?4u:0u)):0u))return failure();
+        }else if(slot==13){if(w[2]>=b.bytes.size() || w[2]%b.align)return unsupported();dsound_pcm::seek(b,w[2]);
         }else if(slot==15 || slot==16){
             if(!(b.flags&(slot==15?0x80u:0x40u)))return unsupported();
             const int32_t v=int32_t(w[2]);if((slot==15 && (v>0 || v< -10000)) || (slot==16 && (v< -10000 || v>10000)))return unsupported();
@@ -199,9 +295,9 @@ private:
             if(locked_handle_!=w[1] || !std::equal(lock_spans_.begin(),lock_spans_.end(),w+2))return failure();
             if(!cpu_.read(pcm_staging,b.bytes.data(),b.bytes.size()))return failure();
             uint32_t hash=2166136261u;for(uint8_t v:b.bytes)hash=(hash^v)*16777619u;
-            locked_handle_=0;fprintf(log_,"startup_dsound_pcm_upload=handle:0x%08X bytes:%u fnv1a:0x%08X playback:no\n",w[1],unsigned(b.bytes.size()),hash);
+            locked_handle_=0;fprintf(log_,"startup_dsound_pcm_upload=handle:0x%08X bytes:%u fnv1a:0x%08X playback:%s\n",w[1],unsigned(b.bytes.size()),hash,b.playing?"active":"stopped");
         }
-        fprintf(log_,"startup_dsound_pcm_contract=method:%s handle:0x%08X result:0x%08X bytes:%u cursor:%u playback:no\n",method_name(t),w[1],hr,unsigned(b.bytes.size()),b.position);
+        fprintf(log_,"startup_dsound_pcm_contract=method:%s handle:0x%08X result:0x%08X bytes:%u cursor:%u playback:%s\n",method_name(t),w[1],hr,unsigned(b.bytes.size()),b.position,b.playing?"active":"stopped");
         return finish(hr,cleanup,w[0],esp);
     }
     StartupServiceResult primary_call(uint32_t t){
@@ -231,6 +327,7 @@ private:
     bool guid(uint32_t p,Guid& value){return p>=0x10000 && cpu_.read(p,value.data(),sizeof(value));}
     bool write(uint32_t p,uint32_t value){return p>=0x10000 && uint64_t(p)+4<=0x02000000 && cpu_.write(p,&value,4);}
     void close_port(){
+        shutdown_playback();
         if(port_>=0){const int rc=sceAudioOutReleasePort(port_);fprintf(log_,"startup_dsound_native_release_rc=0x%08X\n",unsigned(rc));port_=-1;}
     }
     StartupServiceResult finish(uint32_t hr,uint32_t cleanup,uint32_t ret,uint32_t esp){
@@ -243,7 +340,7 @@ private:
         if(valid)++calls_;
         return valid?StartupServiceResult::Serviced:failure();
     }
-    StartupServiceResult unsupported(){fprintf(log_,"startup_dsound_method_executed=no playback:no\n");return StartupServiceResult::Unsupported;}
+    StartupServiceResult unsupported(){fprintf(log_,"startup_dsound_method_executed=no\n");return StartupServiceResult::Unsupported;}
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
     d2rt::Cpu& cpu_;FILE* log_;uint32_t refs_=0,primary_refs_=0;unsigned calls_=0;int port_=-1;bool cooperative_=false;
 };

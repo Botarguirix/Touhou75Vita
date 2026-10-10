@@ -1,47 +1,51 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 80, version 01.84
+## Current checkpoint — iteration 81, version 01.85
 
-Hardware 79 confirmed all 24 original opening.dat texture allocations and
-uploads, totaling 42896712 live graphics bytes within the 64 MiB cap. No
-allocation was denied. The logo's final release again freed 2097152 bytes.
-All 203 scanout hashes and genuine timer/main continuations matched 78;
-native set/vblank/query returned success and active scanout matched each frame.
-The run took 70.31 s with no CPU limit and a disarmed watchdog. The capture
-remains black after the logo fade because the next scene has not drawn yet.
+Hardware 80 passed the 16-byte PCM format contract. The original EXE created
+its 40th secondary buffer: 1048576 bytes, stereo 44100 Hz / 16 bits. It requested
+Buffer8, locked the entire buffer, read 524288 bytes and uploaded it with FNV
+EE255525; the second half remained initialized silence. SetVolume succeeded.
+The next original call is IDirectSoundBuffer::Play, not serviced by 80.
 
-Native memory observations now ran on Vita: heap reserve 134217728 bytes,
-managed 57831424, in use 57415616, free chunks 415808, top chunk 170160.
-Kernel free USER_RW was 62914560 bytes, separately from the reserved heap.
-These counters do not establish contiguous allocation capacity.
+All 203 scanout hashes, uploaded textures and 39 earlier PCM uploads matched
+79. Opening textures occupy 42896712 graphics bytes; the constructor has not
+finished. The capture is black after the logo fade. The run took 71.03 s,
+without a CPU limit, and the watchdog disarmed. No opening frame or playable
+menu has been established.
 
-The next boundary is CreateSoundBuffer: 1048576 bytes, stereo PCM 44100 Hz,
-16 bits, block alignment 4 and byte rate 176400. The existing bridge read
-18 format bytes and rejected the final word 24932 (bytes 64 61 / da).
-The original WAV files have 16-byte PCM formats followed by data chunks.
-Microsoft specifies that cbSize is ignored for WAVE_FORMAT_PCM.
+81 implements playback of guest-owned PCM through a dedicated native output
+thread: stereo signed 16-bit at 48 kHz, 1024-frame blocks, linear resampling,
+volume/pan, saturating mixing, looping, Stop and seek. Submitted progress minus
+native queued frames estimates the play cursor. This estimate has block
+resolution and needs physical validation. It is not a hardware sample-clock
+measurement. The original audio worker can service COM calls after its actual
+80 ms timeout at observed main waits; it keeps its own context and TIB.
 
-Iteration 80 reads only that PCM prefix, while retaining actual owned buffers,
-silence initialization, format/alignment/size checks, QI and lock/upload
-contracts. The new test reproduces the old rejection and passes after the fix.
-41 portable groups, a 1312-call D3D ownership replay, renderer -O0/-O2 output
-comparison, VitaSDK compilation and package inspection passed. No EXE or
-native audio playback runs in the portable checks. Hardware 80 is pending.
+54 portable groups passed with ASan/UBSan and -Werror, alongside a 1312-call
+D3D ownership replay and matching -O0/-O2 renderer results. Native audio APIs
+are simulated in these checks; they do not run the EXE. VitaSDK and package
+inspection passed. Hardware 81 is pending.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original loading, timer and display | Confirmed through 203 real frames and complete logo exit. |
-| Resource lifetime and memory | Logo released on 78/79; all 24 opening images uploaded on 79. Sustained scene/menu lifecycle remains incomplete. |
-| Opening scene construction | Texture loading completed; 80 fixes the observed PCM format rejection. Original constructor return and following services need hardware validation. |
-| Guest music and scheduler | 39 effect buffers uploaded with unchanged hashes. Stereo stream storage prepared; Play, cursor progression, mixing and continuous workers remain pending. |
-| Opening scene pixels | Continue original update/draw and native Present after frame 203. |
-| Original interactive menu | Scene transitions, Windows comparison and a real guest input selection. |
-| Playable match | Character logic, collision/effects, guest audio, frame timing, round completion and return to menu. |
+| Original loading, timer and display | Confirmed through 203 real frames and complete logo exit on 80. |
+| Resource lifetime and memory | Logo released; all 24 opening images uploaded. Sustained scene/menu lifecycle remains incomplete. |
+| Opening scene construction | Stereo stream created and initially loaded on 80; constructor return and subsequent contracts still need hardware evidence. |
+| Guest audio and scheduler | 81 implements real PCM output and cooperative refill-worker dispatch. Confirm sound, cursor behavior and timely refills on Vita. |
+| Opening scene pixels | Continue original update/draw and native Present beyond frame 203; implement newly observed render profiles. |
+| Original interactive menu | Compare scenes with Windows, then accept a real guest input selection. |
+| Playable match | Character logic, collisions/effects, sustained guest audio, timing, round completion and return to menu. |
 
-Limits remain 240 real frames/waits, 100 s, 120 s watchdog, 512 draws and
-128 Mi covered pixels. Diagnostic music and sprite browsing remain removed.
-A checkpoint PASS does not establish a playable game or a completion percentage.
-See [status/package](STATUS_ITERATION80.md), [checks](EXE_CHECKLIST_ITERATION80.md)
+Limits remain 240 real frames/waits, 100 s, 120 s watchdog, 512 draws,
+128 Mi covered pixels and 64 main resume slices. Diagnostic music and sprite
+browsing remain removed. PCM now comes from the EXE's actual buffers.
+The initial loaded half lasts about 2.97 s; continued music requires the
+original refill worker to advance successfully. Audibility, smooth playback
+and frame performance are not established by host tests.
+
+A checkpoint PASS does not establish playability or a completion percentage.
+See [status/package](STATUS_ITERATION81.md), [checks](EXE_CHECKLIST_ITERATION81.md)
 and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
 
 Historical observations follow below.

@@ -1,18 +1,12 @@
 // Exercise the shipping bridge with synthetic PCM and COM frames. Port setup
-// is simulated; no game binary, Vita SDK, mixer or playback is exercised.
+// is simulated; no game binary or Vita hardware is exercised.
 #include "../vita/src/dsound_bootstrap.h"
 #include <cassert>
 #include <cstring>
 #include <initializer_list>
 
-static unsigned opened=0,closed=0;
-int sceAudioOutOpenPort(int type,int len,int hz,int mode){
-    assert(type==0 && len==1024 && hz==48000 && mode==1);++opened;return 7;
-}
-int sceAudioOutGetConfig(int port,int type){
-    assert(port==7);return type==0?1024:type==1?48000:1;
-}
-int sceAudioOutReleasePort(int port){assert(port==7);++closed;return 0;}
+#include "support/dsound_native_stub.h"
+struct LogFile {FILE* file=std::tmpfile();~LogFile(){if(file)std::fclose(file);}};
 
 class HostCpu final:public d2rt::Cpu {
 public:
@@ -49,9 +43,9 @@ public:
 struct Fixture {
     static constexpr uint32_t stack=0x009F0000,out=0x00900000,desc=out+0x100,
         format=out+0x200,guid=out+0x300,ret=0x00406A9B;
-    HostCpu cpu;FILE* log=std::tmpfile();DirectSoundBootstrap sound{cpu,log};
+    HostCpu cpu;LogFile log;DirectSoundBootstrap sound{cpu,log.file};
     Fixture(){
-        assert(log);
+        assert(log.file);
         const uint32_t clsid[]={0x3901CC3F,0x4FA484B5,0x81AA35BA,0x9BA0B872};
         const uint32_t iid[]={0xC50A7E93,0x4834F395,0xA97FF69E,0x6609E59D};
         assert(cpu.write(guid,clsid,16) && cpu.write(guid+16,iid,16));
@@ -61,7 +55,7 @@ struct Fixture {
         assert(call(DirectSoundBootstrap::trap_base,10,{DirectSoundBootstrap::object,0})==0);
         assert(call(DirectSoundBootstrap::trap_base,6,{DirectSoundBootstrap::object,0xAB7000,2})==0);
     }
-    ~Fixture(){assert(call(DirectSoundBootstrap::trap_base,2,{DirectSoundBootstrap::object})==0);std::fclose(log);}
+    ~Fixture(){if(sound.healthy())assert(call(DirectSoundBootstrap::trap_base,2,{DirectSoundBootstrap::object})==0);}
     uint32_t call(uint32_t base,unsigned slot,std::initializer_list<uint32_t> args,
         StartupServiceResult expected=StartupServiceResult::Serviced){
         std::vector<uint32_t> w{ret};w.insert(w.end(),args.begin(),args.end());
@@ -171,9 +165,66 @@ int main(){
         assert(f.buffer(b,5,{Fixture::out,18,Fixture::out+24})==0);
         assert(f.cpu.read_u32(Fixture::out+24)==18 && f.cpu.bytes[Fixture::out+16]==0 && f.cpu.bytes[Fixture::out+17]==0);
         assert(f.buffer(b,9,{Fixture::out})==0 && f.cpu.read_u32(Fixture::out)==0);
-        f.buffer(b,12,{},StartupServiceResult::Unsupported);
+        f.buffer(b,12,{1,0,1},StartupServiceResult::Unsupported);
         f.release(b);
-        puts("PASS canonical GetFormat, stopped status and explicit unsupported playback boundary");
+        puts("PASS canonical GetFormat, stopped status and unsupported reserved Play arguments");
     }
-    assert(opened==closed);puts("PASS simulated port references balanced; no native audio submitted");
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(1048576);
+        assert(f.buffer(b,11,{0,524288,Fixture::out+16,Fixture::out+20,Fixture::out+24,Fixture::out+28,2})==0);
+        const auto p=f.cpu.read_u32(Fixture::out+16);assert(f.cpu.read_u32(Fixture::out+20)==1048576);
+        for(unsigned i=0;i<524288;i+=4){f.cpu.bytes[p+i]=0x10;f.cpu.bytes[p+i+1]=0x27;f.cpu.bytes[p+i+2]=0xF0;f.cpu.bytes[p+i+3]=0xD8;}
+        assert(f.buffer(b,19,{p,1048576,0,0})==0);
+        assert(f.buffer(b,12,{0,0,1})==0);native_stub::wait_block();
+        assert(f.buffer(b,9,{Fixture::out})==0 && f.cpu.read_u32(Fixture::out)==5);
+        assert(f.buffer(b,4,{Fixture::out,Fixture::out+4})==0 && f.cpu.read_u32(Fixture::out)==0);
+        assert(f.buffer(b,12,{0,0,1})==0); // repeated Play retains position
+        assert(f.buffer(b,13,{4})==0); // seek while an old epoch is pending
+        assert(f.buffer(b,18)==0);
+        assert(f.buffer(b,9,{Fixture::out})==0 && f.cpu.read_u32(Fixture::out)==0);
+        native_stub::finish();f.sound.shutdown_playback();
+        assert(native_stub::captured[0][0]==10000 && native_stub::captured[0][1]==-10000);
+        assert(f.buffer(b,4,{Fixture::out,0})==0 && f.cpu.read_u32(Fixture::out)==4);
+        f.release(b);puts("PASS physical-80 Play frame, captured guest samples, status, repeated Play, seek, Stop and join");
+    }
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(1048576);
+        assert(f.buffer(b,12,{0,0,1})==0);native_stub::wait_block();
+        assert(f.buffer(b,12,{0,0,1})==0);
+        f.buffer(b,12,{0,0,0},StartupServiceResult::Unsupported);
+        native_stub::finish();f.sound.shutdown_playback();
+        assert(f.buffer(b,4,{Fixture::out,0})==0 && f.cpu.read_u32(Fixture::out)>0);
+        f.release(b);puts("PASS repeated Play retains accepted block progress; active loop-mode switch remains explicit boundary");
+    }
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(4096);
+        assert(f.buffer(b,12,{0,0,1})==0);native_stub::wait_block();f.release(b);
+        native_stub::finish();f.sound.shutdown_playback();
+        puts("PASS last buffer release while output pending discards stale cursor commit and joins before port release");
+    }
+    for(unsigned kind=0;kind<3;++kind){
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(4096);
+        if(kind==0)native_stub::fail_volume=-101;
+        if(kind==1)native_stub::fail_create=-102;
+        if(kind==2)native_stub::fail_start=-103;
+        f.buffer(b,12,{0,0,1},StartupServiceResult::ContractFailure);
+        assert(!f.sound.playback_active());f.release(b);
+    }
+    puts("PASS native volume, thread creation and thread start failures do not report successful playback");
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(4096);
+        native_stub::fail_output=-104;assert(f.buffer(b,12,{0,0,1})==0);
+        native_stub::wait_block();native_stub::finish();f.sound.shutdown_playback();
+        assert(!f.sound.healthy());f.buffer(b,9,{Fixture::out},StartupServiceResult::ContractFailure);
+        puts("PASS asynchronous output failure propagates, drains and joins without accepting another service");
+    }
+    {
+        native_stub::reset();Fixture f;f.pcm(Fixture::format);const auto b=f.allocate(4096);
+        assert(f.buffer(b,12,{0,0,1})==0);native_stub::wait_block();native_stub::rest.store(-105);
+        f.buffer(b,4,{Fixture::out,Fixture::out+4},StartupServiceResult::ContractFailure);
+        assert(!f.sound.healthy());native_stub::finish();f.sound.shutdown_playback();
+        puts("PASS failed native queue query records asynchronous failure and leaves the guest call unconsumed");
+    }
+    assert(native_stub::opened==native_stub::closed && native_stub::starts==native_stub::joins);
+    puts("PASS simulated port and thread references balanced; Vita audibility remains unverified");
 }
