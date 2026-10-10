@@ -36,8 +36,11 @@ inline void capture_first_exe_quad(const uint8_t* bytes,size_t size,
     fprintf(log,"startup_d3d8_draw_capture=ready viewport:%u,%u,%u,%u preview:260x180 scope:%s\n",x0,y0,view_width,view_height,replace?"presented_backbuffer_rgb":"first_quad_rgb_not_present");
 }
 inline void capture_presented_exe_frame(const uint8_t* bytes,size_t size,
-    uint32_t width,uint32_t height,uint32_t pitch,uint32_t frame,FILE* log) {
-    capture_first_exe_quad(bytes,size,width,height,pitch,0,0,width,height,log,true);
+    uint32_t width,uint32_t height,uint32_t pitch,uint32_t frame,FILE* log,bool byte_identical=false) {
+    if(byte_identical && exe_present_frames && exe_draw_ready &&
+        exe_draw_width==width && exe_draw_height==height)
+        fprintf(log,"startup_d3d8_draw_capture=retained frame:%u scope:confirmed_byte_identical_backbuffer\n",frame);
+    else capture_first_exe_quad(bytes,size,width,height,pitch,0,0,width,height,log,true);
     exe_present_frames=frame;
 }
 inline void draw_exe_snapshot(uint32_t* target){

@@ -1,5 +1,6 @@
 #pragma once
 #include "d3d8_present_frame.h"
+#include "d3d8_present_cache.h"
 #include <psp2/display.h>
 #include <psp2/kernel/sysmem.h>
 #include <cstdio>
@@ -13,10 +14,16 @@ public:
     ExePresenter(const ExePresenter&)=delete;
     ExePresenter& operator=(const ExePresenter&)=delete;
     bool present(const d3d8_quad::Image& source) {
+        reused_source_=false;
         if(!allocate())return false;
-        const unsigned index=next_;
+        unsigned index=next_;
         uint32_t hash=0;
-        if(!d3d8_present::prepare(source,bases_[index],960u*544u,hash))return false;
+        const bool reused=cache_.lookup(source,index,hash);
+        // On a hit the confirmed scanout is reused without any writes. A miss
+        // always prepares the other owned buffer, leaving active scanout intact.
+        if(!reused && !d3d8_present::prepare(source,bases_[index],960u*544u,hash))return false;
+        fprintf(log_,"startup_d3d8_present_conversion=%s slot:%u equality:%s\n",
+            reused?"reused":"prepared",index,reused?"all_source_bytes":"not_cached");
         SceDisplayFrameBuf fb={};fb.size=sizeof(fb);fb.base=bases_[index];fb.pitch=960;
         fb.pixelformat=SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;fb.width=960;fb.height=544;
         const int rc=sceDisplaySetFrameBuf(&fb,SCE_DISPLAY_SETBUF_NEXTFRAME);
@@ -27,9 +34,12 @@ public:
             active.width==fb.width && active.height==fb.height && active.pixelformat==fb.pixelformat;
         fprintf(log_,"startup_d3d8_present_native=set_rc:0x%08X wait_rc:0x%08X query_rc:0x%08X matches:%s slot:%u scanout_fnv1a:0x%08X source:640x480 output:960x544 image:725x544\n",
             unsigned(rc),unsigned(wait_rc),unsigned(query_rc),matches?"yes":"no",index,hash);
-        if(rc<0 || wait_rc<0 || !matches)return false;
-        next_^=1;return true;
+        if(rc<0 || wait_rc<0 || !matches){cache_.invalidate();return false;}
+        if(!reused && !cache_.remember_confirmed(source,index,hash))
+            fprintf(log_,"startup_d3d8_present_cache=unavailable fallback:normal_conversion\n");
+        reused_source_=reused;next_=index^1u;return true;
     }
+    bool reused_source() const{return reused_source_;}
 private:
     bool allocate() {
         if(bases_[0] && bases_[1])return true;
@@ -67,4 +77,5 @@ private:
         }
     }
     FILE* log_;SceUID blocks_[2]={-1,-1};uint32_t* bases_[2]={nullptr,nullptr};unsigned next_=0;
+    d3d8_present::FrameCache cache_;bool reused_source_=false;
 };

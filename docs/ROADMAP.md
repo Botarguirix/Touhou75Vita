@@ -1,36 +1,45 @@
 # Touhou 7.5 Vita port roadmap
-## Current checkpoint — iteration 76, version 01.80
+## Current checkpoint — iteration 77, version 01.81
 
-Hardware 75 confirmed eight original Present frames with active scanout
-matching on every call. The original timer worker signaled AB2004 eight times;
-main consumed each auto-reset event and retained GPR/flags/TIB/FPU,
-call frame and LastError. It stopped before the ninth Present as configured,
-after 37.37 s, with no CPU fault/limit and a disarmed watchdog.
+Hardware 76 confirmed sixteen original Present calls and sixteen genuine
+timer/main continuations. Native set/vblank/query returned success with active
+scanout matching on every frame. The first eight hashes match hardware 75.
+The original fade completed at frame 11: state 2004 became 0004 and transition
+counter 66C240 became -1. Frames 11..16 show the fully visible logo.
+The bounded run stopped before Present 17, after 21.21 s, with preserved main
+contexts, no CPU fault/limit and a disarmed watchdog.
 
-The Vita application had a blank CMake build type and no optimization flag.
-Iteration 76 defaults to RelWithDebInfo (-O2) with fast-math and floating-point
-contraction disabled. It permits sixteen real frames/waits and records
-draw/present/cycle timing plus the observed guest transition counter.
-The 45 s cap, 60 s watchdog, memory/ABI guards and 64-slice maximum remain.
-The static fade path suggests more frames can reach the next original scene;
-neither that transition nor a speed gain has been confirmed on hardware.
-See [evidence/scope](STATUS_ITERATION76.md),
-[EXE checklist](EXE_CHECKLIST_ITERATION76.md) and
-[decompiler/external research](RESEARCH_EXE_ITERATION73.md).
+The original logo update at 4255D0 increments a WORD at scene+0C after
+Present. It requests 220D when that age exceeds 180. The main then fades out
+the old scene and constructs scene 0D through branch 603498 / ctor 4275D0.
+These are static observations of the pinned Japanese EXE; that handoff has
+not run to completion on hardware. Sixteen frames cannot reach this condition.
 
-| Next milestone | Current evidence / remaining work |
+Iteration 77 permits up to 240 real frames/waits, with a 75 s time cap and
+90 s watchdog. Native conversion/preview are reused only after full byte
+equality with the last confirmed source. Every guest draw, original counter
+update, timer signal, frame wait and native Present still executes.
+The new scene/age logs observe the original logic without changing it.
+512 draw calls and 128 Mi covered pixels bound the longer diagnostic run;
+the existing owned-resource allocation budget stays at 32 MiB.
+See [evidence and package](STATUS_ITERATION77.md),
+[checks](EXE_CHECKLIST_ITERATION77.md) and
+[external/decompiler research](RESEARCH_EXE_ITERATION73.md).
+
+| Milestone | Evidence / remaining work |
 |---|---|
-| First EXE pixels | Hardware 72/73 confirmed logo drawing and fade. |
-| Original message/frame loop | Hardware 74 confirmed PeekMessage; 75 confirmed eight timer/main continuations and native Present frames. 76 extends the bounded run. |
-| Original menu | Finish the initial transition, capture the next service/draw profile and compare title/menu frames with Windows. |
-| Interactive scene | Continuous timer/audio scheduling, guest input and DirectSound mixing alongside rendering. No posted input bridge is connected to the message queue. |
-| Playable match | Character logic, effects, collision, timing, round completion and return to menu. |
+| First EXE pixels | Hardware 72/73 confirmed original logo and fade draws. |
+| Message/frame loop | Hardware 74 confirmed PeekMessage; 75 confirmed eight and 76 sixteen timer/main continuations with native Present. |
+| Logo handoff | Initial fade confirmed in 76. 77 targets the original 181-update condition and next scene; physical validation pending. |
+| Original menu | Capture the next scene's resource/service/draw contracts and compare with Windows. |
+| Interactive scene | Continuous timer/audio scheduling, keyboard/controller bridge and DirectSound mixing with rendering. |
+| Playable match | Character logic, collision, effects, timing, round completion and return to menu. |
 
-Eighteen portable groups and the -O0/-O2 renderer digest comparison passed.
-VitaSDK compilation and package inspection passed; physical 76 is pending.
-Diagnostic music and sprite browsing remain removed. The original EXE and
-its data still supply the game's logic/resources; checkpoint PASS does not
-establish a playable menu or a completion percentage.
+23 focused portable groups passed with ASan/UBSan; renderer output matched
+between -O0 and -O2. VitaSDK compilation and ZIP/SFO/PNG inspection passed.
+The cache's native display behavior and speed still need a physical run.
+The auxiliary music player and sprite browser remain removed. A startup
+checkpoint PASS does not establish gameplay or a completion percentage.
 
 Historical observations follow below.
 

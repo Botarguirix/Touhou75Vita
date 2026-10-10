@@ -428,7 +428,7 @@ private:
         const uint64_t started=sceKernelGetProcessTimeWide();
         if(!presenter_.present(image))return failure();
         ++present_calls_;
-        th075::capture_presented_exe_frame(back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,present_calls_,log_);
+        th075::capture_presented_exe_frame(back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,present_calls_,log_,presenter_.reused_source());
         fprintf(log_,"startup_d3d8_present_elapsed_us=%llu frame:%u scope:prepare_native_capture\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),present_calls_);
         fprintf(log_,"startup_d3d8_present=executed frame:%u backbuffer:0x%08X\n",present_calls_,back_);
         return serviced();

@@ -23,13 +23,13 @@ namespace {
 constexpr uint32_t kStack = 0x00800000, kStackEnd = 0x00A00000;
 constexpr uint32_t kTrap = 0x00B00000, kTrapEnd = 0x00C00000;
 constexpr uint32_t kSentinel = 0x00BFFFF0, kEntry = 0x0064232C;
-// Allow the original entrypoint to traverse the post-HeapCreate allocator
-// setup while retaining the 60-second watchdog as the hard safety bound.
+// Allow the original logo's 181 updates and scene handoff, retaining a
+// separately bounded native watchdog as the hard safety bound.
 constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_timeout_us;
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration76-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration77-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -95,7 +95,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration76\n");
+        fprintf(report_, "watchdog_revision=iteration77\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -712,6 +712,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         const uint32_t ebp=cpu.reg(d2rt::R_EBP);
         if(cpu.read(0x0066C240,&counter,4) && ebp>=kStack+0x3C && stack_range(ebp-0x3C,2) && cpu.read(ebp-0x3C,&state,2))
             fprintf(log,"startup_frame_phase=state_word:0x%04X transition_counter:0x%08X scope:observed_guest_globals\n",unsigned(state),counter);
+        // Read the original main scene only at the exact observed wait. The
+        // logo age is incremented by guest code after Present; never write it.
+        uint32_t scene=0,vtable=0,methods[3]{};
+        if(ebp>=kStack+0x184 && stack_range(ebp-0x184,4) &&
+            cpu.read(ebp-0x184,&scene,4) && scene>=0x10000 &&
+            uint64_t(scene)+16<=0x02000000 && cpu.read(scene,&vtable,4) &&
+            vtable>=image.load_base() && uint64_t(vtable)+sizeof(methods)<=uint64_t(image.load_base())+image.image_size() &&
+            cpu.read(vtable,methods,sizeof(methods))) {
+            fprintf(log,"startup_frame_scene=object:0x%08X vtable:0x%08X update:0x%08X draw:0x%08X scope:observed_guest_object\n",scene,vtable,methods[1],methods[2]);
+            uint16_t age=0;
+            if(vtable==0x00657BE0 && cpu.read(scene+0xC,&age,2))
+                fprintf(log,"startup_frame_logo_age=%u transition_after:180 scope:original_guest_counter\n",unsigned(age));
+        }
         fprintf(log,"startup_frame_wait=blocked frame:%u handle:0x%08X timeout:infinite producer:timer_worker\n",frame_wait_resumes+1,wait[1]);
         worker_ok=wake_worker_slice(cpu,image,services,worker,log);
         cpu.set_trap(kTrap,kTrapEnd,startup_trap);
