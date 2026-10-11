@@ -85,9 +85,13 @@ private:
             const int mask=i?SCE_KERNEL_CPU_MASK_USER_2:SCE_KERNEL_CPU_MASK_USER_1;
             worker.id=sceKernelCreateThread(i?"th075_raster_core2":"th075_raster_core1",
                 entry,0x10000110,128*1024,0,mask,nullptr);
+            fprintf(log_,"startup_raster_worker_create=core:%u rc:0x%08X\n",worker.core,unsigned(worker.id));
+            fflush(log_);
             if(worker.id<0){fprintf(log_,"startup_raster_worker_create=failed core:%u rc:0x%08X fallback:serial\n",worker.core,unsigned(worker.id));shutdown();return false;}
             auto* arg=&worker;
             const int started=sceKernelStartThread(worker.id,sizeof(arg),&arg);
+            fprintf(log_,"startup_raster_worker_start=core:%u rc:0x%08X\n",worker.core,unsigned(started));
+            fflush(log_);
             if(started<0){fprintf(log_,"startup_raster_worker_start=failed core:%u rc:0x%08X fallback:serial\n",worker.core,unsigned(started));shutdown();return false;}
             worker.started=true;
             std::unique_lock<std::mutex> lock(worker.mutex);
@@ -95,6 +99,7 @@ private:
             const bool matches=worker.affinity==mask && worker.cpu==int(worker.core);
             fprintf(log_,"startup_raster_worker=core:%u affinity:0x%08X actual_cpu:%d priority:0x10000110 stack:131072 verified:%s\n",
                 worker.core,unsigned(worker.affinity),worker.cpu,matches?"yes":"no");
+            fflush(log_);
             lock.unlock();
             if(!matches){shutdown();return false;}
         }

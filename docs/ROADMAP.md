@@ -1,32 +1,28 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 87, version 01.91
+## Current checkpoint — iteration 88, version 01.92
 
-Physical 86 confirmed original menu boot/navigation and clean effects.
-272 Present, 5811 draws, 250 observed title waits; selection 0..9.
-Stop by 180 s time cap, graphics final/peak 29.0 MiB.
-Raster/hashes 88.729 s; Present/conversion/capture/display waits 54.769 s.
+Physical 86 confirmed the original menu, controls and clean effects.
+Physical 87 crashed during first worker initialization: the static ELF
+omitted pthread_cancel, GCC/VitaSDK's C++ mutex activation marker. The
+core shows pthread_cond_wait calling pthread_mutex_unlock on a null mutex.
 
-87 keeps the same boot/controls, divides large draws into three disjoint row
-bands (main core 0 plus native workers cores 1/2), omits per-pixel/scanout
-diagnostic hashes and repetitive state dumps. Workers sleep between jobs,
-use lower priority than audio/watchdog and join before resources can change.
-Complete byte/count/probe comparisons, failure/lifetime tests, 106 groups,
-oracles/replay, sanitizers, VitaSDK and package checks passed. Physical speed,
-image/audio preservation and entry to a playable match remain pending.
+88 fixes static linking, checks active threading/mutex support before the
+EXE and flushes worker create/start/verification checkpoints. Multicore row
+rendering and menu/input remain. 107 portable groups, native ELF symbol/code
+inspection, sanitizers, VitaSDK and package checks passed.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Menu boot and input | Confirmed in physical 86; preserve in 87. |
-| Native PCM | Complete music in 85 and clean menu effects in 86; combat voices pending. |
-| Multicore raster | Implemented with native affinity readback; physical scheduling/performance pending. |
-| GPU | GXM/libvita2d researched; D3D8 texture/filter/alpha/target ownership backend pending. |
-| Match | Genuine selection, character logic/collisions, controls, audio, round and menu return. |
+| Menu/input | Physical 86 confirmed; recheck in 88. |
+| Native PCM | Complete music in 85, clean menu effects in 86; recheck with active native mutexes. |
+| Multicore raster | 87 startup crash diagnosed; 88 boot/scheduling/performance pending Vita. |
+| GPU | GXM/libvita2d researched; backend pending. |
+| Match | Real character selection, gameplay, collision, audio and return to menu pending. |
 
-360 Present / 361 waits / 180 s / 210 s watchdog; draw capacity becomes
-12288 so the observed draws/frame fit that frame scope. 768 Mi pixels,
-64 MiB graphics, 1024 audio trap dispatches remain bounded.
-[Status/package](STATUS_ITERATION87.md), [checks](EXE_CHECKLIST_ITERATION87.md),
+360 Present / 361 waits / 180 s / 210 s watchdog / 12288 draws /
+768 Mi pixels / 64 MiB graphics / 1024 audio dispatches remain bounded.
+[Status/package](STATUS_ITERATION88.md), [checks](EXE_CHECKLIST_ITERATION88.md),
 [CPU/GPU investigation](PERFORMANCE_ITERATION87.md).
 
 Historical observations follow below.

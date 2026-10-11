@@ -22,9 +22,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 87 Parallel Raster")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 88 Thread Startup")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.91")
+set(VITA_VERSION "01.92")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
@@ -58,6 +58,11 @@ target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -fno-fast-math -ffp
 # page alignment alone can leave too little space as the executable grows.
 target_link_options(${PROJECT_NAME} PRIVATE
   "LINKER:--defsym=__sce_headroom=0x10000"
+  # GCC's Vita gthr-posix backend tests a weak pthread_cancel reference to
+  # enable C++ mutex initialization/locking. Native sceKernelCreateThread
+  # does not pull this object from libpthread.a. Force its inclusion: without
+  # it, std::mutex is inert while condition_variable still calls pthread.
+  "LINKER:--undefined=pthread_cancel"
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/src"

@@ -102,3 +102,13 @@ y audio. Si hay fallback:serial, diagnosticar ese motivo con sus rc.
 La mejora de FPS/tiempo y limpieza del audio bajo esta carga requieren Vita.
 Los otros núcleos pueden mostrar más carga al repartir trabajo; importa
 cuánto tarda cada frame, no que todos los porcentajes bajen.
+
+## Resultado físico posterior: fallo de arranque
+
+La 87 produjo C2-12828-1 antes de presentar el juego. El core localiza
+pthread_mutex_unlock desde pthread_cond_wait en la primera inicialización
+del pool. El ELF carecía del marcador pthread_cancel que activa los mutex
+C++ de GCC/VitaSDK. Los tests del host no detectaron ese caso de enlace.
+La 88 corrige el enlace y añade preflight/regresión de símbolos; véase
+[diagnóstico y paquete 88](STATUS_ITERATION88.md). El paralelismo/rendimiento
+de la 87 no quedaron confirmados físicamente.
