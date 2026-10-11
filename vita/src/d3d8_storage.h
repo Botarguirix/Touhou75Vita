@@ -556,7 +556,7 @@ private:
                     d3d8_quad::rasterize(quad,image,output,view,settings,stats);
                 if(result==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
-                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_workers_and_join_no_pixel_hashes");
+                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_executor_no_pixel_hashes");
                     fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
                     fprintf(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
                     fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");

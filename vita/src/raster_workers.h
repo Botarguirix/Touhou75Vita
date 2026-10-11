@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <cstring>
 
+// Experimental: disabled in the Vita application after the physical89 crash.
+// Raw sceKernel threads lack the pthread cancellation context used by cond_wait.
+// Host std::thread stubs do not model that Vita SDK requirement.
 // Main/core 0 retains the only x86 CPU/JIT. Workers on user cores 1 and 2
 // touch immutable texture bytes and disjoint destination rows, never the VM.
 // Sleep between draws; lower priority than PCM output and the watchdog.

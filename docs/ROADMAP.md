@@ -1,32 +1,30 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 89, version 01.93
+## Current checkpoint — iteration 90, version 01.94
 
 Physical 86 confirmed the original menu, controls and clean effects.
-Physical 87 crashed during first worker initialization: the static ELF
-omitted pthread_cancel, GCC/VitaSDK's C++ mutex activation marker. The
-core shows pthread_cond_wait calling pthread_mutex_unlock on a null mutex.
+The multicore integration in 87 caused successive startup failures: omitted
+pthread activation in 87, omitted emutls initialization in 88, then an
+unregistered OS pthread cancellation context in the first raw raster worker
+in 89. Physical 89 passes preflight/VM/JIT and original initialization.
 
-Physical 88 passed its native mutex check, then crashed in the JIT's emutls
-access: libgcc's weak pthread_once call had been omitted from the static
-link, so its TLS mutex was never initialized. 89 includes pthread_once and
-pthread_cond_destroy as well as pthread_cancel, and tests once/TLS before
-the VM and TLS within both raster workers. Build identity and startup logs
-are flushed before VM initialization. 109 portable groups, native ELF
-inspection, sanitizers, VitaSDK and package checks passed. New LiveArea art
-uses original imagegen masters; stale iteration/version assets reject packaging.
+90 uses the serial renderer from the confirmed checkpoint; the raster pool
+is no longer included in the application's ELF/SELF. Reduced diagnostic
+hashing and the native TLS link corrections remain. 110 portable groups,
+sanitizers, VitaSDK, ELF/SELF and package checks passed. Physical recovery
+is pending; the pool's lifecycle must be corrected before reactivation.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Menu/input | Physical 86 confirmed; recheck in 89. |
-| Native PCM | Complete music in 85, clean menu effects in 86; recheck with active native mutexes. |
-| Multicore raster | 87/88 crashes diagnosed; 89 boot/scheduling/performance pending Vita. |
-| GPU | GXM/libvita2d researched; backend pending. |
+| Menu/input | Physical 86 confirmed; recheck serial recovery in 90. |
+| Native PCM | Complete music in 85, clean menu effects in 86; recheck in 90. |
+| Multicore raster | 87–89 crashes diagnosed; disabled in 90; registered thread lifecycle and physical validation pending. |
+| GPU | GXM/libvita2d investigated; backend pending. |
 | Match | Real character selection, gameplay, collision, audio and return to menu pending. |
 
 360 Present / 361 waits / 180 s / 210 s watchdog / 12288 draws /
 768 Mi pixels / 64 MiB graphics / 1024 audio dispatches remain bounded.
-[Status/package](STATUS_ITERATION89.md), [checks](EXE_CHECKLIST_ITERATION89.md),
+[Comparison/status/package](STATUS_ITERATION90.md), [checks](EXE_CHECKLIST_ITERATION90.md),
 [CPU/GPU investigation](PERFORMANCE_ITERATION87.md).
 
 Historical observations follow below.

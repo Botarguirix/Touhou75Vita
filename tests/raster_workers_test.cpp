@@ -75,6 +75,25 @@ struct Fixture {
         assert(bytes==reference && !got.hashes_valid);same(got,wanted);}
 };
 int main(){
+    stub::reset();
+    {
+        Fixture f;
+        for(unsigned geometry=0;geometry<2;++geometry){if(geometry)f.rectangle();
+            for(unsigned filter:{1u,2u})for(uint32_t target_format:{21u,22u})for(uint32_t source_format:{21u,25u}) {
+                f.settings.filter=filter;f.target.format=target_format;
+                f.source.format=source_format;f.source.pitch=source_format==21?16*4+8:16*2+8;
+                const auto wanted=f.expected();Stats got;
+                assert(execute_serial_no_hashes(nullptr,f.vertices,f.source,f.target,f.viewport,f.settings,got)==Result::Rendered);
+                assert(f.bytes==f.reference && !got.hashes_valid);Fixture::same(got,wanted);
+            }}
+        const auto original=f.bytes;Stats stats;
+        f.settings.alpha_ref=256;
+        assert(execute_serial_no_hashes(nullptr,f.vertices,f.source,f.target,f.viewport,f.settings,stats)==Result::Unsupported && f.bytes==original);
+        f.settings.alpha_ref=1;f.vertices[0].x=std::numeric_limits<float>::quiet_NaN();
+        assert(execute_serial_no_hashes(nullptr,f.vertices,f.source,f.target,f.viewport,f.settings,stats)==Result::Unsupported && f.bytes==original);
+        assert(stub::creates==0 && stub::starts==0 && stub::joins==0);
+        puts("PASS serial recovery executor preserves every pixel and statistic across formats/filters/geometry, rejects invalid draws and creates no workers");
+    }
     {
         Fixture f;for(unsigned geometry=0;geometry<2;++geometry){if(geometry)f.rectangle();
             for(unsigned filter:{1u,2u}){f.settings.filter=filter;const auto original=f.bytes;

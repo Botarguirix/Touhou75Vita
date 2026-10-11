@@ -7,6 +7,14 @@ namespace d3d8_quad {
 using RasterExecutor=Result(*)(void*,const Vertex (&)[4],const Image&,
     const Target&,const Viewport&,const Settings&,Stats&);
 
+// Recovery path: use the serial renderer confirmed on physical Vita 86.
+// Keep the diagnostic hash reduction; this never creates or waits for workers.
+inline Result execute_serial_no_hashes(void*,const Vertex (&v)[4],const Image& source,
+    const Target& target,const Viewport& viewport,const Settings& requested,Stats& stats) {
+    Settings settings=requested;settings.hash_pixels=false;
+    return rasterize(v,source,target,viewport,settings,stats);
+}
+
 inline std::array<Viewport,3> row_bands(const Vertex (&v)[4],const Viewport& vp) {
     double top=v[0].y,bottom=top;
     for(const auto& vertex:v){top=std::min(top,double(vertex.y));bottom=std::max(bottom,double(vertex.y));}

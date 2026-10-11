@@ -1,5 +1,15 @@
 # Iteración 89 — TLS Startup y arte de LiveArea
 
+## Resultado físico posterior
+
+La 89 supera once/TLS/preflight, VM/JIT y la inicialización original, pero
+falla al esperar dentro del primer worker. Su core completo identifica
+pte_osSemaphoreCancellablePend con el contexto OS pthread nulo de un hilo
+creado directamente mediante sceKernelCreateThread. La corrección TLS
+funcionó para el principal; no resolvió el ciclo de vida del pool.
+[Iteración 90](STATUS_ITERATION90.md) revisa la regresión desde 86 y prepara
+una recuperación serial. Rendimiento multinúcleo de la 89 no medido.
+
 ## Resultado físico de la 88
 
 El usuario confirma que la aplicación no abre. iteration88.log contiene
