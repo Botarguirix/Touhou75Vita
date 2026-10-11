@@ -1,3 +1,4 @@
+#include "diagnostic_log.h"
 #include "startup_probe.h"
 #include "startup_resume_policy.h"
 #include "startup_limits.h"
@@ -32,7 +33,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration90-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration91-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -94,23 +95,23 @@ public:
     bool start(FILE* log) {
         report_ = fopen(kWatchdogPath, "wb");
         if (!report_) {
-            fprintf(log, "startup_watchdog_error=log_open_failed\n");
+            th075::diagnostic_log(log, "startup_watchdog_error=log_open_failed\n");
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration90\n");
+        fprintf(report_, "watchdog_revision=iteration91\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
-        fprintf(log, "startup_watchdog_priority=0x%08X\n", (unsigned)kWatchdogPriority);
+        th075::diagnostic_log(log, "startup_watchdog_priority=0x%08X\n", (unsigned)kWatchdogPriority);
         fprintf(report_, "watchdog_priority=0x%08X\n", (unsigned)kWatchdogPriority);
         deadline_ = sceKernelGetProcessTimeWide() + kTimeoutUs;
         thread_ = sceKernelCreateThread("TH075 startup guard", entry,
             kWatchdogPriority, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_1, nullptr);
         if (thread_ < 0) {
-            fprintf(log, "startup_watchdog_create_rc=0x%08X\n", (unsigned)thread_);
+            th075::diagnostic_log(log, "startup_watchdog_create_rc=0x%08X\n", (unsigned)thread_);
             if ((uint32_t)thread_ == (uint32_t)SCE_KERNEL_ERROR_ILLEGAL_PRIORITY)
-                fprintf(log, "startup_watchdog_error=illegal_priority\n");
+                th075::diagnostic_log(log, "startup_watchdog_error=illegal_priority\n");
             fprintf(report_, "watchdog_result=create_failed\n");
             fclose(report_); report_ = nullptr;
             return false;
@@ -118,7 +119,7 @@ public:
         StartupWatchdog* self = this;
         const int rc = sceKernelStartThread(thread_, sizeof(self), &self);
         if (rc < 0) {
-            fprintf(log, "startup_watchdog_start_rc=0x%08X\n", (unsigned)rc);
+            th075::diagnostic_log(log, "startup_watchdog_start_rc=0x%08X\n", (unsigned)rc);
             fprintf(report_, "watchdog_result=start_failed\n");
             sceKernelDeleteThread(thread_); thread_ = -1;
             fclose(report_); report_ = nullptr;
@@ -128,17 +129,17 @@ public:
         while (!ready_.load() && sceKernelGetProcessTimeWide() < ready_deadline)
             sceKernelDelayThread(1000);
         if (!ready_.load()) {
-            fprintf(log, "startup_watchdog_error=thread_not_ready\n");
+            th075::diagnostic_log(log, "startup_watchdog_error=thread_not_ready\n");
             finish();
             return false;
         }
         if (!placement_ok_) {
-            fprintf(log, "startup_watchdog_error=affinity_failed\n");
+            th075::diagnostic_log(log, "startup_watchdog_error=affinity_failed\n");
             finish();
             return false;
         }
-        fprintf(log, "startup_watchdog=armed\n");
-        fprintf(log, "startup_watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
+        th075::diagnostic_log(log, "startup_watchdog=armed\n");
+        th075::diagnostic_log(log, "startup_watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         return true;
     }
     void finish() {
@@ -222,22 +223,22 @@ struct RunnerPlacement {
     bool pin() {
         old_mask = sceKernelGetThreadCpuAffinityMask(sceKernelGetThreadId());
         if (old_mask < 0) {
-            fprintf(log, "startup_runner_affinity_query_rc=0x%08X\n", (unsigned)old_mask);
+            th075::diagnostic_log(log, "startup_runner_affinity_query_rc=0x%08X\n", (unsigned)old_mask);
             return false;
         }
         unsigned mask = 0;
         const int rc = wx86_vita_pin_self(SCE_KERNEL_CPU_MASK_USER_0, &mask);
         pinned = rc >= 0;
-        fprintf(log, "startup_runner_pin_rc=0x%08X\n", (unsigned)rc);
-        fprintf(log, "startup_runner_affinity_readback=0x%08X\n", mask);
-        fprintf(log, "startup_runner_cpu_id=%d scope:native_query\n",sceKernelGetCpuId());
+        th075::diagnostic_log(log, "startup_runner_pin_rc=0x%08X\n", (unsigned)rc);
+        th075::diagnostic_log(log, "startup_runner_affinity_readback=0x%08X\n", mask);
+        th075::diagnostic_log(log, "startup_runner_cpu_id=%d scope:native_query\n",sceKernelGetCpuId());
         return pinned;
     }
     ~RunnerPlacement() {
         if (pinned) {
             unsigned mask = 0;
             const int rc = wx86_vita_pin_self(old_mask, &mask);
-            fprintf(log, "startup_runner_affinity_restore_rc=0x%08X\n", (unsigned)rc);
+            th075::diagnostic_log(log, "startup_runner_affinity_restore_rc=0x%08X\n", (unsigned)rc);
         }
     }
 };
@@ -245,9 +246,9 @@ struct RunnerPlacement {
 
 bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                        const std::vector<uint8_t>& exe, FILE* log) {
-    fprintf(log, "startup_scope=original_exe_crt_single_thread_sync\n");
-    fprintf(log, "startup_import_policy=serve_startup_and_heap_contracts_stop_before_unknown_import\n");
-    fprintf(log, "game_bootable=not_yet_established\n");
+    th075::diagnostic_log(log, "startup_scope=original_exe_crt_single_thread_sync\n");
+    th075::diagnostic_log(log, "startup_import_policy=serve_startup_and_heap_contracts_stop_before_unknown_import\n");
+    th075::diagnostic_log(log, "game_bootable=not_yet_established\n");
     // This checkpoint doesn't initialize PE static TLS or call its callbacks.
     // Refuse an executable needing that setup rather than skip it silently.
     uint32_t nt = 0, directories = 0, tls_rva = 0, tls_size = 0;
@@ -255,14 +256,14 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         (directories > 9 &&
          (!file_u32(exe, uint64_t(nt) + 24 + 96 + 9 * 8, tls_rva) ||
           !file_u32(exe, uint64_t(nt) + 24 + 100 + 9 * 8, tls_size)))) {
-        fprintf(log, "startup_result=invalid_tls_directory\n"); return false;
+        th075::diagnostic_log(log, "startup_result=invalid_tls_directory\n"); return false;
     }
-    fprintf(log, "startup_pe_tls_rva=0x%08X\n", tls_rva);
-    fprintf(log, "startup_pe_tls_size=%u\n", tls_size);
+    th075::diagnostic_log(log, "startup_pe_tls_rva=0x%08X\n", tls_rva);
+    th075::diagnostic_log(log, "startup_pe_tls_size=%u\n", tls_size);
     if (tls_rva || tls_size || image.entry_va() != kEntry ||
         image.load_base() != 0x00400000 || image.imports().empty() ||
         image.imports().size() >= (kSentinel - kTrap) / 16) {
-        fprintf(log, "startup_result=unsupported_image_layout\n"); return false;
+        th075::diagnostic_log(log, "startup_result=unsupported_image_layout\n"); return false;
     }
     // The smoke bridge patched its own PE copy. Restore the original image
     // and invalidate all earlier translations before establishing this phase.
@@ -270,21 +271,22 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     cpu.discard_code(0x00713000, 0x1000);
     if (!cpu.map(image.load_base(), image.image_size(), image.image().data(), d2rt::P_RWX) ||
         !cpu.map(kStack, kStackEnd - kStack, nullptr, d2rt::P_RW)) {
-        fprintf(log, "startup_result=map_failed\n"); return false;
+        th075::diagnostic_log(log, "startup_result=map_failed\n"); return false;
     }
     ThreadSmoke thread(cpu, log);
     if (!thread.initialize()) {
-        fprintf(log, "startup_result=context_failed\n"); return false;
+        th075::diagnostic_log(log, "startup_result=context_failed\n"); return false;
     }
     StartupServices services(cpu, image, log);
     D3D8Bootstrap d3d8(cpu,log);
     d3d8.set_raster_executor(d3d8_quad::execute_serial_no_hashes,nullptr);
-    fprintf(log,"startup_raster_policy=serial_recovery main_user_core0 raster_workers:disabled pixel_hashes:disabled draw_state_dump:boundaries gpu:not_initialized baseline:physical86\n");
+    d3d8.enable_half_resolution();
+    th075::diagnostic_log(log,"startup_raster_policy=serial_half_resolution native:320x240 guest:640x480 main_user_core0 raster_workers:disabled pixel_hashes:disabled draw_state_dump:boundaries gpu:not_initialized baseline:physical90\n");
     DirectInput8Bridge input(cpu,log);
     DirectSoundBootstrap sound(cpu,log);
     TrapCleanup cleanup{cpu};
     if (image.imports().size() > (StartupServices::processor_feature_trap - kTrap) / 16) {
-        fprintf(log, "startup_result=trap_space_exhausted\n"); return false;
+        th075::diagnostic_log(log, "startup_result=trap_space_exhausted\n"); return false;
     }
     for (size_t i = 0; i < image.imports().size(); ++i) {
         const uint32_t target = kTrap + uint32_t(i) * 16;
@@ -292,24 +294,24 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if (iat < image.load_base() || uint64_t(iat) + 4 >
             uint64_t(image.load_base()) + image.image_size() ||
             !cpu.write(iat, &target, 4)) {
-            fprintf(log, "startup_result=iat_write_failed\n"); return false;
+            th075::diagnostic_log(log, "startup_result=iat_write_failed\n"); return false;
         }
         uint32_t copy = 0;
         if (!cpu.read(iat, &copy, 4) || copy != target) {
-            fprintf(log, "startup_result=iat_readback_failed\n"); return false;
+            th075::diagnostic_log(log, "startup_result=iat_readback_failed\n"); return false;
         }
     }
-    fprintf(log, "startup_iat_intercept_count=%u\n", (unsigned)image.imports().size());
-    fprintf(log, "startup_guest_image=restored_from_verified_pe\n");
+    th075::diagnostic_log(log, "startup_iat_intercept_count=%u\n", (unsigned)image.imports().size());
+    th075::diagnostic_log(log, "startup_guest_image=restored_from_verified_pe\n");
     const auto menu_preset=exe_boot::apply_menu_preset(
         [&](uint32_t a,void* p,unsigned n){return cpu.read(a,p,n);},
         [&](uint32_t a,const void* p,unsigned n){return cpu.write(a,p,n);});
     if(menu_preset!=exe_boot::Result::Applied) {
-        fprintf(log,"startup_intro_patch=failed result:%u execution:refused\n",unsigned(menu_preset));return false;
+        th075::diagnostic_log(log,"startup_intro_patch=failed result:%u execution:refused\n",unsigned(menu_preset));return false;
     }
     for(const auto& patch:exe_boot::menu_patches)cpu.discard_code(patch.address,patch.size);
-    fprintf(log,"startup_text_patch=user_requested_menu_boot sites:4 modified_bytes:10 scope:mapped_verified_exe disk:unchanged\n");
-    fprintf(log,"startup_intro_patch=applied logo_updates:1 transition:0x2202 idle_demo:disabled menu_input:native\n");
+    th075::diagnostic_log(log,"startup_text_patch=user_requested_menu_boot sites:4 modified_bytes:10 scope:mapped_verified_exe disk:unchanged\n");
+    th075::diagnostic_log(log,"startup_intro_patch=applied logo_updates:1 transition:0x2202 idle_demo:disabled menu_input:native\n");
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;
@@ -327,15 +329,15 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     const d2rt::ImportRef dynamic_processor = {
         "KERNEL32.dll", "IsProcessorFeaturePresent", 0, 0, 0};
     unsigned boundaries_since_flush=0;
-    fprintf(log,"startup_logging=all_calls_recorded flush_every:32_successful_callbacks flush_on:stop_or_slice\n");
+    th075::diagnostic_log(log,"startup_logging=compact_performance flush_every:256_successful_callbacks flush_on:stop_or_slice\n");
     auto startup_trap = [&](d2rt::Cpu& c, uint32_t trap) {
         struct FlushBoundary {
             FILE* file;unsigned& count;bool continuing=false;
-            ~FlushBoundary() { if(!continuing || ++count>=32){fflush(file);count=0;} }
+            ~FlushBoundary() { if(!continuing || ++count>=(th075::compact_diagnostics?256u:32u)){fflush(file);count=0;} }
         } flush_boundary{log,boundaries_since_flush};
         if(!sound.healthy()) {
             service_failed=true;expected_boundary=false;
-            fprintf(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");return false;
+            th075::diagnostic_log(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");return false;
         }
         const bool owned_boundary=sound.owns(trap) || input.owns(trap) || d3d8.owns_trap(trap) ||
             (trap>=kTrap && (trap-kTrap)%16==0 && (trap-kTrap)/16<image.imports().size()) ||
@@ -354,8 +356,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
-            fprintf(log,"startup_stop_import=%s::%s\n",sound.interface_name(trap),sound.method_name(trap));
-            fprintf(log,"startup_stop_trap_va=0x%08X\n",trap);
+            th075::diagnostic_log(log,"startup_stop_import=%s::%s\n",sound.interface_name(trap),sound.method_name(trap));
+            th075::diagnostic_log(log,"startup_stop_trap_va=0x%08X\n",trap);
             return false;
         }
         if(input.owns(trap)) {
@@ -364,8 +366,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
-            fprintf(log,"startup_stop_import=%s::%s\n",input.interface_name(trap),input.method_name(trap));
-            fprintf(log,"startup_stop_trap_va=0x%08X\n",trap);
+            th075::diagnostic_log(log,"startup_stop_import=%s::%s\n",input.interface_name(trap),input.method_name(trap));
+            th075::diagnostic_log(log,"startup_stop_trap_va=0x%08X\n",trap);
             return false;
         }
         if(d3d8.owns_trap(trap)) {
@@ -374,22 +376,22 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if(result==StartupServiceResult::Serviced){flush_boundary.continuing=true;return true;}
             service_failed=result==StartupServiceResult::ContractFailure;
             expected_boundary=!service_failed;
-            fprintf(log,"startup_stop_import=%s::%s\n",d3d8.interface_name(trap),d3d8.method_name(trap));
-            fprintf(log,"startup_stop_trap_va=0x%08X\n",trap);
+            th075::diagnostic_log(log,"startup_stop_import=%s::%s\n",d3d8.interface_name(trap),d3d8.method_name(trap));
+            th075::diagnostic_log(log,"startup_stop_trap_va=0x%08X\n",trap);
             return false;
         }
         if (trap == kSentinel) {
-            fprintf(log, "startup_stop=entrypoint_returned\n"); return false;
+            th075::diagnostic_log(log, "startup_stop=entrypoint_returned\n"); return false;
         }
         const bool feature_export = trap == StartupServices::processor_feature_trap;
         const bool dynamic = trap == StartupServices::critical_init_trap || feature_export;
         if (!dynamic && (trap < kTrap || (trap - kTrap) % 16 ||
             (trap - kTrap) / 16 >= image.imports().size())) {
-            fprintf(log, "startup_stop=unknown_trap\n"); return false;
+            th075::diagnostic_log(log, "startup_stop=unknown_trap\n"); return false;
         }
         const auto& imp = feature_export ? dynamic_processor :
             (dynamic ? dynamic_critical : image.imports()[(trap - kTrap) / 16]);
-        if (dynamic) fprintf(log, "startup_dynamic_export_called=yes\n");
+        if (dynamic) th075::diagnostic_log(log, "startup_dynamic_export_called=yes\n");
         const bool first = !import_hit;
         ++main_import_calls;
         import_hit = true;
@@ -406,47 +408,47 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 [&](uint32_t address, uint32_t& value) { return c.read(address, &value, 4); },
                 seh_depth) && c.read(seh, &prev, 4) && c.read(seh + 4, &handler, 4);
         if (first) {
-            fprintf(log, "startup_first_import=%s\n", tag.c_str());
-            fprintf(log, "startup_first_iat_va=0x%08X\n", imp.iat_va);
+            th075::diagnostic_log(log, "startup_first_import=%s\n", tag.c_str());
+            th075::diagnostic_log(log, "startup_first_iat_va=0x%08X\n", imp.iat_va);
             uint32_t size = 0;
             original_call_valid = imp.dll == "KERNEL32.dll" && imp.name == "GetVersionExA" &&
                 imp.iat_va == 0x00657090 && ret == 0x00642352 && frame_ok && seh_ok &&
                 prev == 0xFFFFFFFF && handler == 0x00645468 &&
                 stack_range(arg, 148) && c.read(arg, &size, 4) && size == 148;
-            fprintf(log, "startup_entry_checkpoint=%s\n", original_call_valid ? "passed" : "failed");
+            th075::diagnostic_log(log, "startup_entry_checkpoint=%s\n", original_call_valid ? "passed" : "failed");
         }
-        fprintf(log, "startup_import_call=%s\n", tag.c_str());
-        fprintf(log, "startup_return_va=0x%08X\n", ret);
+        th075::diagnostic_log(log, "startup_import_call=%s\n", tag.c_str());
+        th075::diagnostic_log(log, "startup_return_va=0x%08X\n", ret);
         auto log_frame=[&]() {
-            fprintf(log,"startup_call_trap_va=0x%08X\nstartup_arg0_va=0x%08X\n",trap,arg);
-            fprintf(log,"startup_call_frame=%s\nstartup_seh_registration=%s\n",frame_ok ? "valid":"invalid",seh_ok ? "passed":"failed");
-            fprintf(log,"startup_seh_record_va=0x%08X\nstartup_seh_previous=0x%08X\nstartup_seh_handler=0x%08X\n",seh,prev,handler);
-            fprintf(log,"startup_seh_chain_depth=%u\nstartup_exception_dispatch=not_implemented\n",seh_depth);
+            th075::diagnostic_log(log,"startup_call_trap_va=0x%08X\nstartup_arg0_va=0x%08X\n",trap,arg);
+            th075::diagnostic_log(log,"startup_call_frame=%s\nstartup_seh_registration=%s\n",frame_ok ? "valid":"invalid",seh_ok ? "passed":"failed");
+            th075::diagnostic_log(log,"startup_seh_record_va=0x%08X\nstartup_seh_previous=0x%08X\nstartup_seh_handler=0x%08X\n",seh,prev,handler);
+            th075::diagnostic_log(log,"startup_seh_chain_depth=%u\nstartup_exception_dispatch=not_implemented\n",seh_depth);
             const char* registers[]={"eax","ecx","edx","ebx","esp","ebp","esi","edi"};
             for(int r=d2rt::R_EAX;r<=d2rt::R_EDI;++r)
-                fprintf(log,"startup_%s=0x%08X\n",registers[r],c.reg(r));
+                th075::diagnostic_log(log,"startup_%s=0x%08X\n",registers[r],c.reg(r));
         };
         if(first)log_frame();
         if (!original_call_valid || !frame_ok || !seh_ok) {
             if(!first)log_frame();
             service_failed = true;
-            fprintf(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
-            fprintf(log, "startup_stop_import=%s\n", tag.c_str());
+            th075::diagnostic_log(log, "startup_service_error=entry_frame_or_seh_mismatch\n");
+            th075::diagnostic_log(log, "startup_stop_import=%s\n", tag.c_str());
             return false;
         }
         if(imp.dll=="USER32.dll" && imp.name=="MessageBoxA") {
             uint32_t args[4]{};
             if(stack_range(esp,20) && c.read(esp+4,args,sizeof(args))) {
-                fprintf(log,"startup_messagebox=observed_only window:0x%08X text:0x%08X caption:0x%08X type:0x%08X\n",args[0],args[1],args[2],args[3]);
+                th075::diagnostic_log(log,"startup_messagebox=observed_only window:0x%08X text:0x%08X caption:0x%08X type:0x%08X\n",args[0],args[1],args[2],args[3]);
                 for(unsigned i=1;i<=2;++i) {
                     const auto snapshot=guest_string_probe::observe(args[i],
                         [&](uint32_t address,uint8_t& b){return c.read(address,&b,1);});
-                    fprintf(log,"startup_messagebox_%s=status:%s bytes:%u encoding:raw_CP932 hex:",
+                    th075::diagnostic_log(log,"startup_messagebox_%s=status:%s bytes:%u encoding:raw_CP932 hex:",
                         i==1?"text":"caption",guest_string_probe::name(snapshot.status),unsigned(snapshot.length));
-                    for(size_t j=0;j<snapshot.length;++j)fprintf(log,"%02X",unsigned(snapshot.bytes[j]));
+                    for(size_t j=0;j<snapshot.length;++j)th075::diagnostic_log(log,"%02X",unsigned(snapshot.bytes[j]));
                     fputc('\n',log);
                 }
-            }else fprintf(log,"startup_messagebox=observation_rejected_invalid_stack\n");
+            }else th075::diagnostic_log(log,"startup_messagebox=observation_rejected_invalid_stack\n");
             // No native dialog, button result or guest continuation is supplied.
         }
         // The original game entry calls 0x4239F0; its timer import returns to
@@ -460,24 +462,24 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 game_frame > timer_frame && stack_range(game_frame, 8) &&
                 c.read(game_frame + 4, &game_caller, 4) &&
                 timer_caller == 0x00602A7C && game_caller == 0x006424B0;
-            fprintf(log, "startup_game_entry_call_chain=%s\n", chain ? "verified" : "unverified");
-            fprintf(log, "startup_game_timer_caller_va=0x%08X\n", timer_caller);
-            fprintf(log, "startup_game_crt_caller_va=0x%08X\n", game_caller);
+            th075::diagnostic_log(log, "startup_game_entry_call_chain=%s\n", chain ? "verified" : "unverified");
+            th075::diagnostic_log(log, "startup_game_timer_caller_va=0x%08X\n", timer_caller);
+            th075::diagnostic_log(log, "startup_game_crt_caller_va=0x%08X\n", game_caller);
             if (chain) game_entry_chain_verified = true;
         }
         const StartupServiceResult service = imp.dll=="d3d8.dll" && imp.name=="Direct3DCreate8" ? d3d8.create():
             imp.dll=="DINPUT8.dll" && imp.name=="DirectInput8Create" ? input.create():
             imp.dll=="ole32.dll" && imp.name=="CoCreateInstance" ? sound.create(services.com_ready(wx86_cur_tib())):services.call(imp);
         if(service==StartupServiceResult::Deferred) {
-            fprintf(log,"startup_scheduler_yield=dispatch_window_creation\n");
+            th075::diagnostic_log(log,"startup_scheduler_yield=dispatch_window_creation\n");
             return false;
         }
         if(service==StartupServiceResult::Unsupported && imp.dll=="USER32.dll" && imp.name=="CreateWindowExA") {
             uint32_t args[12]{};
             if(stack_range(esp,52) && c.read(esp+4,args,sizeof(args))) {
-                fprintf(log,"startup_window_requested_width=%u\nstartup_window_requested_height=%u\n",args[6],args[7]);
-                fprintf(log,"startup_window_requested_style=0x%08X\nstartup_window_requested_exstyle=0x%08X\n",args[3],args[0]);
-                fprintf(log,"startup_window_creation_boundary=synchronous_guest_messages_and_renderer_required\n");
+                th075::diagnostic_log(log,"startup_window_requested_width=%u\nstartup_window_requested_height=%u\n",args[6],args[7]);
+                th075::diagnostic_log(log,"startup_window_requested_style=0x%08X\nstartup_window_requested_exstyle=0x%08X\n",args[3],args[0]);
+                th075::diagnostic_log(log,"startup_window_creation_boundary=synchronous_guest_messages_and_renderer_required\n");
             }
         }
         if (service == StartupServiceResult::Unsupported && imp.dll == "KERNEL32.dll" &&
@@ -488,37 +490,37 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if(imp.dll=="KERNEL32.dll" && imp.name=="SetThreadPriority" && ret==0x00423A6C &&
                c.reg(d2rt::R_EAX)==1 && worker.blocked && worker.priority>0) {
                 priority_dispatch_requested=true;
-                fprintf(log,"startup_scheduler_yield=dispatch_priority_worker\n");return false;
+                th075::diagnostic_log(log,"startup_scheduler_yield=dispatch_priority_worker\n");return false;
             }
             flush_boundary.continuing=true;return true;
         }
         if (service == StartupServiceResult::ContractFailure) {
             if(!first)log_frame();
             service_failed = true;
-            fprintf(log, "startup_stop_import=%s\n", tag.c_str());
+            th075::diagnostic_log(log, "startup_stop_import=%s\n", tag.c_str());
             return false;
         }
         // Preserve the unsupported API's complete call frame and registers.
         if(!first)log_frame();
-        fprintf(log, "startup_stop_import=%s\n", tag.c_str());
-        fprintf(log, "startup_stop_iat_va=0x%08X\n", imp.iat_va);
-        fprintf(log, "startup_stop_trap_va=0x%08X\n", trap);
-        fprintf(log, "startup_stop_api_executed=no\n");
+        th075::diagnostic_log(log, "startup_stop_import=%s\n", tag.c_str());
+        th075::diagnostic_log(log, "startup_stop_iat_va=0x%08X\n", imp.iat_va);
+        th075::diagnostic_log(log, "startup_stop_trap_va=0x%08X\n", trap);
+        th075::diagnostic_log(log, "startup_stop_api_executed=no\n");
         if (services.heap_ready()) {
             expected_boundary = true;
-            fprintf(log, "startup_heap_boundary=passed\n");
+            th075::diagnostic_log(log, "startup_heap_boundary=passed\n");
         } else if (imp.dll == "KERNEL32.dll" && imp.name == "HeapCreate") {
             uint32_t initial = 0, maximum = 0;
             const bool heap_frame = stack_range(esp, 16) &&
                 c.read(esp + 8, &initial, 4) && c.read(esp + 12, &maximum, 4);
-            fprintf(log, "startup_heap_flags=0x%08X\n", arg);
-            fprintf(log, "startup_heap_initial_bytes=%u\n", initial);
-            fprintf(log, "startup_heap_maximum_bytes=%u\n", maximum);
+            th075::diagnostic_log(log, "startup_heap_flags=0x%08X\n", arg);
+            th075::diagnostic_log(log, "startup_heap_initial_bytes=%u\n", initial);
+            th075::diagnostic_log(log, "startup_heap_maximum_bytes=%u\n", maximum);
             const bool globals = services.version_globals_match();
             expected_boundary = imp.iat_va == 0x00657160 && ret == 0x0064974C &&
                 heap_frame && arg == 0 && initial == 0x1000 && maximum == 0 &&
                 services.version_calls() == 1 && services.module_calls() == 1 && globals;
-            fprintf(log, "startup_heap_call_frame=%s\n", expected_boundary ? "passed" : "failed");
+            th075::diagnostic_log(log, "startup_heap_call_frame=%s\n", expected_boundary ? "passed" : "failed");
         }
         return false;
     };
@@ -526,36 +528,36 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     for (int r = d2rt::R_EAX; r <= d2rt::R_EDI; ++r) cpu.set_reg(r, 0);
     const uint32_t initial_esp = kStackEnd - 0x1000 - 4;
     if (!cpu.write(initial_esp, &kSentinel, 4)) {
-        fprintf(log, "startup_result=stack_frame_failed\n"); return false;
+        th075::diagnostic_log(log, "startup_result=stack_frame_failed\n"); return false;
     }
     cpu.set_reg(d2rt::R_ESP, initial_esp);
     cpu.set_reg(d2rt::R_EFLAGS, 0x202);
     cpu.set_reg(d2rt::R_EIP, kEntry);
     cpu.take_limit_hit();
     cpu.set_run_limit(kRunBudget);
-    fprintf(log, "startup_run_budget=%llu\n", (unsigned long long)kRunBudget);
-    fprintf(log, "startup_budget_unit=approx_instructions_via_8_per_block_entry\n");
-    fprintf(log, "startup_budget_block_entries=%llu\n", (unsigned long long)(kRunBudget / 8));
+    th075::diagnostic_log(log, "startup_run_budget=%llu\n", (unsigned long long)kRunBudget);
+    th075::diagnostic_log(log, "startup_budget_unit=approx_instructions_via_8_per_block_entry\n");
+    th075::diagnostic_log(log, "startup_budget_block_entries=%llu\n", (unsigned long long)(kRunBudget / 8));
     RunnerPlacement placement{log};
     if (!placement.pin()) {
-        fprintf(log, "startup_result=runner_affinity_failed\n"); return false;
+        th075::diagnostic_log(log, "startup_result=runner_affinity_failed\n"); return false;
     }
     StartupWatchdog watchdog(cpu.ip_ptr());
     if (!watchdog.start(log)) {
-        fprintf(log, "startup_result=watchdog_unavailable\n"); return false;
+        th075::diagnostic_log(log, "startup_result=watchdog_unavailable\n"); return false;
     }
-    fprintf(log, "startup_entry_va=0x%08X\n", kEntry);
-    fprintf(log, "startup_initial_esp=0x%08X\n", initial_esp);
-    fprintf(log, "game_entrypoint=attempted\n");
-    fprintf(log, "game_code_executed=unconfirmed\n");
+    th075::diagnostic_log(log, "startup_entry_va=0x%08X\n", kEntry);
+    th075::diagnostic_log(log, "startup_initial_esp=0x%08X\n", initial_esp);
+    th075::diagnostic_log(log, "game_entrypoint=attempted\n");
+    th075::diagnostic_log(log, "game_code_executed=unconfirmed\n");
     fflush(log);
     const uint64_t start = sceKernelGetProcessTimeWide();
     const char* fault = nullptr;
     bool stopped = false, limit = false;
     unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
     unsigned frame_wait_resumes=0;
-    fprintf(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
-    fprintf(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
+    th075::diagnostic_log(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
+    th075::diagnostic_log(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
     auto run_until_boundary=[&](uint32_t entry,uint64_t budget) {
         for(;;) {
             audio_yield=false;
@@ -564,7 +566,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if(!audio_yield)break;
             if(!stopped || limit || audio_trap_dispatches>=startup_limits::audio_trap_dispatches ||
                 sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
-                fprintf(log,"startup_audio_trap_stop=execution_or_scope_limit dispatches:%u\n",audio_trap_dispatches);
+                th075::diagnostic_log(log,"startup_audio_trap_stop=execution_or_scope_limit dispatches:%u\n",audio_trap_dispatches);
                 expected_boundary=true;break;
             }
             d2rt::X86Context saved{},restored{};cpu.save_context(saved);saved.fs_base=wx86_cur_tib();
@@ -572,7 +574,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             uint32_t words[3]{},after[3]{};
             if(!stack_range(esp,sizeof(words)) || !cpu.read(esp,words,sizeof(words)) ||
                 !original_code_address(exe,nt,image,words[0]) || saved.fs_base!=kDiagnosticTeb) {
-                service_failed=true;fprintf(log,"startup_audio_trap_context=invalid_callframe\n");break;
+                service_failed=true;th075::diagnostic_log(log,"startup_audio_trap_context=invalid_callframe\n");break;
             }
             const uint64_t elapsed=sceKernelGetProcessTimeWide()-audio_worker.wait_started_us;
             const uint64_t lateness=elapsed-uint64_t(audio_worker.timeout_ms)*1000;
@@ -581,7 +583,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             // interval. Report subsequent active scheduling separately.
             if(audio_trap_dispatches)audio_running_lateness_us=std::max(audio_running_lateness_us,lateness);
             ++audio_trap_dispatches;++audio_dispatches;
-            fprintf(log,"startup_audio_trap_yield=before_unexecuted_call trap:0x%08X return:0x%08X elapsed_us:%llu dispatch:%u\n",
+            th075::diagnostic_log(log,"startup_audio_trap_yield=before_unexecuted_call trap:0x%08X return:0x%08X elapsed_us:%llu dispatch:%u\n",
                 cpu.reg(d2rt::R_EIP),words[0],(unsigned long long)elapsed,audio_trap_dispatches);
             worker_ok=wake_worker_slice(cpu,image,services,audio_worker,log,&sound);
             cpu.set_trap(kTrap,kTrapEnd,startup_trap);
@@ -589,7 +591,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             const bool preserved=startup_wait::same_context(saved,restored) &&
                 wx86_get_lasterr(cpu)==error && cpu.read(esp,after,sizeof(after)) &&
                 !std::memcmp(words,after,sizeof(words));
-            fprintf(log,"startup_audio_trap_context=%s scope:gpr_flags_fs_fpu_callframe_lasterror\n",preserved?"preserved":"failed");
+            th075::diagnostic_log(log,"startup_audio_trap_context=%s scope:gpr_flags_fs_fpu_callframe_lasterror\n",preserved?"preserved":"failed");
             if(!worker_ok || !preserved){worker_ok=false;service_failed=true;break;}
             if(audio_worker.unsupported_boundary){expected_boundary=true;break;}
             entry=cpu.reg(d2rt::R_EIP); // Retry the untouched call exactly once.
@@ -620,15 +622,15 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
                 original_code_address(exe,nt,image,pending_return);
             if ((!code && !valid_return) || !cpu.mapped(ip) ||
                 wx86_cur_tib() != kDiagnosticTeb || !valid_stack) {
-                fprintf(log,"startup_resume_stop=invalid_code_stack_or_tib eip:0x%08X code:%s known_trap:%s return:0x%08X valid_return:%s stack:%s tib:0x%08X\n",
+                th075::diagnostic_log(log,"startup_resume_stop=invalid_code_stack_or_tib eip:0x%08X code:%s known_trap:%s return:0x%08X valid_return:%s stack:%s tib:0x%08X\n",
                     ip,code?"yes":"no",known_trap?"yes":"no",pending_return,
                     valid_return?"yes":"no",valid_stack?"yes":"no",wx86_cur_tib());break;
             }
             if(known_trap){
-                fprintf(log,"startup_pending_trap=0x%08X return:0x%08X dispatch:normal_callback\n",ip,pending_return);
+                th075::diagnostic_log(log,"startup_pending_trap=0x%08X return:0x%08X dispatch:normal_callback\n",ip,pending_return);
                 if(ip>=kTrap && (ip-kTrap)/16<image.imports().size()) {
                     const auto& pending=image.imports()[(ip-kTrap)/16];
-                    fprintf(log,"startup_pending_import=%s!%s\n",pending.dll.c_str(),pending.name.c_str());
+                    th075::diagnostic_log(log,"startup_pending_import=%s!%s\n",pending.dll.c_str(),pending.name.c_str());
                 }
             }
             uint32_t hash = 2166136261u;
@@ -637,24 +639,24 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             for (int r = d2rt::R_EAX; r <= d2rt::R_EFLAGS; ++r) {
                 const uint32_t value = cpu.reg(r);
                 hash_word(value);
-                fprintf(log, "startup_slice_%s=0x%08X\n", registers[r], value);
+                th075::diagnostic_log(log, "startup_slice_%s=0x%08X\n", registers[r], value);
             }
             for (uint8_t byte : stack) hash = (hash ^ byte) * 16777619u;
             hash_word(main_import_calls); hash_word(services.heap_alloc_calls());
             repeated_state = have_state && hash == previous_state ? repeated_state + 1 : 0;
             previous_state = hash; have_state = true;
             uint32_t stack_top = 0; std::memcpy(&stack_top, stack, 4);
-            fprintf(log, "startup_slice_progress=state:0x%08X imports:%u allocations:%u stack_top:0x%08X elapsed_us:%llu\n",
+            th075::diagnostic_log(log, "startup_slice_progress=state:0x%08X imports:%u allocations:%u stack_top:0x%08X elapsed_us:%llu\n",
                 hash, main_import_calls, services.heap_alloc_calls(), stack_top, (unsigned long long)elapsed);
             if (cosine) {
                 uint32_t first = 0, last = 0;
                 const bool samples = index > 0 && cpu.read(0x006884C0, &first, 4) &&
                     cpu.read(0x006884C0 + (index - 1) * 4, &last, 4);
-                fprintf(log, "startup_cosine_progress=%u/3600 eip=0x%08X elapsed_us=%llu\n",
+                th075::diagnostic_log(log, "startup_cosine_progress=%u/3600 eip=0x%08X elapsed_us=%llu\n",
                     index, ip, (unsigned long long)elapsed);
-                if (samples) fprintf(log, "startup_cosine_samples=first:0x%08X last_completed:0x%08X\n", first, last);
+                if (samples) th075::diagnostic_log(log, "startup_cosine_samples=first:0x%08X last_completed:0x%08X\n", first, last);
                 if (have_previous && index < previous) {
-                    fprintf(log, "startup_resume_stop=cosine_index_regressed\n"); break;
+                    th075::diagnostic_log(log, "startup_resume_stop=cosine_index_regressed\n"); break;
                 }
                 unchanged = have_previous && index == previous ? unchanged + 1 : 0;
                 previous = index; have_previous = true;
@@ -663,13 +665,13 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             }
             const unsigned slice_cap=startup_wait::slice_cap(frame_wait_resumes);
             if (unchanged >= 2 || repeated_state >= 3 || resume_slices >= slice_cap || elapsed >= startup_limits::time_cap_us) {
-                fprintf(log, "startup_resume_stop=%s\n", unchanged >= 2 ? "cosine_no_index_progress" :
+                th075::diagnostic_log(log, "startup_resume_stop=%s\n", unchanged >= 2 ? "cosine_no_index_progress" :
                     repeated_state >= 3 ? "repeated_sampled_state" : resume_slices >= slice_cap ? "slice_cap" : "time_cap"); break;
             }
             ++resume_slices;
             if (cosine) ++cosine_slices;
             if (known_trap) ++import_resume_slices;
-            fprintf(log, "startup_resume_slice=%u scope=%s budget=%llu\n",
+            th075::diagnostic_log(log, "startup_resume_slice=%u scope=%s budget=%llu\n",
                 resume_slices, cosine ? "original_cosine" : known_trap ? "owned_import_trap" : "original_executable_section", (unsigned long long)kRunBudget);
             fflush(log);
             // run() recharges its block budget on the same emulator. All
@@ -690,7 +692,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         restored_main.fs_base=wx86_cur_tib();
         const bool main_restored = startup_wait::same_context(saved_main,restored_main) &&
             wx86_cur_tib() == kDiagnosticTeb;
-        fprintf(log, "startup_main_context_readback=%s\n", main_restored ? "passed" : "failed");
+        th075::diagnostic_log(log, "startup_main_context_readback=%s\n", main_restored ? "passed" : "failed");
         worker_ok = worker_ok && main_restored;
         cpu.set_trap(kTrap, kTrapEnd, startup_trap);
         if (worker_ok) {
@@ -707,12 +709,12 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             if (worker_ok) {
                 thread_created = true;
                 services.attach_worker(&worker);
-                fprintf(log, "startup_serviced_import=KERNEL32.dll!CreateThread\n");
-                fprintf(log, "startup_thread_handle=0x%08X\n", worker.handle);
-                fprintf(log, "startup_thread_id=%u\n", worker.id);
-                fprintf(log, "startup_thread_id_readback=passed\n");
-                fprintf(log, "startup_thread_stack_bytes=28\n");
-                fprintf(log, "startup_thread_handoff=worker_blocked_main_resumed\n");
+                th075::diagnostic_log(log, "startup_serviced_import=KERNEL32.dll!CreateThread\n");
+                th075::diagnostic_log(log, "startup_thread_handle=0x%08X\n", worker.handle);
+                th075::diagnostic_log(log, "startup_thread_id=%u\n", worker.id);
+                th075::diagnostic_log(log, "startup_thread_id_readback=passed\n");
+                th075::diagnostic_log(log, "startup_thread_stack_bytes=28\n");
+                th075::diagnostic_log(log, "startup_thread_handoff=worker_blocked_main_resumed\n");
                 worker_create_frame = 0;
                 expected_boundary = false;
                 run_main(ret, 4096);
@@ -741,7 +743,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     if(audio_create_frame && stopped && !limit && !service_failed && worker_ok) {
         d2rt::X86Context saved{},restored{};cpu.save_context(saved);
         saved.fs_base=wx86_cur_tib();
-        fprintf(log,"startup_audio_worker=initial_handoff entry:0x00407EF0\n");
+        th075::diagnostic_log(log,"startup_audio_worker=initial_handoff entry:0x00407EF0\n");
         worker_ok=run_worker_probe(cpu,image,audio_create_frame,services,audio_worker,log);
         cpu.save_context(restored);
         restored.fs_base=wx86_cur_tib();
@@ -754,7 +756,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(worker_ok) {
             services.attach_audio_worker(&audio_worker);audio_created=true;
             cpu.trap_epilogue(audio_worker.handle,28,ret);
-            fprintf(log,"startup_audio_worker=blocked_main_resumed handle:0x%08X id:%u\n",audio_worker.handle,audio_worker.id);
+            th075::diagnostic_log(log,"startup_audio_worker=blocked_main_resumed handle:0x%08X id:%u\n",audio_worker.handle,audio_worker.id);
             expected_boundary=false;run_main(ret,kRunBudget);
             // The new thread runs at the same priority as the timer. Dispatch
             // its first elapsed wait before reporting the main boundary.
@@ -783,11 +785,11 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
            !cpu.read(0x0068BE34,&timer_event,4) || timer_event!=worker.event ||
            !cpu.read(0x0066C23C,&period,4) || period!=worker.timeout_ms)break;
         if(tick>=startup_limits::frame_wait_resumes) {
-            fprintf(log,"startup_frame_wait_stop=resume_scope_limit resumes:%u maximum:%u scope:observed_original_wait\n",
+            th075::diagnostic_log(log,"startup_frame_wait_stop=resume_scope_limit resumes:%u maximum:%u scope:observed_original_wait\n",
                 frame_wait_resumes,startup_limits::frame_wait_resumes);break;
         }
         if(sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
-            fprintf(log,"startup_frame_wait_stop=time_cap\n");break;
+            th075::diagnostic_log(log,"startup_frame_wait_stop=time_cap\n");break;
         }
         d2rt::X86Context saved{},restored{};cpu.save_context(saved);
         saved.fs_base=wx86_cur_tib();
@@ -796,7 +798,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         uint32_t counter=0;uint16_t state=0;
         const uint32_t ebp=cpu.reg(d2rt::R_EBP);
         if(cpu.read(0x0066C240,&counter,4) && ebp>=kStack+0x3C && stack_range(ebp-0x3C,2) && cpu.read(ebp-0x3C,&state,2))
-            fprintf(log,"startup_frame_phase=state_word:0x%04X transition_counter:0x%08X scope:observed_guest_globals\n",unsigned(state),counter);
+            th075::diagnostic_log(log,"startup_frame_phase=state_word:0x%04X transition_counter:0x%08X scope:observed_guest_globals\n",unsigned(state),counter);
         // Read the original main scene only at the exact observed wait. The
         // logo age is incremented by guest code after Present; never write it.
         uint32_t scene=0,vtable=0,methods[3]{};
@@ -805,19 +807,19 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             uint64_t(scene)+16<=0x02000000 && cpu.read(scene,&vtable,4) &&
             vtable>=image.load_base() && uint64_t(vtable)+sizeof(methods)<=uint64_t(image.load_base())+image.image_size() &&
             cpu.read(vtable,methods,sizeof(methods))) {
-            fprintf(log,"startup_frame_scene=object:0x%08X vtable:0x%08X update:0x%08X draw:0x%08X scope:observed_guest_object\n",scene,vtable,methods[1],methods[2]);
+            th075::diagnostic_log(log,"startup_frame_scene=object:0x%08X vtable:0x%08X update:0x%08X draw:0x%08X scope:observed_guest_object\n",scene,vtable,methods[1],methods[2]);
             uint16_t age=0;
             if(vtable==0x00657BE0 && cpu.read(scene+0xC,&age,2))
-                fprintf(log,"startup_frame_logo_age=%u transition_after:0 scope:user_requested_menu_boot\n",unsigned(age));
+                th075::diagnostic_log(log,"startup_frame_logo_age=%u transition_after:0 scope:user_requested_menu_boot\n",unsigned(age));
             if(vtable==0x00658308) {
                 uint8_t selected=0;uint32_t elapsed=0,vertical=0,escape=0;
                 if(cpu.read(scene+0x38,&selected,1) && cpu.read(scene+0xC,&elapsed,4) &&
                    cpu.read(scene+0x18,&vertical,4) && cpu.read(scene+0x1C,&escape,4))
-                    fprintf(log,"startup_frame_title_state=selection:%u elapsed_ms:%u vertical:%d escape_frames:%u scope:read_only_original_fields\n",
+                    th075::diagnostic_log(log,"startup_frame_title_state=selection:%u elapsed_ms:%u vertical:%d escape_frames:%u scope:read_only_original_fields\n",
                         unsigned(selected),elapsed,int32_t(vertical),escape);
             }
         }
-        fprintf(log,"startup_frame_wait=blocked frame:%u handle:0x%08X timeout:infinite producer:timer_worker\n",frame_wait_resumes+1,wait[1]);
+        th075::diagnostic_log(log,"startup_frame_wait=blocked frame:%u handle:0x%08X timeout:infinite producer:timer_worker\n",frame_wait_resumes+1,wait[1]);
         // Cooperatively run the original refill worker only at an observed
         // main wait and after its actual 80 ms timeout has elapsed.
         if(audio_created && sound.playback_active() && audio_worker.blocked &&
@@ -835,88 +837,88 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         const bool preserved=startup_wait::same_context(saved,restored) &&
             wx86_cur_tib()==kDiagnosticTeb && wx86_get_lasterr(cpu)==error &&
             cpu.read(esp,after,12) && !std::memcmp(wait,after,12);
-        fprintf(log,"startup_frame_wait_context=%s scope:gpr_flags_fs_fpu_callframe_lasterror\n",preserved ? "preserved":"failed");
+        th075::diagnostic_log(log,"startup_frame_wait_context=%s scope:gpr_flags_fs_fpu_callframe_lasterror\n",preserved ? "preserved":"failed");
         if(!worker_ok || !preserved){worker_ok=false;service_failed=true;break;}
         if(worker.unsupported_boundary || audio_worker.unsupported_boundary){expected_boundary=true;break;}
         if(!services.event_signaled(wait[1]) || services.event_generation(wait[1])==generation) {
-            fprintf(log,"startup_frame_wait_stop=producer_did_not_signal\n");break;
+            th075::diagnostic_log(log,"startup_frame_wait_stop=producer_did_not_signal\n");break;
         }
-        fprintf(log,"startup_frame_wait_signal=observed generation:%u\n",services.event_generation(wait[1]));
+        th075::diagnostic_log(log,"startup_frame_wait_signal=observed generation:%u\n",services.event_generation(wait[1]));
         const auto result=services.call(imp);
         const bool resumed=result==StartupServiceResult::Serviced && cpu.reg(d2rt::R_EAX)==0 &&
             cpu.reg(d2rt::R_ESP)==esp+12 && cpu.reg(d2rt::R_EIP)==wait[0] &&
             wx86_get_lasterr(cpu)==error && !services.event_signaled(wait[1]);
-        fprintf(log,"startup_frame_wait_resume=%s result:WAIT_OBJECT_0 auto_reset:consumed cleanup:12\n",resumed ? "passed":"failed");
+        th075::diagnostic_log(log,"startup_frame_wait_resume=%s result:WAIT_OBJECT_0 auto_reset:consumed cleanup:12\n",resumed ? "passed":"failed");
         if(!resumed){service_failed=true;break;}
         ++frame_wait_resumes;expected_boundary=false;
         run_main(wait[0],kRunBudget);
-        fprintf(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)(sceKernelGetProcessTimeWide()-frame_started),frame_wait_resumes);
+        th075::diagnostic_log(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)(sceKernelGetProcessTimeWide()-frame_started),frame_wait_resumes);
     }
     sound.shutdown_playback();
-    if(!sound.healthy()){service_failed=true;expected_boundary=false;fprintf(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");}
-    fprintf(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);
-    fprintf(log,"startup_audio_trap_dispatches=%u maximum:%u max_lateness_us:%llu scope:between_main_calls_no_recursive_cpu_run\n",
+    if(!sound.healthy()){service_failed=true;expected_boundary=false;th075::diagnostic_log(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");}
+    th075::diagnostic_log(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);
+    th075::diagnostic_log(log,"startup_audio_trap_dispatches=%u maximum:%u max_lateness_us:%llu scope:between_main_calls_no_recursive_cpu_run\n",
         audio_trap_dispatches,startup_limits::audio_trap_dispatches,(unsigned long long)audio_max_lateness_us);
-    fprintf(log,"startup_audio_running_lateness_us=%llu scope:after_initial_trap_dispatch\n",
+    th075::diagnostic_log(log,"startup_audio_running_lateness_us=%llu scope:after_initial_trap_dispatch\n",
         (unsigned long long)audio_running_lateness_us);
-    fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
-    fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
-    fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
-    fprintf(log,"startup_raster_parallel_summary=disabled reason:physical89_pthread_wait_crash configured_workers:0\n");
+    th075::diagnostic_log(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
+    th075::diagnostic_log(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
+    th075::diagnostic_log(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
+    th075::diagnostic_log(log,"startup_raster_parallel_summary=disabled reason:physical89_pthread_wait_crash configured_workers:0\n");
     d3d8.report_usage();
-    fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
-    fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());
-    fprintf(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
-    fprintf(log,"startup_import_resume_slices=%u\n",import_resume_slices);
-    fprintf(log, "startup_resume_slices=%u\nstartup_main_import_calls=%u\n", resume_slices, main_import_calls);
-    if (limit || !stopped) fprintf(log, "startup_stop_import=%s EIP 0x%08X\n",
+    th075::diagnostic_log(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
+    th075::diagnostic_log(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());
+    th075::diagnostic_log(log, "startup_cosine_resume_slices=%u\n", cosine_slices);
+    th075::diagnostic_log(log,"startup_import_resume_slices=%u\n",import_resume_slices);
+    th075::diagnostic_log(log, "startup_resume_slices=%u\nstartup_main_import_calls=%u\n", resume_slices, main_import_calls);
+    if (limit || !stopped) th075::diagnostic_log(log, "startup_stop_import=%s EIP 0x%08X\n",
         limit ? "CPU BUDGET" : "CPU FAULT", cpu.reg(d2rt::R_EIP));
     watchdog.finish();
-    fprintf(log, "startup_elapsed_us=%llu\n",
+    th075::diagnostic_log(log, "startup_elapsed_us=%llu\n",
         (unsigned long long)(sceKernelGetProcessTimeWide() - start));
-    fprintf(log, "startup_final_eip=0x%08X\n", cpu.reg(d2rt::R_EIP));
-    fprintf(log, "startup_final_esp=0x%08X\n", cpu.reg(d2rt::R_ESP));
-    fprintf(log, "startup_final_ebp=0x%08X\n", cpu.reg(d2rt::R_EBP));
+    th075::diagnostic_log(log, "startup_final_eip=0x%08X\n", cpu.reg(d2rt::R_EIP));
+    th075::diagnostic_log(log, "startup_final_esp=0x%08X\n", cpu.reg(d2rt::R_ESP));
+    th075::diagnostic_log(log, "startup_final_ebp=0x%08X\n", cpu.reg(d2rt::R_EBP));
     if (limit && cpu.reg(d2rt::R_EIP) < 0x00400000u) {
-        fprintf(log, "startup_control_flow_result=low_guest_eip\n");
+        th075::diagnostic_log(log, "startup_control_flow_result=low_guest_eip\n");
     } else if (limit) {
-        fprintf(log,"startup_control_flow_result=%s\n", original_code_address(exe,nt,image,cpu.reg(d2rt::R_EIP)) ? "budget_in_image" : "budget_outside_image");
+        th075::diagnostic_log(log,"startup_control_flow_result=%s\n", original_code_address(exe,nt,image,cpu.reg(d2rt::R_EIP)) ? "budget_in_image" : "budget_outside_image");
     }
-    fprintf(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
-    fprintf(log, "startup_version_calls=%u\n", services.version_calls());
-    fprintf(log, "startup_module_calls=%u\n", services.module_calls());
-    fprintf(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls() + services.priority_calls() + (thread_created ? 1u : 0u));
-    fprintf(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
-    fprintf(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
-    fprintf(log, "startup_heap_other_calls=%u\n", services.heap_other_calls());
-    fprintf(log, "startup_proc_address_calls=%u\n", services.proc_address_calls());
-    fprintf(log, "startup_critical_init_calls=%u\n", services.critical_init_calls());
-    fprintf(log, "startup_tls_calls=%u\n", services.tls_calls());
-    fprintf(log, "startup_unavailable_export_calls=%u\n", services.unavailable_export_calls());
-    fprintf(log, "startup_process_calls=%u\n", services.process_calls());
-    fprintf(log, "startup_clock_calls=%u\n", services.clock_calls());
-    fprintf(log, "startup_multimedia_calls=%u\n", services.multimedia_calls());
-    fprintf(log, "startup_event_calls=%u\n", services.event_calls());
-    fprintf(log, "startup_priority_calls=%u\n", services.priority_calls());
-    fprintf(log, "startup_game_entry_verified=%s\n", game_entry_chain_verified ? "yes" : "no");
-    fprintf(log, "startup_environment_calls=%u\n", services.environment_calls());
-    fprintf(log, "startup_conversion_calls=%u\n", services.conversion_calls());
-    fprintf(log, "startup_code_page_calls=%u\n", services.code_page_calls());
-    fprintf(log, "startup_string_type_calls=%u\n", services.string_type_calls());
-    fprintf(log, "startup_case_map_calls=%u\n", services.case_map_calls());
-    fprintf(log, "startup_sync_calls=%u\n", services.sync_calls());
-    fprintf(log, "startup_message_calls=%u\n", services.message_calls());
+    th075::diagnostic_log(log, "startup_limit_hit=%s\n", limit ? "yes" : "no");
+    th075::diagnostic_log(log, "startup_version_calls=%u\n", services.version_calls());
+    th075::diagnostic_log(log, "startup_module_calls=%u\n", services.module_calls());
+    th075::diagnostic_log(log, "startup_serviced_imports=%u\n", services.version_calls() + services.module_calls() + services.heap_create_calls() + services.heap_alloc_calls() + services.proc_address_calls() + services.critical_init_calls() + services.tls_calls() + services.process_calls() + services.environment_calls() + services.conversion_calls() + services.sync_calls() + services.code_page_calls() + services.string_type_calls() + services.case_map_calls() + services.heap_other_calls() + services.clock_calls() + services.multimedia_calls() + services.event_calls() + services.priority_calls() + (thread_created ? 1u : 0u));
+    th075::diagnostic_log(log, "startup_heap_create_calls=%u\n", services.heap_create_calls());
+    th075::diagnostic_log(log, "startup_heap_alloc_calls=%u\n", services.heap_alloc_calls());
+    th075::diagnostic_log(log, "startup_heap_other_calls=%u\n", services.heap_other_calls());
+    th075::diagnostic_log(log, "startup_proc_address_calls=%u\n", services.proc_address_calls());
+    th075::diagnostic_log(log, "startup_critical_init_calls=%u\n", services.critical_init_calls());
+    th075::diagnostic_log(log, "startup_tls_calls=%u\n", services.tls_calls());
+    th075::diagnostic_log(log, "startup_unavailable_export_calls=%u\n", services.unavailable_export_calls());
+    th075::diagnostic_log(log, "startup_process_calls=%u\n", services.process_calls());
+    th075::diagnostic_log(log, "startup_clock_calls=%u\n", services.clock_calls());
+    th075::diagnostic_log(log, "startup_multimedia_calls=%u\n", services.multimedia_calls());
+    th075::diagnostic_log(log, "startup_event_calls=%u\n", services.event_calls());
+    th075::diagnostic_log(log, "startup_priority_calls=%u\n", services.priority_calls());
+    th075::diagnostic_log(log, "startup_game_entry_verified=%s\n", game_entry_chain_verified ? "yes" : "no");
+    th075::diagnostic_log(log, "startup_environment_calls=%u\n", services.environment_calls());
+    th075::diagnostic_log(log, "startup_conversion_calls=%u\n", services.conversion_calls());
+    th075::diagnostic_log(log, "startup_code_page_calls=%u\n", services.code_page_calls());
+    th075::diagnostic_log(log, "startup_string_type_calls=%u\n", services.string_type_calls());
+    th075::diagnostic_log(log, "startup_case_map_calls=%u\n", services.case_map_calls());
+    th075::diagnostic_log(log, "startup_sync_calls=%u\n", services.sync_calls());
+    th075::diagnostic_log(log, "startup_message_calls=%u\n", services.message_calls());
     if (!stopped) {
-        fprintf(log, "startup_fault=%s\n", fault ? fault : "unknown");
-        fprintf(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
-        fprintf(log, "startup_fault_code=0x%08X\n", cpu.fault_code());
+        th075::diagnostic_log(log, "startup_fault=%s\n", fault ? fault : "unknown");
+        th075::diagnostic_log(log, "startup_fault_va=0x%08X\n", cpu.fault_addr());
+        th075::diagnostic_log(log, "startup_fault_code=0x%08X\n", cpu.fault_code());
     }
     const bool passed = stopped && !limit && !service_failed && expected_boundary && worker_ok;
-    fprintf(log, "game_code_executed=%s\n", original_call_valid ? "yes" : "unconfirmed");
-    fprintf(log, "startup_result=%s\n", passed ? "reached_next_import_after_heap" :
+    th075::diagnostic_log(log, "game_code_executed=%s\n", original_call_valid ? "yes" : "unconfirmed");
+    th075::diagnostic_log(log, "startup_result=%s\n", passed ? "reached_next_import_after_heap" :
         (!worker_ok ? "worker_probe_failed" : !stopped ? "cpu_fault" : (limit ? "budget_exhausted" :
         (service_failed ? "service_contract_failed" :
         (import_hit ? "unexpected_import_or_frame" : "unexpected_stop")))));
-    fprintf(log,"batch_checks=disabled_user_requested_original_boot_only\n");
+    th075::diagnostic_log(log,"batch_checks=disabled_user_requested_original_boot_only\n");
     return passed;
 }

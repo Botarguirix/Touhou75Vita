@@ -22,18 +22,20 @@
 #include "startup_probe.h"
 #include "native_memory_probe.h"
 #include "native_thread_support.h"
+#include "diagnostic_log.h"
+#include "performance_clocks.h"
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration90.log"
-#define BUILD_ID "iteration90-serial-recovery-r1"
+#define LOG_PATH APP_DIR "/iteration91.log"
+#define BUILD_ID "iteration91-half-resolution-r1"
 
 static const uint32_t kArenaGuestLimit = 0x02000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration90-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration91-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -190,7 +192,7 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 
 static int run(FILE* log) {
     fprintf(log,"diagnostic_scope=exe_only native_music:disabled dat_browser:disabled native_dat_title:disabled\n");
-    fprintf(log, "Touhou 7.5 Vita - Iteration 90 original EXE process startup\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 91 original EXE process startup\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
     fflush(log);
     if(!check_native_thread_support(log))return 1;
@@ -201,7 +203,7 @@ static int run(FILE* log) {
     fprintf(log,"startup_native_optimization=disabled\n");
 #endif
     errno = 0;
-    const int old_watchdog = remove(APP_DIR "/iteration90-watchdog.log");
+    const int old_watchdog = remove(APP_DIR "/iteration91-watchdog.log");
     const int watchdog_errno = errno;
     fprintf(log, "watchdog_previous_log_cleared=%s\n",
         old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");
@@ -292,7 +294,11 @@ static int run(FILE* log) {
         run_import_smoke(*cpu, exe_bytes, log);
     const bool diagnostics_passed = pe_loaded && game_mapped && smoke_passed && imports_passed;
     fprintf(log, "preflight_result=%s\n", diagnostics_passed ? "passed" : "failed");
+    th075::compact_diagnostics=true;th075::suppressed_diagnostics=0;
+    fprintf(log,"startup_diagnostic_policy=compact timings_errors_boundaries_retained\n");
+    PerformanceClocks clocks(log);
     const bool passed = diagnostics_passed && run_startup_probe(*cpu, game_image, exe_bytes, log);
+    fprintf(log,"startup_diagnostic_suppressed=%llu\n",(unsigned long long)th075::suppressed_diagnostics);
     if (!diagnostics_passed) fprintf(log, "startup_result=preflight_failed\n");
     fprintf(log, "result=%s\n", passed ? "real_entrypoint_version_module_passed" : "failed");
     return passed ? 0 : 1;
@@ -306,9 +312,9 @@ int main(void) {
     if (log == NULL) {
         return 2;
     }
-    // Keep every diagnostic line, batching native writes across successful calls.
+    // Batch retained diagnostics across successful calls in compact mode.
     // Stops and CPU slices flush immediately; watchdog uses its own file.
-    static char diagnostic_buffer[32768];
+    static char diagnostic_buffer[131072];
     setvbuf(log, diagnostic_buffer, _IOFBF, sizeof(diagnostic_buffer));
 
     const int result = run(log);

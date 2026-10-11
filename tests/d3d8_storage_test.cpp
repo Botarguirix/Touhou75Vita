@@ -48,8 +48,11 @@ struct Fixture {
     static constexpr uint32_t stack=0x009F0000,out=0x00900000,params=out+0x100;
     HostCpu cpu;FILE* log=std::tmpfile();uint32_t root_refs=1;
     D3D8Storage storage{cpu,log,root_refs};uint32_t initial_available=0;
-    Fixture() {
+    Fixture(bool half=false) {
         assert(log);
+        th075::exe_draw_ready=false;th075::exe_present_frames=0;
+        th075::exe_draw_width=th075::exe_draw_height=0;th075::exe_draw_preview.fill(0);
+        if(half)storage.enable_half_resolution();
         const std::array<uint32_t,13> p={640,480,22,1,0,1,0x00AB7000,1,1,80,1,0,0};
         assert(cpu.write(params,p.data(),sizeof(p)));
         const uint32_t w[]={0x00401000,0x00AB9000,0,2,0x00AB7000,0x20,params,out};
@@ -57,7 +60,7 @@ struct Fixture {
         assert(storage.create(w,hr)==StartupServiceResult::Serviced && hr==0);
         assert(cpu.read_u32(out)==D3D8Storage::device && root_refs==2);
         initial_available=dev(4,{});
-        assert(initial_available==D3D8Storage::budget-640*480*6);
+        assert(initial_available==D3D8Storage::budget-640*480*6-(half?320*240*4:0));
     }
     ~Fixture(){std::fclose(log);}
     uint32_t call(uint32_t base,unsigned slot,std::initializer_list<uint32_t> args,
@@ -79,7 +82,13 @@ struct Fixture {
         const uint32_t ret=0x00401000;
         assert(cpu.write(stack,&ret,4) && cpu.write(stack+4,w.data(),uint32_t(w.size()*4)));
         cpu.set_reg(d2rt::R_ESP,stack);cpu.set_reg(d2rt::R_EIP,D3D8Storage::device_trap+slot*16);
-        assert(storage.call(D3D8Storage::device_trap+slot*16)==StartupServiceResult::Serviced);
+        const auto result=storage.call(D3D8Storage::device_trap+slot*16);
+        if(result!=StartupServiceResult::Serviced) {
+            fprintf(stderr,"device slot %u failed, result %u\n",slot,unsigned(result));
+            std::fflush(log);const long length=std::ftell(log);std::fseek(log,std::max(0L,length-4096),SEEK_SET);
+            char line[512];while(std::fgets(line,sizeof(line),log))std::fputs(line,stderr);
+        }
+        assert(result==StartupServiceResult::Serviced);
         assert(cpu.reg(d2rt::R_ESP)==stack+(w.size()+1)*4 && cpu.reg(d2rt::R_EIP)==ret);
         return cpu.reg(d2rt::R_EAX);
     }
@@ -101,6 +110,45 @@ struct Fixture {
 };
 
 int main(int argc,char** argv) {
+    {
+        Fixture f(true);
+        assert(f.dev(16,{0,0,Fixture::out})==0);const auto back=f.cpu.read_u32(Fixture::out);
+        assert(f.dev(36,{0,0,1,0x12345678,0,0})==0);
+        assert(f.call(D3D8Storage::surface_trap,9,{back,Fixture::out,0,0})==0);
+        assert(f.cpu.read_u32(Fixture::out)==2560 && f.cpu.read_u32(Fixture::out+4)==D3D8Storage::staging);
+        for(unsigned i=0;i<640*480;++i)assert(f.cpu.read_u32(D3D8Storage::staging+i*4)==0xFF345678);
+        assert(f.call(D3D8Storage::surface_trap,10,{back})==0);
+        const auto texture=f.texture(8,8,1),surface=f.surface(texture);
+        assert(f.dev(4,{})==f.initial_available-8*8*4-4*4*4);
+        assert(f.call(D3D8Storage::surface_trap,8,{surface,Fixture::out})==0);
+        assert(f.cpu.read_u32(Fixture::out+16)==8*8*4 && f.cpu.read_u32(Fixture::out+24)==8);
+        assert(f.release(surface,true)==1 && f.release(texture)==0 && f.dev(4,{})==f.initial_available);
+        puts("PASS reduced backbuffer Clear/LockRect retain guest pitch/descriptors and release companion budget");
+    }
+    {
+        Fixture f(true);const auto texture=f.texture(4,4,1);
+        assert(f.call(D3D8Storage::texture_trap,16,{texture,0,Fixture::out,0,0})==0);
+        for(unsigned y=0;y<4;++y)for(unsigned x=0;x<4;++x)
+            f.cpu.write_u32(D3D8Storage::staging+(y*4+x)*4,0xFF000000u|((x&2)?0x00440000:0x00110000)|((y&2)?0x00005500:0x00002200)|0x33);
+        assert(f.call(D3D8Storage::texture_trap,17,{texture,0})==0);
+        const unsigned states[][2]={{7,0},{22,1},{137,0},{27,0}};
+        for(const auto& state:states)assert(f.dev(50,{state[0],state[1]})==0);
+        assert(f.dev(63,{0,3,1})==0 && f.dev(63,{0,4,4})==0 && f.dev(63,{0,6,1})==0 && f.dev(76,{0x144})==0 && f.dev(61,{0,texture})==0);
+        d3d8_quad::Vertex v[4]={{-.5f,-.5f,.5f,1,0xFFFFFFFF,0,0},{639.5f,-.5f,.5f,1,0xFFFFFFFF,1,0},
+            {-.5f,479.5f,.5f,1,0xFFFFFFFF,0,1},{639.5f,479.5f,.5f,1,0xFFFFFFFF,1,1}};
+        assert(f.cpu.write(Fixture::params,v,sizeof(v)));
+        th075::compact_diagnostics=true;th075::suppressed_diagnostics=0;
+        assert(f.dev(34,{})==0 && f.dev(72,{5,2,Fixture::params,28})==0 && f.dev(35,{})==0);
+        assert(th075::suppressed_diagnostics>0);th075::compact_diagnostics=false;
+        assert(f.dev(16,{0,0,Fixture::out})==0);const auto back=f.cpu.read_u32(Fixture::out);
+        assert(f.call(D3D8Storage::surface_trap,9,{back,Fixture::out,0,0})==0);
+        assert(f.cpu.read_u32(D3D8Storage::staging)==0xFF112233 && f.cpu.read_u32(D3D8Storage::staging+639*4)==0xFF442233);
+        assert(f.cpu.read_u32(D3D8Storage::staging+(479*640)*4)==0xFF115533 && f.cpu.read_u32(D3D8Storage::staging+(479*640+639)*4)==0xFF445533);
+        assert(f.call(D3D8Storage::surface_trap,10,{back})==0);
+        std::rewind(f.log);std::string trace;char chunk[2048];while(std::fgets(chunk,sizeof(chunk),f.log))trace+=chunk;
+        assert(trace.find("covered:76800")!=std::string::npos && trace.find("startup_d3d8_boundary_method=")==std::string::npos);
+        puts("PASS shipping reduced DrawPrimitiveUP samples render-target companions and returns expanded guest readback");
+    }
     {
         Fixture f;const auto h=f.texture(),s=f.surface(h);
         assert(f.surface(h)==s);

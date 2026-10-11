@@ -1,3 +1,4 @@
+#include "diagnostic_log.h"
 #include "startup_services.h"
 #include "worker_probe.h"
 #include "cp932_data.h"
@@ -157,7 +158,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
         (parameter_count && !cpu_.read(esp + 4, &arg, 4))) {
-        fprintf(log_, "startup_service_error=invalid_call_frame\n");
+        th075::diagnostic_log(log_, "startup_service_error=invalid_call_frame\n");
         return StartupServiceResult::ContractFailure;
     }
     if(file_io || (event_close && files_.count(arg)) || (file_type && files_.count(arg))) {
@@ -178,7 +179,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 begin=end+1;
             }
             native="ux0:data/TH075Vita/"+path;
-            fprintf(log_,"startup_file_guest=%s\n",path.c_str());return true;
+            th075::diagnostic_log(log_,"startup_file_guest=%s\n",path.c_str());return true;
         };
         if(file_open || file_attributes) {
             std::string native;
@@ -191,7 +192,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             } else {
                 uint32_t args[7]{};
                 if(!cpu_.read(esp+4,args,28))return StartupServiceResult::ContractFailure;
-                fprintf(log_,"startup_file_open_access=0x%08X disposition=%u share=%u flags=0x%08X\n",args[1],args[4],args[2],args[5]);
+                th075::diagnostic_log(log_,"startup_file_open_access=0x%08X disposition=%u share=%u flags=0x%08X\n",args[1],args[4],args[2],args[5]);
                 const bool readonly=args[1]==0x80000000u && args[4]==3;
                 const bool game_log=args[1]==0x40000000u && args[2]==0 &&
                     (args[4]==2 || args[4]==3) && args[5]==0x80 && native=="ux0:data/TH075Vita/log.txt";
@@ -207,12 +208,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         if(readonly) {
                             auto& buffer=readonly_file_buffers_[expected_eax];
                             const int buffered=setvbuf(file,buffer.data(),_IOFBF,buffer.size());
-                            fprintf(log_,"startup_file_read_buffer=handle:0x%08X bytes:%u rc:%d\n",expected_eax,unsigned(buffer.size()),buffered);
+                            th075::diagnostic_log(log_,"startup_file_read_buffer=handle:0x%08X bytes:%u rc:%d\n",expected_eax,unsigned(buffer.size()),buffered);
                         }
                         if(game_log) {
                             writable_files_.insert(expected_eax);
                             if(args[4]==2)wx86_set_lasterr(cpu_,existed ? 183:0);
-                            fprintf(log_,"startup_file_write_scope=original_game_log_txt\n");
+                            th075::diagnostic_log(log_,"startup_file_write_scope=original_game_log_txt\n");
                         }
                     }
                 }
@@ -267,7 +268,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     if(!cpu_.write(write_args[3],&written,4))return StartupServiceResult::ContractFailure;
                     expected_eax=written==write_args[2] && flush==0 && !ferror(it->second) ? 1u:0u;
                     if(!expected_eax)wx86_set_lasterr(cpu_,29);
-                    fprintf(log_,"startup_file_write_bytes=%u requested=%u flushed=%s\n",written,write_args[2],flush==0 ? "yes":"no");
+                    th075::diagnostic_log(log_,"startup_file_write_bytes=%u requested=%u flushed=%s\n",written,write_args[2],flush==0 ? "yes":"no");
                 }
             } else if(file_read && writable_files_.count(arg)) {expected_eax=0;wx86_set_lasterr(cpu_,5);
             } else if(file_read) {
@@ -287,12 +288,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if(!cpu_.write(args[3],&total,4))return StartupServiceResult::ContractFailure;
                 expected_eax=ferror(it->second) ? 0u:1u;
                 if(!expected_eax)wx86_set_lasterr(cpu_,30);
-                fprintf(log_,"startup_file_read_bytes=%u\n",total);
+                th075::diagnostic_log(log_,"startup_file_read_bytes=%u\n",total);
             }
         }
         ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_file_scope=owned_application_mount_readonly_assets_writable_log\n");
-        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+        th075::diagnostic_log(log_,"startup_file_scope=owned_application_mount_readonly_assets_writable_log\n");
+        th075::diagnostic_log(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
     } else if(rect_set) {
         // The original IAT imports SetRect only. Its RECT consists of four
         // signed 32-bit LONGs, with no normalization or coordinate clipping.
@@ -300,21 +301,21 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         // overlaps argument storage. The null-pointer contract returns FALSE.
         std::array<int32_t,4> rect{},readback{};
         if(!cpu_.read(esp+8,rect.data(),sizeof(rect)))return StartupServiceResult::ContractFailure;
-        fprintf(log_,"startup_rect_set=output:0x%08X left:%ld top:%ld right:%ld bottom:%ld return:0x%08X\n",
+        th075::diagnostic_log(log_,"startup_rect_set=output:0x%08X left:%ld top:%ld right:%ld bottom:%ld return:0x%08X\n",
             arg,long(rect[0]),long(rect[1]),long(rect[2]),long(rect[3]),ret);
         if(arg) {
             if(arg<0x10000 || uint64_t(arg)+sizeof(rect)>0x02000000ull ||
                 !cpu_.write(arg,rect.data(),sizeof(rect)) ||
                 !cpu_.read(arg,readback.data(),sizeof(readback)) || readback!=rect) {
-                fprintf(log_,"startup_service_error=invalid_rect_output\n");
+                th075::diagnostic_log(log_,"startup_service_error=invalid_rect_output\n");
                 return StartupServiceResult::ContractFailure;
             }
             expected_eax=1;
-            fprintf(log_,"startup_rect_readback=passed bytes:16 signed_coordinates:yes\n");
-        } else fprintf(log_,"startup_rect_set_result=null_output_false\n");
+            th075::diagnostic_log(log_,"startup_rect_readback=passed bytes:16 signed_coordinates:yes\n");
+        } else th075::diagnostic_log(log_,"startup_rect_set_result=null_output_false\n");
         // SetRect returns BOOL, not HRESULT, and does not change LastError.
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_serviced_import=USER32.dll!SetRect\n");
+        th075::diagnostic_log(log_,"startup_serviced_import=USER32.dll!SetRect\n");
     } else if(com) {
         const uint32_t tib=wx86_cur_tib();
         if(com_init) {
@@ -324,9 +325,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             auto it=com_apartments_.find(tib);
             if(it!=com_apartments_.end() && !--it->second)com_apartments_.erase(it);
         }
-        fprintf(log_,"startup_com_tib=0x%08X\nstartup_com_scope=owned_sta_registration_no_servers\n",tib);
+        th075::diagnostic_log(log_,"startup_com_tib=0x%08X\nstartup_com_scope=owned_sta_registration_no_servers\n",tib);
         ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_serviced_import=ole32.dll!%s\n",import.name.c_str());
+        th075::diagnostic_log(log_,"startup_serviced_import=ole32.dll!%s\n",import.name.c_str());
     } else if(gui) {
         auto guest_string=[&](uint32_t pointer,std::string& text) {
             text.clear();if(!pointer)return false;
@@ -340,12 +341,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         if(message_peek) {
             uint32_t args[5]{};
             if(!cpu_.read(esp+4,args,sizeof(args)))return StartupServiceResult::ContractFailure;
-            fprintf(log_,"startup_message_query=hwnd:0x%08X min:0x%04X max:0x%04X flags:0x%08X\n",args[1],args[2],args[3],args[4]);
+            th075::diagnostic_log(log_,"startup_message_query=hwnd:0x%08X min:0x%04X max:0x%04X flags:0x%08X\n",args[1],args[2],args[3],args[4]);
             // Every window lifecycle callback has already run synchronously.
             // Pending sends/invalid paint cannot be reported as an empty queue.
             if(!window_.created || window_pending_ || window_.invalidated ||
                wx86_cur_tib()!=window_.owner_tib) {
-                fprintf(log_,"startup_message_boundary=pending_window_work_or_foreign_thread\n");
+                th075::diagnostic_log(log_,"startup_message_boundary=pending_window_work_or_foreign_thread\n");
                 return StartupServiceResult::Unsupported;
             }
             startup_messages::Message original{};
@@ -360,7 +361,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     return cpu_.write(pointer,&message,sizeof(message));
                 });
             if(result==startup_messages::Result::Unsupported) {
-                fprintf(log_,"startup_message_boundary=unsupported_filter_or_queue_flags\n");
+                th075::diagnostic_log(log_,"startup_message_boundary=unsupported_filter_or_queue_flags\n");
                 return StartupServiceResult::Unsupported;
             }
             if(result==startup_messages::Result::OutputFault)return StartupServiceResult::ContractFailure;
@@ -370,16 +371,16 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                (!expected_eax && std::memcmp(&original,&after,sizeof(original))))
                 return StartupServiceResult::ContractFailure;
             ++message_calls_;
-            fprintf(log_,"startup_message_result=%s queued:%u call:%u\n",expected_eax ? "available":"empty",unsigned(message_queue_.size()),message_calls_);
-            fprintf(log_,"startup_message_empty_output=%s\nstartup_message_lasterror=preserved\n",expected_eax ? "not_applicable":"preserved");
-            fprintf(log_,"startup_message_scope=owned_posted_queue_no_host_input_no_timers\n");
+            th075::diagnostic_log(log_,"startup_message_result=%s queued:%u call:%u\n",expected_eax ? "available":"empty",unsigned(message_queue_.size()),message_calls_);
+            th075::diagnostic_log(log_,"startup_message_empty_output=%s\nstartup_message_lasterror=preserved\n",expected_eax ? "not_applicable":"preserved");
+            th075::diagnostic_log(log_,"startup_message_scope=owned_posted_queue_no_host_input_no_timers\n");
         } else if(window_update) {
             if(!window_.created || arg!=window_.handle || window_pending_)return StartupServiceResult::Unsupported;
             if(!window_.invalidated)expected_eax=1;
             else {
                 window_.frame=esp;window_.return_address=ret;
                 window_paint_pending_=true;window_pending_=true;
-                fprintf(log_,"startup_window_update=deferred_original_wm_paint\n");
+                th075::diagnostic_log(log_,"startup_window_update=deferred_original_wm_paint\n");
                 return StartupServiceResult::Deferred;
             }
         } else if(window_show) {
@@ -393,7 +394,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             else {
                 window_.frame=esp;window_.return_address=ret;
                 window_was_visible_=window_.visible;window_show_pending_=true;window_pending_=true;
-                fprintf(log_,"startup_window_show_command=%u\n",command);
+                th075::diagnostic_log(log_,"startup_window_show_command=%u\n",command);
                 return StartupServiceResult::Deferred;
             }
         } else if(window_create) {
@@ -424,8 +425,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             window_.frame=esp;window_.return_address=ret;window_.args=args;
             window_.surface.assign(640u*480u,0xFFFFFFFFu);
             window_pending_=true;
-            fprintf(log_,"startup_window_creation=deferred_guest_callbacks\n");
-            fprintf(log_,"startup_window_surface=owned_640x480_abgr_rendering_pending\n");
+            th075::diagnostic_log(log_,"startup_window_creation=deferred_guest_callbacks\n");
+            th075::diagnostic_log(log_,"startup_window_surface=owned_640x480_abgr_rendering_pending\n");
             return StartupServiceResult::Deferred;
         } else if(window_default) {
             uint32_t params[4]{};
@@ -440,9 +441,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if(!window_paint_pending_)return StartupServiceResult::Unsupported;
                 std::fill(window_.surface.begin(),window_.surface.end(),0xFFFFFFFFu);
                 window_.invalidated=false;
-                fprintf(log_,"startup_window_paint=owned_white_brush_surface_validated\n");
+                th075::diagnostic_log(log_,"startup_window_paint=owned_white_brush_surface_validated\n");
             } else if(params[1]!=0x18 && params[1]!=5 && params[1]!=3) return StartupServiceResult::Unsupported;
-            fprintf(log_,"startup_window_default_message=0x%04X\n",params[1]);
+            th075::diagnostic_log(log_,"startup_window_default_message=0x%04X\n",params[1]);
         } else if(icon_load) {
             uint32_t identifier=0;
             if(!cpu_.read(esp+8,&identifier,4))return StartupServiceResult::ContractFailure;
@@ -450,7 +451,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             std::string name;
             if(identifier>0xFFFF && !guest_string(identifier,name))return StartupServiceResult::ContractFailure;
             const std::string key=name.empty() ? "#"+std::to_string(identifier):name;
-            fprintf(log_,"startup_icon_requested=%s\n",key.c_str());
+            th075::diagnostic_log(log_,"startup_icon_requested=%s\n",key.c_str());
             const auto existing=icons_.find(key);
             if(existing!=icons_.end())expected_eax=existing->second.handle;
             else {
@@ -458,7 +459,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 const auto& bytes=image_.image();
                 if(!th075::resource(bytes,14,name,uint16_t(identifier),group)) {
                     wx86_set_lasterr(cpu_,1814);
-                    fprintf(log_,"startup_icon_error=group_missing_or_invalid\n");
+                    th075::diagnostic_log(log_,"startup_icon_error=group_missing_or_invalid\n");
                 } else {
                     const uint8_t* data=bytes.data()+group.rva;uint16_t reserved=0,type=0,count=0;
                     if(group.size<6)return StartupServiceResult::ContractFailure;
@@ -481,11 +482,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     expected_eax=0x00AB5000+4*uint32_t(icons_.size());
                     icons_.emplace(key,IconObject{expected_eax,pixels});
                     th075::icon_preview=pixels;
-                    fprintf(log_,"startup_icon_resource_id=%u\nstartup_icon_language=%u\n",id,bitmap.language);
-                    fprintf(log_,"startup_icon_decoded_pixels=%u\nstartup_icon_resource=validated_and_decoded\n",unsigned(pixels.size()));
+                    th075::diagnostic_log(log_,"startup_icon_resource_id=%u\nstartup_icon_language=%u\n",id,bitmap.language);
+                    th075::diagnostic_log(log_,"startup_icon_decoded_pixels=%u\nstartup_icon_resource=validated_and_decoded\n",unsigned(pixels.size()));
                 }
             }
-            fprintf(log_,"startup_icon_handle=0x%08X\n",expected_eax);
+            th075::diagnostic_log(log_,"startup_icon_handle=0x%08X\n",expected_eax);
         } else if(cursor_load) {
             uint32_t id=0;if(!cpu_.read(esp+8,&id,4))return StartupServiceResult::ContractFailure;
             if(arg || id!=32512)return StartupServiceResult::Unsupported;
@@ -495,11 +496,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     arrow_cursor_[y*32+x]=(x==0 || x==y/2 || y==19) ? 0xFF000000:0xFFFFFFFF;
             }
             expected_eax=0x00AB5800;
-            fprintf(log_,"startup_cursor_object=bounded_system_arrow_32x32_hotspot_0_0\n");
+            th075::diagnostic_log(log_,"startup_cursor_object=bounded_system_arrow_32x32_hotspot_0_0\n");
         } else if(stock) {
             if(arg!=0)return StartupServiceResult::Unsupported;
             expected_eax=0x00AB6000;
-            fprintf(log_,"startup_stock_object=white_solid_brush\n");
+            th075::diagnostic_log(log_,"startup_stock_object=white_solid_brush\n");
         } else {
             std::array<uint32_t,12> fields{};std::string name;
             if(!cpu_.read(arg,fields.data(),sizeof(fields)) || fields[0]!=48 ||
@@ -521,12 +522,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if(window_classes_.size()>=16)return StartupServiceResult::Unsupported;
                 expected_eax=0xC001+uint32_t(window_classes_.size());
                 window_classes_.emplace(name,WindowClass{uint16_t(expected_eax),fields});
-                fprintf(log_,"startup_window_class_registered=yes\nstartup_window_class_atom=0x%04X\n",expected_eax);
-                fprintf(log_,"startup_window_procedure=0x%08X\nstartup_window_class_scope=guest_registry_window_creation_pending\n",fields[2]);
+                th075::diagnostic_log(log_,"startup_window_class_registered=yes\nstartup_window_class_atom=0x%04X\n",expected_eax);
+                th075::diagnostic_log(log_,"startup_window_procedure=0x%08X\nstartup_window_class_scope=guest_registry_window_creation_pending\n",fields[2]);
             }
         }
         ++process_calls_;cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_serviced_import=%s!%s\n",import.dll.c_str(),import.name.c_str());
+        th075::diagnostic_log(log_,"startup_serviced_import=%s!%s\n",import.dll.c_str(),import.name.c_str());
     } else if (cwd) {
         // The only mounted guest directory is the application's data directory.
         // Never change the native process CWD or accept an unmounted guest path.
@@ -548,16 +549,16 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         if(ch>='a' && ch<='z')ch=char(ch-'a'+'A');
                     }
                     if(normalized.size()>3 && normalized.back()=='\\')normalized.pop_back();
-                    fprintf(log_,"startup_cwd_requested=%s\n",path);
+                    th075::diagnostic_log(log_,"startup_cwd_requested=%s\n",path);
                     if(normalized!=directory && normalized!=".") {
-                        fprintf(log_,"startup_cwd_boundary=unmounted_path\n");
+                        th075::diagnostic_log(log_,"startup_cwd_boundary=unmounted_path\n");
                         return StartupServiceResult::Unsupported;
                     }
                     SceIoStat native{};
                     const int rc=sceIoGetstat("ux0:data/TH075Vita",&native);
                     if(rc<0 || !SCE_S_ISDIR(native.st_mode)) wx86_set_lasterr(cpu_,3);
                     else expected_eax=1;
-                    fprintf(log_,"startup_cwd_native_stat_rc=0x%08X\n",unsigned(rc));
+                    th075::diagnostic_log(log_,"startup_cwd_native_stat_rc=0x%08X\n",unsigned(rc));
                 }
             }
         } else {
@@ -573,11 +574,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 expected_eax=sizeof(directory)-1;
             }
         }
-        fprintf(log_,"startup_cwd_guest=C:\\TH075\nstartup_cwd_native=ux0:data/TH075Vita\n");
-        fprintf(log_,"startup_cwd_scope=single_mounted_directory\n");
+        th075::diagnostic_log(log_,"startup_cwd_guest=C:\\TH075\nstartup_cwd_native=ux0:data/TH075Vita\n");
+        th075::diagnostic_log(log_,"startup_cwd_scope=single_mounted_directory\n");
         ++process_calls_;
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+        th075::diagnostic_log(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
     } else if(metrics) {
         // Logical game desktop, borderless. Actual rendering remains pending.
         switch(arg) {
@@ -586,14 +587,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             case 11: case 12: case 13: case 14: expected_eax=32;break;
             case 4: case 5: case 6: case 7: case 8: case 45: case 46: expected_eax=0;break;
             default:
-                fprintf(log_,"startup_metrics_boundary=unimplemented_index_%u\n",arg);
+                th075::diagnostic_log(log_,"startup_metrics_boundary=unimplemented_index_%u\n",arg);
                 return StartupServiceResult::Unsupported;
         }
-        fprintf(log_,"startup_metrics_index=%u\nstartup_metrics_value=%u\n",arg,expected_eax);
-        fprintf(log_,"startup_metrics_profile=logical_640x480_borderless_rendering_pending\n");
+        th075::diagnostic_log(log_,"startup_metrics_index=%u\nstartup_metrics_value=%u\n",arg,expected_eax);
+        th075::diagnostic_log(log_,"startup_metrics_profile=logical_640x480_borderless_rendering_pending\n");
         ++process_calls_;
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
-        fprintf(log_,"startup_serviced_import=USER32.dll!GetSystemMetrics\n");
+        th075::diagnostic_log(log_,"startup_serviced_import=USER32.dll!GetSystemMetrics\n");
     } else if (priority) {
         StartupWorker* selected=worker_ && arg==worker_->handle?worker_:audio_worker_;
         if (!selected || arg != selected->handle) {
@@ -606,23 +607,23 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             if(requested != -15 && requested != 15 && (requested < -2 || requested > 2)) {
                 wx86_set_lasterr(cpu_,87); expected_eax=0;
             } else { selected->priority=requested; expected_eax=1; }
-            fprintf(log_,"startup_thread_requested_priority=%d\n",requested);
+            th075::diagnostic_log(log_,"startup_thread_requested_priority=%d\n",requested);
         }
-        if(selected) fprintf(log_,"startup_thread_priority=%d\n",selected->priority);
-        fprintf(log_,"startup_priority_scope=bounded_guest_worker_dispatch\n");
+        if(selected) th075::diagnostic_log(log_,"startup_thread_priority=%d\n",selected->priority);
+        th075::diagnostic_log(log_,"startup_priority_scope=bounded_guest_worker_dispatch\n");
         cpu_.trap_epilogue(expected_eax,cleanup,ret);
         ++priority_calls_;
-        fprintf(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+        th075::diagnostic_log(log_,"startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
     } else if (event) {
         if (event_create) {
             uint32_t args[4] = {};
             if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
-            fprintf(log_, "startup_event_security_va=0x%08X\n", args[0]);
-            fprintf(log_, "startup_event_manual_reset=%s\n", args[1] ? "yes" : "no");
-            fprintf(log_, "startup_event_initial_signaled=%s\n", args[2] ? "yes" : "no");
-            fprintf(log_, "startup_event_name_va=0x%08X\n", args[3]);
+            th075::diagnostic_log(log_, "startup_event_security_va=0x%08X\n", args[0]);
+            th075::diagnostic_log(log_, "startup_event_manual_reset=%s\n", args[1] ? "yes" : "no");
+            th075::diagnostic_log(log_, "startup_event_initial_signaled=%s\n", args[2] ? "yes" : "no");
+            th075::diagnostic_log(log_, "startup_event_name_va=0x%08X\n", args[3]);
             if (args[0] || args[3]) {
-                fprintf(log_, "startup_event_boundary=security_or_named_event\n");
+                th075::diagnostic_log(log_, "startup_event_boundary=security_or_named_event\n");
                 return StartupServiceResult::Unsupported;
             }
             if (events_.size() >= 64 || next_event_handle_ >= 0x00AB3000) {
@@ -631,65 +632,65 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 expected_eax = next_event_handle_;
                 next_event_handle_ += 4; // Never recycle stale handles in this run.
                 events_.emplace(expected_eax, EventState{args[1] != 0, args[2] != 0});
-                fprintf(log_, "startup_event_handle=0x%08X\n", expected_eax);
-                fprintf(log_, "startup_event_handle_kind=tracked_unnamed_event\n");
+                th075::diagnostic_log(log_, "startup_event_handle=0x%08X\n", expected_eax);
+                th075::diagnostic_log(log_, "startup_event_handle_kind=tracked_unnamed_event\n");
             }
         } else {
             const auto found = events_.find(arg);
             uint32_t timeout = 0;
             if (event_wait && !cpu_.read(esp + 8, &timeout, 4)) return StartupServiceResult::ContractFailure;
-            fprintf(log_, "startup_event_handle=0x%08X\n", arg);
+            th075::diagnostic_log(log_, "startup_event_handle=0x%08X\n", arg);
             if (found == events_.end()) {
                 // Handles from other subsystems need their own wait/close dispatch.
                 if (arg < 0x00AB2000 || arg >= next_event_handle_ || (arg & 3)) {
-                    fprintf(log_, "startup_event_boundary=foreign_handle_type\n");
+                    th075::diagnostic_log(log_, "startup_event_boundary=foreign_handle_type\n");
                     return StartupServiceResult::Unsupported;
                 }
                 wx86_set_lasterr(cpu_, 6);
                 expected_eax = event_wait ? 0xFFFFFFFFu : 0;
-                fprintf(log_, "startup_event_error=closed_handle\n");
+                th075::diagnostic_log(log_, "startup_event_error=closed_handle\n");
             } else if (event_wait) {
-                fprintf(log_, "startup_event_wait_timeout_ms=%u\n", timeout);
+                th075::diagnostic_log(log_, "startup_event_wait_timeout_ms=%u\n", timeout);
                 if (found->second.acquire()) {
                     expected_eax = 0; // WAIT_OBJECT_0
                 } else if (!timeout) {
                     expected_eax = 0x102; // Immediate WAIT_TIMEOUT.
                 } else {
-                    fprintf(log_, "startup_event_boundary=blocking_wait_requires_guest_scheduler\n");
+                    th075::diagnostic_log(log_, "startup_event_boundary=blocking_wait_requires_guest_scheduler\n");
                     return StartupServiceResult::Unsupported;
                 }
-                fprintf(log_, "startup_event_wait_result=0x%08X\n", expected_eax);
+                th075::diagnostic_log(log_, "startup_event_wait_result=0x%08X\n", expected_eax);
             } else if (event_close) {
                 events_.erase(found);
                 expected_eax = 1;
-                fprintf(log_, "startup_event_closed=yes\n");
+                th075::diagnostic_log(log_, "startup_event_closed=yes\n");
             } else {
                 if(event_set) {
                     found->second.set();
-                    fprintf(log_,"startup_event_signal=handle:0x%08X generation:%u producer_tib:0x%08X\n",arg,found->second.generation,wx86_cur_tib());
+                    th075::diagnostic_log(log_,"startup_event_signal=handle:0x%08X generation:%u producer_tib:0x%08X\n",arg,found->second.generation,wx86_cur_tib());
                 } else found->second.signaled=false;
                 expected_eax = 1;
             }
             const auto current = events_.find(arg);
             if (current != events_.end())
-                fprintf(log_, "startup_event_signaled=%s\n", current->second.signaled ? "yes" : "no");
+                th075::diagnostic_log(log_, "startup_event_signaled=%s\n", current->second.signaled ? "yes" : "no");
         }
-        fprintf(log_, "startup_event_live_count=%u\n", unsigned(events_.size()));
+        th075::diagnostic_log(log_, "startup_event_live_count=%u\n", unsigned(events_.size()));
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++event_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (multimedia_timer) {
         if (timer_time) {
             expected_eax = uint32_t(sceKernelGetProcessTimeWide() / 1000);
-            fprintf(log_, "startup_timer_time_ms=%u\n", expected_eax);
-            fprintf(log_, "startup_timer_clock_source=vita_process_uptime\n");
+            th075::diagnostic_log(log_, "startup_timer_time_ms=%u\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_timer_clock_source=vita_process_uptime\n");
         } else {
-            fprintf(log_, "startup_timer_requested_period_ms=%u\n", arg);
+            th075::diagnostic_log(log_, "startup_timer_requested_period_ms=%u\n", arg);
             // Bounded profile for the observed 1 ms request. The existing
             // microsecond clock needs no resolution switch; this does not
             // implement periodic callbacks or certify scheduling precision.
             if (arg != 1) {
-                fprintf(log_, "startup_timer_boundary=unsupported_period\n");
+                th075::diagnostic_log(log_, "startup_timer_boundary=unsupported_period\n");
                 return StartupServiceResult::Unsupported;
             }
             if (timer_begin) {
@@ -698,33 +699,33 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 ++timer_period_requests_;
             } else {
                 if (!timer_period_requests_) {
-                    fprintf(log_, "startup_service_error=unmatched_timer_period_release\n");
+                    th075::diagnostic_log(log_, "startup_service_error=unmatched_timer_period_release\n");
                     return StartupServiceResult::ContractFailure;
                 }
                 --timer_period_requests_;
             }
-            fprintf(log_, "startup_timer_period_requests=%u\n", timer_period_requests_);
-            fprintf(log_, "startup_timer_profile=1ms_clock_no_periodic_callbacks\n");
+            th075::diagnostic_log(log_, "startup_timer_period_requests=%u\n", timer_period_requests_);
+            th075::diagnostic_log(log_, "startup_timer_profile=1ms_clock_no_periodic_callbacks\n");
             expected_eax = 0; // TIMERR_NOERROR for the supported period.
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++multimedia_calls_;
-        fprintf(log_, "startup_serviced_import=WINMM.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=WINMM.dll!%s\n", import.name.c_str());
     } else if (case_map) {
         uint32_t args[6] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t locale = args[0], flags = args[1], source = args[2];
         const uint32_t count = args[3], dest = args[4], capacity = args[5];
-        fprintf(log_, "startup_case_locale=0x%08X\n", locale);
-        fprintf(log_, "startup_case_flags=0x%08X\n", flags);
-        fprintf(log_, "startup_case_input_units=%u\n", count);
+        th075::diagnostic_log(log_, "startup_case_locale=0x%08X\n", locale);
+        th075::diagnostic_log(log_, "startup_case_flags=0x%08X\n", flags);
+        th075::diagnostic_log(log_, "startup_case_input_units=%u\n", count);
         // Explicit Japanese profile, including default locale aliases and CRT probe 0.
         if (locale != 0 && locale != 0x411 && locale != 0x400 && locale != 0x800) {
-            fprintf(log_, "startup_case_boundary=unsupported_locale\n");
+            th075::diagnostic_log(log_, "startup_case_boundary=unsupported_locale\n");
             return StartupServiceResult::Unsupported;
         }
         if (flags != 0x100 && flags != 0x200) {
-            fprintf(log_, "startup_case_boundary=unsupported_mapping_flags\n");
+            th075::diagnostic_log(log_, "startup_case_boundary=unsupported_mapping_flags\n");
             return StartupServiceResult::Unsupported;
         }
         uint32_t error = (!source || !count || capacity > 0x7FFFFFFFu || (capacity && !dest)) ? 87 : 0;
@@ -742,8 +743,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 const auto* entry = cp932_entry(unit);
                 const uint16_t mapped = entry ? (flags == 0x100 ? entry->lower : entry->upper) : 0xFFFF;
                 if (mapped == 0xFFFF) {
-                    fprintf(log_, "startup_case_boundary=unmapped_or_expanding_character\n");
-                    fprintf(log_, "startup_case_unsupported_unit=0x%04X\n", unsigned(unit));
+                    th075::diagnostic_log(log_, "startup_case_boundary=unmapped_or_expanding_character\n");
+                    th075::diagnostic_log(log_, "startup_case_unsupported_unit=0x%04X\n", unsigned(unit));
                     return StartupServiceResult::Unsupported;
                 }
                 output.push_back(mapped);
@@ -761,29 +762,29 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         !cpu_.write(dest, output.data(), size) ||
                         !cpu_.read(dest, readback.data(), size) || readback != output)
                         return StartupServiceResult::ContractFailure;
-                    fprintf(log_, "startup_case_readback=passed\n");
+                    th075::diagnostic_log(log_, "startup_case_readback=passed\n");
                 }
             }
             if (!error) expected_eax = uint32_t(output.size());
         }
         if (error) wx86_set_lasterr(cpu_, error);
-        fprintf(log_, "startup_case_error=%u\n", error);
-        fprintf(log_, "startup_case_mode=%s\n", capacity ? "write" : "size_query");
-        fprintf(log_, "startup_case_output_units=%u\n", expected_eax);
+        th075::diagnostic_log(log_, "startup_case_error=%u\n", error);
+        th075::diagnostic_log(log_, "startup_case_mode=%s\n", capacity ? "write" : "size_query");
+        th075::diagnostic_log(log_, "startup_case_output_units=%u\n", expected_eax);
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++case_map_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!LCMapStringW\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!LCMapStringW\n");
     } else if (bytes_to_wide) {
         uint32_t args[6] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t page = args[0], flags = args[1], source = args[2];
         const uint32_t count = args[3], dest = args[4], capacity = args[5];
-        fprintf(log_, "startup_decode_code_page=%u\n", page);
-        fprintf(log_, "startup_decode_flags=0x%08X\n", flags);
-        fprintf(log_, "startup_decode_input_bytes=%u\n", count);
+        th075::diagnostic_log(log_, "startup_decode_code_page=%u\n", page);
+        th075::diagnostic_log(log_, "startup_decode_flags=0x%08X\n", flags);
+        th075::diagnostic_log(log_, "startup_decode_input_bytes=%u\n", count);
         if (page != 0 && page != 1 && page != 3 && page != 932) return StartupServiceResult::Unsupported;
         if (flags & 6u) { // Composite and glyph modes need separate mapping data.
-            fprintf(log_, "startup_decode_boundary=composite_or_glyph_mode\n");
+            th075::diagnostic_log(log_, "startup_decode_boundary=composite_or_glyph_mode\n");
             return StartupServiceResult::Unsupported;
         }
         uint32_t error = (flags & ~9u) ? 1004u : 0u;
@@ -821,10 +822,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     }
                 }
                 if (unit == 0xFFFF) {
-                    fprintf(log_, "startup_decode_invalid_byte_offset=%u\n", unsigned(i));
+                    th075::diagnostic_log(log_, "startup_decode_invalid_byte_offset=%u\n", unsigned(i));
                     if (flags & 8u) { error = 1113; break; }
                     // Do not approximate XP's drop/recovery behavior on malformed sequences.
-                    fprintf(log_, "startup_decode_boundary=invalid_sequence_xp_recovery_pending\n");
+                    th075::diagnostic_log(log_, "startup_decode_boundary=invalid_sequence_xp_recovery_pending\n");
                     return StartupServiceResult::Unsupported;
                 }
                 output.push_back(unit);
@@ -839,26 +840,26 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     !cpu_.write(dest, output.data(), output_bytes) ||
                     !cpu_.read(dest, readback.data(), output_bytes) || readback != output)
                     return StartupServiceResult::ContractFailure;
-                fprintf(log_, "startup_decode_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_decode_readback=passed\n");
             }
             if (!error) expected_eax = uint32_t(output.size());
         }
         if (error) wx86_set_lasterr(cpu_, error);
-        fprintf(log_, "startup_decode_error=%u\n", error);
-        fprintf(log_, "startup_decode_mode=%s\n", capacity ? "write" : "size_query");
-        fprintf(log_, "startup_decode_output_units=%u\n", expected_eax);
+        th075::diagnostic_log(log_, "startup_decode_error=%u\n", error);
+        th075::diagnostic_log(log_, "startup_decode_mode=%s\n", capacity ? "write" : "size_query");
+        th075::diagnostic_log(log_, "startup_decode_output_units=%u\n", expected_eax);
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++conversion_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!MultiByteToWideChar\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!MultiByteToWideChar\n");
     } else if (string_type) {
         uint32_t args[4] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t source = args[1], count = args[2], dest = args[3];
-        fprintf(log_, "startup_string_type_kind=%u\n", args[0]);
-        fprintf(log_, "startup_string_type_source_va=0x%08X\n", source);
-        fprintf(log_, "startup_string_type_input_units=%u\n", count);
+        th075::diagnostic_log(log_, "startup_string_type_kind=%u\n", args[0]);
+        th075::diagnostic_log(log_, "startup_string_type_source_va=0x%08X\n", source);
+        th075::diagnostic_log(log_, "startup_string_type_input_units=%u\n", count);
         if (args[0] != 1) {
-            fprintf(log_, "startup_string_type_boundary=ctype2_or_ctype3_not_implemented\n");
+            th075::diagnostic_log(log_, "startup_string_type_boundary=ctype2_or_ctype3_not_implemented\n");
             return StartupServiceResult::Unsupported;
         }
         if (!source || !dest || source == dest || !count) {
@@ -876,8 +877,8 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     !cpu_.read(source + 2*i, &unit, 2)) return StartupServiceResult::ContractFailure;
                 uint16_t type = 0;
                 if (!cp932_ctype1(unit, type)) {
-                    fprintf(log_, "startup_string_type_boundary=outside_cp932_repertoire\n");
-                    fprintf(log_, "startup_string_type_unsupported_unit=0x%04X\n", unsigned(unit));
+                    th075::diagnostic_log(log_, "startup_string_type_boundary=outside_cp932_repertoire\n");
+                    th075::diagnostic_log(log_, "startup_string_type_unsupported_unit=0x%04X\n", unsigned(unit));
                     return StartupServiceResult::Unsupported;
                 }
                 types.push_back(type);
@@ -895,26 +896,26 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     !cpu_.read(dest, readback.data(), size) || readback != types)
                     return StartupServiceResult::ContractFailure;
                 expected_eax = 1;
-                fprintf(log_, "startup_string_type_output_units=%u\n", unsigned(types.size()));
-                fprintf(log_, "startup_string_type_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_string_type_output_units=%u\n", unsigned(types.size()));
+                th075::diagnostic_log(log_, "startup_string_type_readback=passed\n");
             }
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++string_type_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetStringTypeW\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!GetStringTypeW\n");
     } else if (code_page_query || code_page_info) {
         // Explicit Japanese Windows compatibility profile; independent of host locale.
         constexpr uint32_t japanese_code_page = 932;
         if (code_page_query) {
             expected_eax = japanese_code_page;
-            fprintf(log_, "startup_code_page_profile=japanese_cp932\n");
+            th075::diagnostic_log(log_, "startup_code_page_profile=japanese_cp932\n");
         } else {
             uint32_t dest = 0;
             if (!cpu_.read(esp + 8, &dest, 4)) return StartupServiceResult::ContractFailure;
             const uint32_t page = arg <= 1 ? japanese_code_page : arg;
-            fprintf(log_, "startup_code_page_requested=%u\n", arg);
+            th075::diagnostic_log(log_, "startup_code_page_requested=%u\n", arg);
             if (page != japanese_code_page) {
-                fprintf(log_, "startup_code_page_boundary=unsupported_page\n");
+                th075::diagnostic_log(log_, "startup_code_page_boundary=unsupported_page\n");
                 return StartupServiceResult::Unsupported;
             }
             if (!dest) {
@@ -933,12 +934,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     !cpu_.read(dest, readback.data(), uint32_t(readback.size())) || readback != info)
                     return StartupServiceResult::ContractFailure;
                 expected_eax = 1;
-                fprintf(log_, "startup_code_page_info_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_code_page_info_readback=passed\n");
             }
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++code_page_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (version) {
         // This port advertises an explicit XP 5.1/2600 compatibility profile.
         // It isn't host OS detection. Only the observed 148-byte ANSI layout
@@ -946,7 +947,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         uint32_t size = 0;
         if (version_calls_ || module_calls_ || import.iat_va != 0x00657090 || ret != 0x00642352 ||
             !in_stack(arg, 148) || !cpu_.read(arg, &size, 4) || size != 148) {
-            fprintf(log_, "startup_service_error=unsupported_version_call\n");
+            th075::diagnostic_log(log_, "startup_service_error=unsupported_version_call\n");
             return StartupServiceResult::ContractFailure;
         }
         std::array<uint8_t, 148> info{};
@@ -959,18 +960,18 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         std::array<uint8_t, 148> readback{};
         if (!cpu_.write(arg, info.data(), uint32_t(info.size())) ||
             !cpu_.read(arg, readback.data(), uint32_t(readback.size())) || readback != info) {
-            fprintf(log_, "startup_service_error=version_buffer_write_or_readback_failed\n");
+            th075::diagnostic_log(log_, "startup_service_error=version_buffer_write_or_readback_failed\n");
             return StartupServiceResult::ContractFailure;
         }
-        fprintf(log_, "startup_version_profile=winxp_5.1_2600_no_service_pack\n");
-        fprintf(log_, "startup_version_info_size=148\n");
-        fprintf(log_, "startup_version_buffer_va=0x%08X\n", arg);
-        fprintf(log_, "startup_version_buffer_readback=passed\n");
-        fprintf(log_, "startup_version_return_va=0x%08X\n", ret);
+        th075::diagnostic_log(log_, "startup_version_profile=winxp_5.1_2600_no_service_pack\n");
+        th075::diagnostic_log(log_, "startup_version_info_size=148\n");
+        th075::diagnostic_log(log_, "startup_version_buffer_va=0x%08X\n", arg);
+        th075::diagnostic_log(log_, "startup_version_buffer_readback=passed\n");
+        th075::diagnostic_log(log_, "startup_version_return_va=0x%08X\n", ret);
         cpu_.trap_epilogue(1, 8, ret); // BOOL TRUE; stdcall ret 4
         expected_eax = 1;
         ++version_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetVersionExA\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!GetVersionExA\n");
     } else if (module) {
         // The runtime implements KERNEL32 imports; identify that compatibility
         // module with an opaque handle. It is not an executable Windows DLL.
@@ -984,7 +985,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if (name[n] >= 'A' && name[n] <= 'Z') name[n] += 'a' - 'A';
             }
             if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
-            fprintf(log_, "startup_module_requested=%s\n", name);
+            th075::diagnostic_log(log_, "startup_module_requested=%s\n", name);
             const std::string module_name(name);
             uint32_t handle = 0;
             if(module_name=="kernel32.dll" || module_name=="kernel32") {
@@ -993,17 +994,17 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             } else if(module_name=="d3d8.dll" || module_name=="d3d8") {
                 handle=0x00AB1200;
                 if(library_load){if(d3d8_module_refs_==0xFFFFFFFFu)return StartupServiceResult::ContractFailure;++d3d8_module_refs_;}
-                fprintf(log_,"startup_module_backend=d3d8_compatibility refs:%u\n",d3d8_module_refs_);
+                th075::diagnostic_log(log_,"startup_module_backend=d3d8_compatibility refs:%u\n",d3d8_module_refs_);
             } else if(module_name=="d3d8d.dll" || module_name=="d3d8d") {
                 wx86_set_lasterr(cpu_,126); // No debug runtime installed.
-                fprintf(log_,"startup_module_availability=debug_d3d8_not_installed\n");
+                th075::diagnostic_log(log_,"startup_module_availability=debug_d3d8_not_installed\n");
             } else return StartupServiceResult::Unsupported;
             cpu_.trap_epilogue(handle, 8, ret);
             expected_eax = handle;
             ++module_calls_;
-            fprintf(log_, "startup_module_base_returned=0x%08X\n", handle);
-            fprintf(log_, "startup_module_handle_kind=runtime_opaque\n");
-            fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
+            th075::diagnostic_log(log_, "startup_module_base_returned=0x%08X\n", handle);
+            th075::diagnostic_log(log_, "startup_module_handle_kind=runtime_opaque\n");
+            th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n",import.name.c_str());
         } else {
             if(library_load)return StartupServiceResult::ContractFailure;
             // NULL always identifies the current executable. The CRT queries
@@ -1016,28 +1017,28 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 !cpu_.read(base + 0x3C, &nt_offset, 4) ||
                 uint64_t(nt_offset) + 4 > image_.image_size() ||
                 !cpu_.read(base + nt_offset, &signature, 4) || signature != 0x4550) {
-                fprintf(log_, "startup_service_error=module_headers_invalid\n");
+                th075::diagnostic_log(log_, "startup_service_error=module_headers_invalid\n");
                 return StartupServiceResult::ContractFailure;
             }
-            fprintf(log_, "startup_module_base_returned=0x%08X\n", base);
-            fprintf(log_, "startup_module_headers=passed\n");
-            fprintf(log_, "startup_module_return_va=0x%08X\n", ret);
-            fprintf(log_, "startup_module_handle_kind=current_executable\n");
+            th075::diagnostic_log(log_, "startup_module_base_returned=0x%08X\n", base);
+            th075::diagnostic_log(log_, "startup_module_headers=passed\n");
+            th075::diagnostic_log(log_, "startup_module_return_va=0x%08X\n", ret);
+            th075::diagnostic_log(log_, "startup_module_handle_kind=current_executable\n");
             if (ret == 0x006424AA) {
-                fprintf(log_, "startup_crt_game_call=next_after_module_return\n");
-                fprintf(log_, "startup_game_function_va=0x00602A60\n");
-                fprintf(log_, "startup_game_function_execution=not_yet_verified\n");
+                th075::diagnostic_log(log_, "startup_crt_game_call=next_after_module_return\n");
+                th075::diagnostic_log(log_, "startup_game_function_va=0x00602A60\n");
+                th075::diagnostic_log(log_, "startup_game_function_execution=not_yet_verified\n");
             }
             cpu_.trap_epilogue(base, 8, ret); // HMODULE; stdcall ret 4
             expected_eax = base;
             ++module_calls_;
-            fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
+            th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!GetModuleHandleA\n");
         }
     } else if (proc_address) {
         uint32_t symbol = 0;
         if (!in_stack(esp, 12) || !cpu_.read(esp + 8, &symbol, 4) ||
             (arg != 0x00AB1000 && arg != 0x00AB1200) || symbol <= 0xFFFFu) {
-            fprintf(log_, "startup_service_error=unsupported_export_frame\n");
+            th075::diagnostic_log(log_, "startup_service_error=unsupported_export_frame\n");
             return StartupServiceResult::ContractFailure;
         }
         char name[128] = {};
@@ -1049,7 +1050,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             if (!name[n]) break;
         }
         if (n == sizeof(name)) return StartupServiceResult::ContractFailure;
-        fprintf(log_, "startup_export_requested=%s\n", name);
+        th075::diagnostic_log(log_, "startup_export_requested=%s\n", name);
         const std::string symbol_name(name);
         if(arg==0x00AB1200) {
             // The D3DX helper checks this optional diagnostic export before
@@ -1057,14 +1058,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             if(symbol_name!="DebugSetMute")return StartupServiceResult::Unsupported;
             expected_eax=0;wx86_set_lasterr(cpu_,127);
             ++unavailable_export_calls_;
-            fprintf(log_,"startup_export_availability=optional_debug_export_not_implemented\n");
+            th075::diagnostic_log(log_,"startup_export_availability=optional_debug_export_not_implemented\n");
         } else if (symbol_name == "FlsAlloc" || symbol_name == "FlsFree" ||
             symbol_name == "FlsGetValue" || symbol_name == "FlsSetValue") {
             // The advertised XP profile uses the CRT's existing TLS fallback.
             expected_eax = 0;
             wx86_set_lasterr(cpu_, 127); // ERROR_PROC_NOT_FOUND
             ++unavailable_export_calls_;
-            fprintf(log_, "startup_export_availability=not_available_xp_profile\n");
+            th075::diagnostic_log(log_, "startup_export_availability=not_available_xp_profile\n");
         } else if (symbol_name == "InitializeCriticalSectionAndSpinCount") {
             expected_eax = critical_init_trap;
         } else if (symbol_name == "IsProcessorFeaturePresent") {
@@ -1072,14 +1073,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         } else return StartupServiceResult::Unsupported;
         cpu_.trap_epilogue(expected_eax, 12, ret);
         ++proc_address_calls_;
-        fprintf(log_, "startup_export_resolved_va=0x%08X\n", expected_eax);
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!GetProcAddress\n");
+        th075::diagnostic_log(log_, "startup_export_resolved_va=0x%08X\n", expected_eax);
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!GetProcAddress\n");
     } else if (critical_init) {
         uint32_t spin = 0;
         uint32_t previous[6] = {};
         if ((!critical_plain && !cpu_.read(esp + 8, &spin, 4)) || !arg || (arg & 3u) ||
             critical_sections_.count(arg) || !cpu_.read(arg, previous, sizeof(previous))) {
-            fprintf(log_, "startup_service_error=invalid_critical_section_frame\n");
+            th075::diagnostic_log(log_, "startup_service_error=invalid_critical_section_frame\n");
             return StartupServiceResult::ContractFailure;
         }
         // x86 RTL_CRITICAL_SECTION: DebugInfo, LockCount, RecursionCount,
@@ -1088,33 +1089,33 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         uint32_t copy[6] = {};
         if (!cpu_.write(arg, state, sizeof(state)) || !cpu_.read(arg, copy, sizeof(copy)) ||
             !std::equal(std::begin(state), std::end(state), std::begin(copy))) {
-            fprintf(log_, "startup_service_error=critical_section_write_failed\n");
+            th075::diagnostic_log(log_, "startup_service_error=critical_section_write_failed\n");
             return StartupServiceResult::ContractFailure;
         }
         critical_sections_.insert(arg);
         ++critical_init_calls_;
         expected_eax = critical_plain ? 0 : 1;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_critical_section_va=0x%08X\n", arg);
-        fprintf(log_, "startup_critical_section_spin=%u\n", spin);
-        fprintf(log_, "startup_critical_section_readback=passed\n");
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_critical_section_va=0x%08X\n", arg);
+        th075::diagnostic_log(log_, "startup_critical_section_spin=%u\n", spin);
+        th075::diagnostic_log(log_, "startup_critical_section_readback=passed\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (critical_op) {
         uint32_t state[6] = {}, tid = 0;
         if (!critical_sections_.count(arg) || !cpu_.read(arg, state, sizeof(state)) ||
             !wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x24, &tid, 4) || !tid) {
-            fprintf(log_, "startup_service_error=uninitialized_critical_section\n");
+            th075::diagnostic_log(log_, "startup_service_error=uninitialized_critical_section\n");
             return StartupServiceResult::ContractFailure;
         }
         if (state[1] != state[2] - 1u || (state[2] == 0) != (state[3] == 0)) {
-            fprintf(log_, "startup_service_error=critical_section_state_mismatch\n");
+            th075::diagnostic_log(log_, "startup_service_error=critical_section_state_mismatch\n");
             return StartupServiceResult::ContractFailure;
         }
         bool changed = true;
         if (critical_enter || critical_try) {
             if (state[3] && state[3] != tid) {
                 if (!critical_try) {
-                    fprintf(log_, "startup_sync_scope=other_thread_wait_not_implemented\n");
+                    th075::diagnostic_log(log_, "startup_sync_scope=other_thread_wait_not_implemented\n");
                     return StartupServiceResult::Unsupported;
                 }
                 changed = false; // TryEnter returns FALSE without acquiring.
@@ -1125,14 +1126,14 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             }
         } else if (critical_leave) {
             if (!state[2] || state[3] != tid) {
-                fprintf(log_, "startup_service_error=critical_section_not_owned\n");
+                th075::diagnostic_log(log_, "startup_service_error=critical_section_not_owned\n");
                 return StartupServiceResult::ContractFailure;
             }
             --state[1]; --state[2];
             if (!state[2]) state[3] = 0;
         } else {
             if (state[2]) {
-                fprintf(log_, "startup_service_error=delete_owned_critical_section\n");
+                th075::diagnostic_log(log_, "startup_service_error=delete_owned_critical_section\n");
                 return StartupServiceResult::ContractFailure;
             }
             for (auto& word : state) word = 0;
@@ -1146,11 +1147,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         ++sync_calls_;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_sync_section_va=0x%08X\n", arg);
-        fprintf(log_, "startup_sync_recursion=%u\n", state[2]);
-        fprintf(log_, "startup_sync_owner=%u\n", state[3]);
-        fprintf(log_, "startup_sync_state_readback=passed\n");
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_sync_section_va=0x%08X\n", arg);
+        th075::diagnostic_log(log_, "startup_sync_recursion=%u\n", state[2]);
+        th075::diagnostic_log(log_, "startup_sync_owner=%u\n", state[3]);
+        th075::diagnostic_log(log_, "startup_sync_state_readback=passed\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (tls) {
         const uint32_t slots = wx86_cur_tib() + 0xE10;
         if (!wx86_cur_tib()) return StartupServiceResult::ContractFailure;
@@ -1163,7 +1164,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     return StartupServiceResult::ContractFailure;
                 tls_allocated_[i] = true;
                 expected_eax = i;
-                fprintf(log_, "startup_tls_index=%u\n", i);
+                th075::diagnostic_log(log_, "startup_tls_index=%u\n", i);
                 break;
             }
             if (expected_eax == 0xFFFFFFFFu) wx86_set_lasterr(cpu_, 259);
@@ -1185,7 +1186,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         ++tls_calls_;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (clock) {
         uint64_t value = 0;
         if (file_time) {
@@ -1195,20 +1196,20 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             const int tick_rc = sceRtcGetCurrentTick(&tick);
             const int date_rc = tick_rc < 0 ? tick_rc : sceRtcSetTick(&date, &tick);
             const int file_rc = date_rc < 0 ? date_rc : sceRtcGetWin32FileTime(&date, &filetime);
-            fprintf(log_, "startup_clock_rtc_rc=0x%08X\n", unsigned(file_rc));
+            th075::diagnostic_log(log_, "startup_clock_rtc_rc=0x%08X\n", unsigned(file_rc));
             if (file_rc < 0) {
-                fprintf(log_, "startup_service_error=rtc_filetime_unavailable\n");
+                th075::diagnostic_log(log_, "startup_service_error=rtc_filetime_unavailable\n");
                 return StartupServiceResult::ContractFailure;
             }
             value = filetime;
             // VOID API: EAX is unspecified; do not advertise a success BOOL.
-            fprintf(log_, "startup_clock_source=vita_rtc_utc_win32_filetime\n");
+            th075::diagnostic_log(log_, "startup_clock_source=vita_rtc_utc_win32_filetime\n");
         } else {
             // A virtual uptime starting at native process creation. The same
             // monotonic microsecond clock feeds QPC and its 1 MHz frequency.
             value = performance_frequency ? 1000000ull : sceKernelGetProcessTimeWide();
             expected_eax = tick_count ? uint32_t(value / 1000) : 1;
-            fprintf(log_, "startup_clock_source=%s\n", performance_frequency ?
+            th075::diagnostic_log(log_, "startup_clock_source=%s\n", performance_frequency ?
                 "fixed_1000000_hz" : "vita_process_uptime_us");
         }
         if (!tick_count) {
@@ -1219,15 +1220,15 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 !cpu_.read(arg, readback, 8) || !cpu_.write(arg, bytes, 8) ||
                 !cpu_.read(arg, readback, 8) ||
                 !std::equal(std::begin(bytes), std::end(bytes), std::begin(readback))) {
-                fprintf(log_, "startup_service_error=invalid_clock_output_buffer\n");
+                th075::diagnostic_log(log_, "startup_service_error=invalid_clock_output_buffer\n");
                 return StartupServiceResult::ContractFailure;
             }
-            fprintf(log_, "startup_clock_output_readback=passed\n");
+            th075::diagnostic_log(log_, "startup_clock_output_readback=passed\n");
         }
-        fprintf(log_, "startup_clock_value=%llu\n", static_cast<unsigned long long>(value));
+        th075::diagnostic_log(log_, "startup_clock_value=%llu\n", static_cast<unsigned long long>(value));
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++clock_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (get_error || set_error || thread_id || process_id) {
         if (get_error) expected_eax = wx86_get_lasterr(cpu_);
         if (set_error) wx86_set_lasterr(cpu_, arg);
@@ -1236,18 +1237,18 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         if (process_id) {
             if (!wx86_cur_tib() || !cpu_.read(wx86_cur_tib() + 0x20, &expected_eax, 4) || !expected_eax)
                 return StartupServiceResult::ContractFailure;
-            fprintf(log_, "startup_guest_process_id=%u\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_guest_process_id=%u\n", expected_eax);
             ++process_calls_;
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (wide_to_bytes) {
         uint32_t args[8] = {};
         if (!cpu_.read(esp + 4, args, sizeof(args))) return StartupServiceResult::ContractFailure;
         const uint32_t page = args[0], flags = args[1], source = args[2];
         const uint32_t count = args[3], dest = args[4], capacity = args[5], used = args[7];
-        fprintf(log_, "startup_conversion_code_page=%u\n", page);
-        fprintf(log_, "startup_conversion_input_units=%u\n", count);
+        th075::diagnostic_log(log_, "startup_conversion_code_page=%u\n", page);
+        th075::diagnostic_log(log_, "startup_conversion_input_units=%u\n", count);
         if (page != 0 && page != 1 && page != 932 && page != 1252 && page != 65001)
             return StartupServiceResult::Unsupported;
         if (flags != 0) return StartupServiceResult::Unsupported;
@@ -1259,7 +1260,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         const uint32_t max_units = 16384;
         if (!error) {
             if (count != 0xFFFFFFFFu && count > max_units) {
-                fprintf(log_, "startup_conversion_scope=input_limit\n");
+                th075::diagnostic_log(log_, "startup_conversion_scope=input_limit\n");
                 return StartupServiceResult::Unsupported;
             }
             const uint32_t limit = count == 0xFFFFFFFFu ? max_units : count;
@@ -1271,13 +1272,13 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if (page == 0 || page == 1 || page == 932) {
                     const auto* entry = cp932_entry(unit);
                     if (!entry || entry->encoded == 0xFFFF) {
-                        fprintf(log_, "startup_conversion_scope=cp932_unmappable_character\n");
+                        th075::diagnostic_log(log_, "startup_conversion_scope=cp932_unmappable_character\n");
                         return StartupServiceResult::Unsupported;
                     }
                     if (entry->encoded > 0xFF) bytes.push_back(uint8_t(entry->encoded >> 8));
                     bytes.push_back(uint8_t(entry->encoded));
                 } else if (unit > 127) {
-                    fprintf(log_, "startup_conversion_scope=non_ascii_not_implemented\n");
+                    th075::diagnostic_log(log_, "startup_conversion_scope=non_ascii_not_implemented\n");
                     return StartupServiceResult::Unsupported;
                 } else bytes.push_back(uint8_t(unit));
                 if (count == 0xFFFFFFFFu && unit == 0) { terminated = true; break; }
@@ -1298,17 +1299,17 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     !cpu_.write(dest, bytes.data(), uint32_t(bytes.size())) ||
                     !cpu_.read(dest, copy.data(), uint32_t(copy.size())) || copy != bytes)
                     return StartupServiceResult::ContractFailure;
-                fprintf(log_, "startup_conversion_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_conversion_readback=passed\n");
             }
             const uint32_t false_value = 0;
             if (used && !cpu_.write(used, &false_value, 4)) return StartupServiceResult::ContractFailure;
             expected_eax = uint32_t(bytes.size());
-            fprintf(log_, "startup_conversion_mode=%s\n", capacity ? "write" : "size_query");
-            fprintf(log_, "startup_conversion_output_bytes=%u\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_conversion_mode=%s\n", capacity ? "write" : "size_query");
+            th075::diagnostic_log(log_, "startup_conversion_output_bytes=%u\n", expected_eax);
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++conversion_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!WideCharToMultiByte\n");
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!WideCharToMultiByte\n");
     } else if (environment) {
         const bool wide = import.name.back() == 'W';
         if (environment_get) {
@@ -1328,9 +1329,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 if (environment_free_blocks_.empty()) heap_next_ += 16;
                 else environment_free_blocks_.pop_back();
                 environment_blocks_.emplace(expected_eax, wide);
-                fprintf(log_, "startup_environment_block_va=0x%08X\n", expected_eax);
-                fprintf(log_, "startup_environment_profile=empty\n");
-                fprintf(log_, "startup_environment_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_environment_block_va=0x%08X\n", expected_eax);
+                th075::diagnostic_log(log_, "startup_environment_profile=empty\n");
+                th075::diagnostic_log(log_, "startup_environment_readback=passed\n");
             }
         } else {
             const auto block = environment_blocks_.find(arg);
@@ -1340,12 +1341,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 environment_free_blocks_.push_back(arg);
                 environment_blocks_.erase(block);
                 expected_eax = 1;
-                fprintf(log_, "startup_environment_release=passed\n");
+                th075::diagnostic_log(log_, "startup_environment_release=passed\n");
             }
         }
         ++environment_calls_;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (process) {
         if (exception_filter) {
             // Store guest callback state only. Fault dispatch remains a separate boundary.
@@ -1353,26 +1354,26 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 uint8_t first = 0;
                 if (arg < image_.load_base() || uint64_t(arg) >= uint64_t(image_.load_base()) + image_.image_size() ||
                     !cpu_.read(arg, &first, 1)) {
-                    fprintf(log_, "startup_exception_filter_boundary=callback_outside_loaded_image\n");
+                    th075::diagnostic_log(log_, "startup_exception_filter_boundary=callback_outside_loaded_image\n");
                     return StartupServiceResult::Unsupported;
                 }
             }
             expected_eax = unhandled_filter_;
             unhandled_filter_ = arg;
-            fprintf(log_, "startup_exception_filter_previous_va=0x%08X\n", expected_eax);
-            fprintf(log_, "startup_exception_filter_registered_va=0x%08X\n", unhandled_filter_);
-            fprintf(log_, "startup_exception_filter_scope=registration_only\n");
-            fprintf(log_, "startup_exception_dispatch=not_implemented\n");
+            th075::diagnostic_log(log_, "startup_exception_filter_previous_va=0x%08X\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_exception_filter_registered_va=0x%08X\n", unhandled_filter_);
+            th075::diagnostic_log(log_, "startup_exception_filter_scope=registration_only\n");
+            th075::diagnostic_log(log_, "startup_exception_dispatch=not_implemented\n");
         } else if (processor_feature) {
-            fprintf(log_, "startup_processor_feature_requested=%u\n", arg);
+            th075::diagnostic_log(log_, "startup_processor_feature_requested=%u\n", arg);
             if (arg != 0) {
-                fprintf(log_, "startup_processor_feature_boundary=unimplemented_feature\n");
+                th075::diagnostic_log(log_, "startup_processor_feature_boundary=unimplemented_feature\n");
                 return StartupServiceResult::Unsupported;
             }
             // PF_FLOATING_POINT_PRECISION_ERRATA: no Pentium FDIV erratum is
             // advertised by this translated CPU profile. This does not certify x87.
             expected_eax = 0;
-            fprintf(log_, "startup_processor_feature_profile=no_pentium_precision_erratum\n");
+            th075::diagnostic_log(log_, "startup_processor_feature_profile=no_pentium_precision_erratum\n");
         } else if (startup_info) {
             // GUI process without inherited CRT handles or reserved startup data.
             const uint32_t info[17] = {68};
@@ -1381,19 +1382,19 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 !cpu_.read(arg, old, sizeof(old)) || !cpu_.write(arg, info, sizeof(info)) ||
                 !cpu_.read(arg, copy, sizeof(copy)) ||
                 !std::equal(std::begin(info), std::end(info), std::begin(copy))) {
-                fprintf(log_, "startup_service_error=invalid_startup_info_buffer\n");
+                th075::diagnostic_log(log_, "startup_service_error=invalid_startup_info_buffer\n");
                 return StartupServiceResult::ContractFailure;
             }
-            fprintf(log_, "startup_info_bytes=68\n");
-            fprintf(log_, "startup_info_readback=passed\n");
+            th075::diagnostic_log(log_, "startup_info_bytes=68\n");
+            th075::diagnostic_log(log_, "startup_info_readback=passed\n");
         } else if (module_filename) {
             uint32_t dest = 0, capacity = 0;
             if (!cpu_.read(esp + 8, &dest, 4) || !cpu_.read(esp + 12, &capacity, 4))
                 return StartupServiceResult::ContractFailure;
-            fprintf(log_, "startup_module_filename_handle=0x%08X\n", arg);
-            fprintf(log_, "startup_module_filename_capacity=%u\n", capacity);
+            th075::diagnostic_log(log_, "startup_module_filename_handle=0x%08X\n", arg);
+            th075::diagnostic_log(log_, "startup_module_filename_capacity=%u\n", capacity);
             if (arg != 0 && arg != image_.load_base()) {
-                fprintf(log_, "startup_module_filename_boundary=other_module\n");
+                th075::diagnostic_log(log_, "startup_module_filename_boundary=other_module\n");
                 return StartupServiceResult::Unsupported;
             }
             // Same virtual Windows pathname used by ThreadSmoke's process parameters.
@@ -1414,19 +1415,19 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                     return StartupServiceResult::ContractFailure;
                 expected_eax = truncated ? capacity : uint32_t(path.size());
                 if (truncated) wx86_set_lasterr(cpu_, 0);
-                fprintf(log_, "startup_module_filename_virtual_path=%s\n", path.c_str());
-                fprintf(log_, "startup_module_filename_truncated=%s\n", truncated ? "yes" : "no");
-                fprintf(log_, "startup_module_filename_readback=passed\n");
+                th075::diagnostic_log(log_, "startup_module_filename_virtual_path=%s\n", path.c_str());
+                th075::diagnostic_log(log_, "startup_module_filename_truncated=%s\n", truncated ? "yes" : "no");
+                th075::diagnostic_log(log_, "startup_module_filename_readback=passed\n");
             }
         } else if (command_line) {
             // ThreadSmoke owns the persistent, NUL-terminated ANSI command line.
             expected_eax = 0x00732000;
             char first = 0;
             if (!cpu_.read(expected_eax, &first, 1) || first != '"') {
-                fprintf(log_, "startup_service_error=command_line_not_initialized\n");
+                th075::diagnostic_log(log_, "startup_service_error=command_line_not_initialized\n");
                 return StartupServiceResult::ContractFailure;
             }
-            fprintf(log_, "startup_command_line_va=0x%08X\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_command_line_va=0x%08X\n", expected_eax);
         } else if (std_handle) {
             if (arg != 0xFFFFFFF6u && arg != 0xFFFFFFF5u && arg != 0xFFFFFFF4u) {
                 expected_eax = 0xFFFFFFFFu;
@@ -1434,12 +1435,12 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             } else {
                 // NULL means that this GUI process has no attached console.
                 expected_eax = 0;
-                fprintf(log_, "startup_standard_handle_profile=no_console\n");
+                th075::diagnostic_log(log_, "startup_standard_handle_profile=no_console\n");
             }
         } else if (handle_count) {
             // Legacy API is a no-op on NT; return the requested count.
             expected_eax = arg;
-            fprintf(log_, "startup_handle_count_requested=%u\n", arg);
+            th075::diagnostic_log(log_, "startup_handle_count_requested=%u\n", arg);
         } else {
             if (arg != 0 && arg != 0xFFFFFFFFu) return StartupServiceResult::Unsupported;
             expected_eax = 0; // FILE_TYPE_UNKNOWN, invalid NULL/INVALID_HANDLE_VALUE
@@ -1447,17 +1448,17 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         ++process_calls_;
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     } else if (heap_create) {
         uint32_t initial = 0, maximum = 0;
         if (heap_create_calls_ || import.iat_va != 0x00657160 || ret != 0x0064974C ||
             !in_stack(esp, 16) || !cpu_.read(esp + 8, &initial, 4) ||
             !cpu_.read(esp + 12, &maximum, 4) || arg != 0 || initial != 0x1000 || maximum != 0) {
-            fprintf(log_, "startup_service_error=unsupported_heap_create_call\n");
+            th075::diagnostic_log(log_, "startup_service_error=unsupported_heap_create_call\n");
             return StartupServiceResult::ContractFailure;
         }
         if (!cpu_.map(heap_next_, 0x00800000, nullptr, d2rt::P_RW)) {
-            fprintf(log_, "startup_service_error=heap_map_failed\n");
+            th075::diagnostic_log(log_, "startup_service_error=heap_map_failed\n");
             return StartupServiceResult::ContractFailure;
         }
         heap_ready_ = true;
@@ -1465,9 +1466,9 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         // trap_epilogue consumes the return address plus all three stdcall arguments.
         cpu_.trap_epilogue(0x00AB0000, 16, ret);
         expected_eax = 0x00AB0000;
-        fprintf(log_, "startup_heap_created_handle=0x00AB0000\n");
-        fprintf(log_, "startup_heap_initial_bytes=%u\n", initial);
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!HeapCreate\n");
+        th075::diagnostic_log(log_, "startup_heap_created_handle=0x00AB0000\n");
+        th075::diagnostic_log(log_, "startup_heap_initial_bytes=%u\n", initial);
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!HeapCreate\n");
     } else if (heap_alloc || heap_free || heap_size || heap_realloc) {
         uint32_t flags = 0, pointer_or_size = 0, new_size = 0;
         if (!heap_ready_ || arg != 0x00AB0000 || !cpu_.read(esp + 8, &flags, 4) ||
@@ -1476,10 +1477,10 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
             return StartupServiceResult::ContractFailure;
         const uint32_t allowed_flags = heap_realloc ? 0x19u : heap_alloc ? 9u : 1u;
         if (flags & ~allowed_flags) {
-            fprintf(log_, "startup_heap_boundary=unsupported_flags\n");
+            th075::diagnostic_log(log_, "startup_heap_boundary=unsupported_flags\n");
             return StartupServiceResult::Unsupported;
         }
-        fprintf(log_, "startup_heap_flags=0x%08X\n", flags);
+        th075::diagnostic_log(log_, "startup_heap_flags=0x%08X\n", flags);
         if (heap_alloc) {
             const uint32_t size = pointer_or_size;
             const uint64_t capacity64 = std::max<uint64_t>(16, (uint64_t(size) + 15) & ~15ull);
@@ -1495,20 +1496,20 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                 heap_blocks_.emplace(address, HeapBlock{size, capacity});
                 expected_eax = address;
             }
-            if(!address){fprintf(log_,"startup_heap_boundary=capacity_exhausted requested:%u high_water:0x%08X free_ranges:%u\n",size,heap_next_,unsigned(heap_free_ranges_.size()));return StartupServiceResult::Unsupported;}
+            if(!address){th075::diagnostic_log(log_,"startup_heap_boundary=capacity_exhausted requested:%u high_water:0x%08X free_ranges:%u\n",size,heap_next_,unsigned(heap_free_ranges_.size()));return StartupServiceResult::Unsupported;}
             ++heap_alloc_calls_;
-            fprintf(log_, "startup_heap_alloc_va=0x%08X\n", expected_eax);
-            fprintf(log_, "startup_heap_alloc_size=%u\n", size);
+            th075::diagnostic_log(log_, "startup_heap_alloc_va=0x%08X\n", expected_eax);
+            th075::diagnostic_log(log_, "startup_heap_alloc_size=%u\n", size);
         } else {
             const auto block = heap_blocks_.find(pointer_or_size);
             if (block == heap_blocks_.end()) {
-                fprintf(log_, "startup_heap_invalid_block_va=0x%08X\n", pointer_or_size);
+                th075::diagnostic_log(log_, "startup_heap_invalid_block_va=0x%08X\n", pointer_or_size);
                 // An invalid/double-freed guest pointer is a runtime contract error.
                 return StartupServiceResult::ContractFailure;
             }
             const HeapBlock old = block->second;
-            fprintf(log_, "startup_heap_block_va=0x%08X\n", pointer_or_size);
-            fprintf(log_, "startup_heap_block_size=%u\n", old.size);
+            th075::diagnostic_log(log_, "startup_heap_block_va=0x%08X\n", pointer_or_size);
+            th075::diagnostic_log(log_, "startup_heap_block_size=%u\n", old.size);
             if (heap_size) expected_eax = old.size;
             else if (heap_free) {
                 heap_blocks_.erase(block);
@@ -1541,28 +1542,28 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
                         reclaim_heap(pointer_or_size,old.capacity);
                     }
                     expected_eax = address;
-                    fprintf(log_, "startup_heap_realloc_preserved_readback=passed\n");
-                    fprintf(log_, "startup_heap_realloc_mode=%s\n", in_place ? "in_place" : "moved");
-                } else fprintf(log_, "startup_heap_realloc_mode=failed_original_retained\n");
-                fprintf(log_, "startup_heap_realloc_new_size=%u\n", new_size);
-                fprintf(log_, "startup_heap_realloc_result_va=0x%08X\n", expected_eax);
+                    th075::diagnostic_log(log_, "startup_heap_realloc_preserved_readback=passed\n");
+                    th075::diagnostic_log(log_, "startup_heap_realloc_mode=%s\n", in_place ? "in_place" : "moved");
+                } else th075::diagnostic_log(log_, "startup_heap_realloc_mode=failed_original_retained\n");
+                th075::diagnostic_log(log_, "startup_heap_realloc_new_size=%u\n", new_size);
+                th075::diagnostic_log(log_, "startup_heap_realloc_result_va=0x%08X\n", expected_eax);
             }
             ++heap_other_calls_;
         }
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
-        fprintf(log_, "startup_heap_live_blocks=%u\n", unsigned(heap_blocks_.size()));
-        fprintf(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+        th075::diagnostic_log(log_, "startup_heap_live_blocks=%u\n", unsigned(heap_blocks_.size()));
+        th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
     }
     // Check the bridge ABI on each returned API, before another guest block.
-    fprintf(log_, "startup_service_stack_bytes=%u\n", cleanup);
+    th075::diagnostic_log(log_, "startup_service_stack_bytes=%u\n", cleanup);
     bool abi_ok = cpu_.reg(d2rt::R_ESP) == esp + cleanup && cpu_.reg(d2rt::R_EIP) == ret &&
         cpu_.reg(d2rt::R_EAX) == expected_eax;
     for (unsigned i = 0; i < 4; ++i) abi_ok = abi_ok && cpu_.reg(preserved[i]) == before[i];
     if (!abi_ok) {
-        fprintf(log_, "startup_service_error=stdcall_epilogue_mismatch\n");
+        th075::diagnostic_log(log_, "startup_service_error=stdcall_epilogue_mismatch\n");
         return StartupServiceResult::ContractFailure;
     }
-    fprintf(log_, "startup_service_abi=passed\n");
+    th075::diagnostic_log(log_, "startup_service_abi=passed\n");
     return StartupServiceResult::Serviced;
 }
 
@@ -1611,16 +1612,16 @@ bool StartupServices::finish_window_creation() {
            cpu_.reg(d2rt::R_ESP)==frame+20 && wx86_cur_tib()==tib;
         for(int reg:preserved)ok=ok && cpu_.reg(reg)==main.gpr[reg];
         ok=ok && (messages[i]==0x81 ? result!=0:messages[i]==1 ? result!=0xFFFFFFFFu:result==0);
-        fprintf(log_,"startup_window_callback_message=0x%04X\n",messages[i]);
-        fprintf(log_,"startup_window_callback_return=0x%08X\n",result);
-        fprintf(log_,"startup_window_callback_result=%s\n",ok ? "passed":"failed");
-        if(!stopped)fprintf(log_,"startup_window_callback_fault=%s\n",fault ? fault:"unknown");
+        th075::diagnostic_log(log_,"startup_window_callback_message=0x%04X\n",messages[i]);
+        th075::diagnostic_log(log_,"startup_window_callback_return=0x%08X\n",result);
+        th075::diagnostic_log(log_,"startup_window_callback_result=%s\n",ok ? "passed":"failed");
+        if(!stopped)th075::diagnostic_log(log_,"startup_window_callback_fault=%s\n",fault ? fault:"unknown");
     }
     uint8_t created=0;
     uint32_t calculated[4]{};
     ok=ok && cpu_.read(0x0068D674,&created,1) && created==1 &&
        cpu_.read(data+48,calculated,16) && !std::memcmp(calculated,rect,16);
-    fprintf(log_,"startup_window_original_create_flag=%u\n",unsigned(created));
+    th075::diagnostic_log(log_,"startup_window_original_create_flag=%u\n",unsigned(created));
     cpu_.load_context(main);
     window_callback_message_=window_callback_parameter_=window_callback_wparam_=0;
     window_pending_=false;
@@ -1628,7 +1629,7 @@ bool StartupServices::finish_window_creation() {
     cpu_.set_trap(0,0,[](d2rt::Cpu&,uint32_t){return false;});
     if(!ok) {
         window_.surface.clear();window_.handle=0;
-        fprintf(log_,"startup_window_creation=callback_contract_failed\n");
+        th075::diagnostic_log(log_,"startup_window_creation=callback_contract_failed\n");
         return false;
     }
     window_.created=true;
@@ -1642,9 +1643,9 @@ bool StartupServices::finish_window_creation() {
     cpu_.trap_epilogue(result,cleanup,window_.return_address);
     ok=cpu_.reg(d2rt::R_ESP)==window_.frame+cleanup &&
        cpu_.reg(d2rt::R_EIP)==window_.return_address && cpu_.reg(d2rt::R_EAX)==result;
-    fprintf(log_,"startup_window_handle=0x%08X\n",window_.handle);
-    fprintf(log_,"%s=%s\n",painting ? "startup_window_update":showing ? "startup_window_show":"startup_window_creation",ok ? "guest_callbacks_completed":"epilogue_failed");
-    fprintf(log_,"startup_window_rendering=not_yet_connected\n");
+    th075::diagnostic_log(log_,"startup_window_handle=0x%08X\n",window_.handle);
+    th075::diagnostic_log(log_,"%s=%s\n",painting ? "startup_window_update":showing ? "startup_window_show":"startup_window_creation",ok ? "guest_callbacks_completed":"epilogue_failed");
+    th075::diagnostic_log(log_,"startup_window_rendering=not_yet_connected\n");
     return ok;
 }
 
@@ -1661,11 +1662,11 @@ bool StartupServices::version_globals_match() {
     for (unsigned i = 0; i < 5; ++i) {
         uint32_t value = 0;
         const bool read = cpu_.read(addresses[i], &value, 4);
-        fprintf(log_, "startup_version_global=0x%08X value=0x%08X expected=0x%08X\n",
+        th075::diagnostic_log(log_, "startup_version_global=0x%08X value=0x%08X expected=0x%08X\n",
             addresses[i], value, expected[i]);
         ok = ok && read && value == expected[i];
     }
-    fprintf(log_, "startup_version_globals=%s\n", ok ? "passed" : "failed");
+    th075::diagnostic_log(log_, "startup_version_globals=%s\n", ok ? "passed" : "failed");
     return ok;
 }
 
@@ -1675,7 +1676,7 @@ uint32_t StartupServices::reserve_heap(uint32_t capacity) {
         const uint32_t address=it->first,remainder=it->second-capacity;
         heap_free_ranges_.erase(it);
         if(remainder)heap_free_ranges_.emplace(address+capacity,remainder);
-        fprintf(log_,"startup_heap_reuse=address:0x%08X bytes:%u\n",address,capacity);
+        th075::diagnostic_log(log_,"startup_heap_reuse=address:0x%08X bytes:%u\n",address,capacity);
         return address;
     }
     if(uint64_t(heap_next_)+capacity>0x01400000u)return 0;
@@ -1691,5 +1692,5 @@ void StartupServices::reclaim_heap(uint32_t address,uint32_t capacity) {
     if(next!=heap_free_ranges_.end() && uint64_t(address)+capacity==next->first){capacity+=next->second;heap_free_ranges_.erase(next);}
     if(uint64_t(address)+capacity==heap_next_)heap_next_=address;
     else heap_free_ranges_.emplace(address,capacity);
-    fprintf(log_,"startup_heap_reclaim=address:0x%08X bytes:%u high_water:0x%08X ranges:%u\n",address,capacity,heap_next_,unsigned(heap_free_ranges_.size()));
+    th075::diagnostic_log(log_,"startup_heap_reclaim=address:0x%08X bytes:%u high_water:0x%08X ranges:%u\n",address,capacity,heap_next_,unsigned(heap_free_ranges_.size()));
 }

@@ -3,6 +3,8 @@
 #include "runtime/cpu.h"
 #include "d3d8_quad_raster.h"
 #include "d3d8_raster_executor.h"
+#include "d3d8_render_scale.h"
+#include "diagnostic_log.h"
 #include "exe_draw_preview.h"
 #include "exe_presenter.h"
 #include "startup_limits.h"
@@ -33,6 +35,7 @@ public:
         SetTextureStageState=63, ValidateDevice=64
     };
     D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs),presenter_(log) { initialize_states(); }
+    void enable_half_resolution() { if(!refs_ && !count_)half_resolution_=true; }
     void set_raster_executor(d3d8_quad::RasterExecutor executor,void* context) {
         raster_executor_=executor;raster_context_=context;
         presenter_.set_hash_diagnostics(executor==nullptr);
@@ -40,7 +43,7 @@ public:
     void report_usage() const {
         unsigned owned=0,aliases=0;
         for(const auto& r:resources_)if(r.refs){if(r.parent)++aliases;else ++owned;}
-        fprintf(log_,"startup_d3d8_storage_summary=used:%u peak:%u maximum:%u owned:%u aliases:%u handles_allocated:%u handle_capacity:%u\n",
+        th075::diagnostic_log(log_,"startup_d3d8_storage_summary=used:%u peak:%u maximum:%u owned:%u aliases:%u handles_allocated:%u handle_capacity:%u\n",
             used_,peak_,budget,owned,aliases,count_,capacity);
         report_native_memory(log_,"startup_stop",used_,budget);
     }
@@ -89,15 +92,15 @@ public:
         if(!w[7] || !put(w[7],0u))return failure();
         std::array<uint32_t,13> p{};
         if(!w[6] || !cpu_.read(w[6],p.data(),sizeof(p)))return failure();
-        fprintf(log_,"startup_d3d8_device_request=adapter:%u type:%u behavior:0x%08X width:%u height:%u format:%u depth:%u\n",w[2],w[3],w[5],p[0],p[1],p[2],p[9]);
+        th075::diagnostic_log(log_,"startup_d3d8_device_request=adapter:%u type:%u behavior:0x%08X width:%u height:%u format:%u depth:%u\n",w[2],w[3],w[5],p[0],p[1],p[2],p[9]);
         if(w[2] || w[3]!=2 || w[5]!=0x20) {
-            fprintf(log_,"startup_d3d8_device_policy=requires_REF_software_vertex_processing\n");return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_device_policy=requires_REF_software_vertex_processing\n");return serviced();
         }
         if(refs_ || w[4]!=0x00AB7000 || p[6]!=w[4] || p[0]!=640 || p[1]!=480 || p[2]!=22 ||
             p[3]!=1 || p[4] || p[5]!=1 || p[7]!=1 || p[8]!=1 || p[9]!=80 || p[10]!=1 || p[11] || p[12])
             return unsupported();
         if(!cpu_.hostptr(staging,staging_size)) {
-            fprintf(log_,"startup_d3d8_storage_error=staging_outside_guest_arena address:0x%08X bytes:%u\n",staging,staging_size);
+            th075::diagnostic_log(log_,"startup_d3d8_storage_error=staging_outside_guest_arena address:0x%08X bytes:%u\n",staging,staging_size);
             return failure();
         }
         if(!table(device_table,device_trap,97) || !table(texture_table,texture_trap,19) ||
@@ -109,8 +112,8 @@ public:
         find(back)->intrinsic=find(depth)->intrinsic=true;focus_=w[4];refs_=1;++root_refs_;
         if(!put(w[7],device))return failure();
         hr=0;
-        fprintf(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
-        fprintf(log_,"startup_d3d8_rasterizer=bounded_point_or_linear_quad\nstartup_d3d8_caps_shader_versions=zero\n");
+        th075::diagnostic_log(log_,"startup_d3d8_device=owned_software_storage object=0x%08X backbuffer=0x%08X depth=0x%08X bytes=%u\n",device,back_,depth_,used_);
+        th075::diagnostic_log(log_,"startup_d3d8_rasterizer=bounded_point_or_linear_quad\nstartup_d3d8_caps_shader_versions=zero\n");
         report_native_memory(log_,"device_created",used_,budget);
         return serviced();
     }
@@ -120,7 +123,7 @@ public:
         uint32_t w[10]{};const uint32_t esp=cpu_.reg(d2rt::R_ESP);
         // Unsupported slots stop before touching output/state or guessing ABI.
         const unsigned argc=arguments(dev,tex,s);
-        fprintf(log_,"startup_d3d8_method=%s::%s slot=%u\n",interface_name(t),method(t),s);
+        th075::diagnostic_log(log_,"startup_d3d8_method=%s::%s slot=%u\n",interface_name(t),method(t),s);
         if(!argc)return unsupported();
         const unsigned cleanup=(argc+1)*4;
         if(esp<0x00800000 || uint64_t(esp)+cleanup>0x00A00000 || !cpu_.read(esp,w,cleanup) || !refs_)return failure();
@@ -128,8 +131,8 @@ public:
         const uint32_t expected=dev?device_table:tex?texture_table:surface_table;
         uint32_t actual=0;
         if((dev?w[1]!=device:!r || r->texture!=tex) || !cpu_.read(w[1],&actual,4) || actual!=expected)return failure();
-        fprintf(log_,"startup_d3d8_return=0x%08X esp:0x%08X\n",w[0],esp);
-        for(unsigned i=1;i<=argc;++i)fprintf(log_,"startup_d3d8_arg%u=0x%08X\n",i-1,w[i]);
+        th075::diagnostic_log(log_,"startup_d3d8_return=0x%08X esp:0x%08X\n",w[0],esp);
+        for(unsigned i=1;i<=argc;++i)th075::diagnostic_log(log_,"startup_d3d8_arg%u=0x%08X\n",i-1,w[i]);
         uint32_t value=0;StartupServiceResult result=serviced();
         if(s==0)return unsupported(); // exact IID support is a later boundary.
         if(s==1) {
@@ -142,28 +145,29 @@ public:
             else if(!release_reference(*r,value))return failure();
         } else if(dev)result=device_call(s,w,value);
         else result=resource_call(tex,s,*r,w,value);
-        if(result!=StartupServiceResult::Serviced)return result;
+        if(result!=StartupServiceResult::Serviced){th075::diagnostic_log(log_,"startup_d3d8_boundary_method=%s::%s result:%u\n",interface_name(t),method(t),unsigned(result));return result;}
         const int registers[]={d2rt::R_EBX,d2rt::R_EBP,d2rt::R_ESI,d2rt::R_EDI};uint32_t before[4]{};
         for(unsigned i=0;i<4;++i)before[i]=cpu_.reg(registers[i]);
         cpu_.trap_epilogue(value,cleanup,w[0]);
         bool valid=cpu_.reg(d2rt::R_EAX)==value && cpu_.reg(d2rt::R_ESP)==esp+cleanup && cpu_.reg(d2rt::R_EIP)==w[0];
         for(unsigned i=0;i<4;++i)valid=valid && cpu_.reg(registers[i])==before[i];
-        fprintf(log_,"startup_d3d8_abi=%s cleanup=%u hresult=0x%08X\n",valid?"passed":"failed",cleanup,value);
+        if(!th075::compact_diagnostics || !valid)th075::diagnostic_log(log_,"startup_d3d8_abi=%s cleanup=%u hresult=0x%08X\n",valid?"passed":"failed",cleanup,value);
         return valid?serviced():failure();
     }
 private:
     struct Resource {
         uint32_t handle=0,refs=0,width=0,height=0,format=0,usage=0,pool=0,pitch=0,surface=0,parent=0;
         bool texture=false,locked=false,intrinsic=false,device_ref=false;std::vector<uint8_t> bytes;
+        d3d8_quad::HalfSurface half;
     };
     static StartupServiceResult serviced(){return StartupServiceResult::Serviced;}
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
-    StartupServiceResult unsupported(){fprintf(log_,"startup_d3d8_method_executed=no\n");return StartupServiceResult::Unsupported;}
+    StartupServiceResult unsupported(){th075::diagnostic_log(log_,"startup_d3d8_method_executed=no\n");return StartupServiceResult::Unsupported;}
     template<class T> bool put(uint32_t address,const T& value){
         // Reject low integer values before Cpu::write: the emulated zero page
         // may be mapped for FS/SEH, but is not a COM output buffer.
         if(address<0x10000 || uint64_t(address)+sizeof(value)>0x02000000) {
-            fprintf(log_,"startup_d3d8_output_rejected=address:0x%08X bytes:%u\n",address,unsigned(sizeof(value)));
+            th075::diagnostic_log(log_,"startup_d3d8_output_rejected=address:0x%08X bytes:%u\n",address,unsigned(sizeof(value)));
             return false;
         }
         return cpu_.write(address,&value,sizeof(value));
@@ -181,7 +185,7 @@ private:
         auto* owner=reference_owner(r);
         if(!owner || owner->refs==0xFFFFFFFFu)return false;
         value=++owner->refs;
-        fprintf(log_,"startup_d3d8_ref=add object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
+        th075::diagnostic_log(log_,"startup_d3d8_ref=add object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
         return true;
     }
     bool can_drop(Resource& r) {
@@ -203,7 +207,7 @@ private:
         if(!can_drop(r))return false;
         if(owner->refs>1) {
             value=--owner->refs;
-            fprintf(log_,"startup_d3d8_ref=release object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
+            th075::diagnostic_log(log_,"startup_d3d8_ref=release object:0x%08X owner:0x%08X refs:%u\n",r.handle,owner->handle,value);
             return true;
         }
         if(pinned(owner->handle))return false; // Never free a bound/recorded resource.
@@ -211,11 +215,11 @@ private:
         auto* child=child_handle?find(child_handle):nullptr;
         if(child_handle && (!child || child->parent!=handle))return false;
         if((child && !put(child_handle,0u)) || !put(handle,0u))return false;
-        const uint32_t bytes=uint32_t(owner->bytes.size());
+        const uint32_t bytes=uint32_t(owner->bytes.size()+owner->half.size());
         used_-=bytes;if(owner->device_ref)--refs_;
         if(child)*child=Resource{};
         *owner=Resource{};value=0; // Vector destruction releases native storage.
-        fprintf(log_,"startup_d3d8_resource_destroyed=object:0x%08X surface:0x%08X bytes:%u used:%u scope:last_owned_reference\n",handle,child_handle,bytes,used_);
+        th075::diagnostic_log(log_,"startup_d3d8_resource_destroyed=object:0x%08X surface:0x%08X bytes:%u used:%u scope:last_owned_reference\n",handle,child_handle,bytes,used_);
         return true;
     }
     bool replace_surface(uint32_t& current,uint32_t next) {
@@ -230,20 +234,23 @@ private:
         return !outgoing || release_reference(*outgoing,ignored);
     }
     bool allocate(uint32_t width,uint32_t height,uint32_t format,uint32_t usage,uint32_t pool,bool texture,uint32_t& output) {
-        if(count_==capacity){fprintf(log_,"startup_d3d8_allocation_denied=handle_capacity count:%u maximum:%u\n",count_,capacity);report_native_memory(log_,"handle_capacity",used_,budget);return false;}
+        if(count_==capacity){th075::diagnostic_log(log_,"startup_d3d8_allocation_denied=handle_capacity count:%u maximum:%u\n",count_,capacity);report_native_memory(log_,"handle_capacity",used_,budget);return false;}
         const unsigned bpp=(format==25 || format==80)?2:4;
         const uint64_t bytes=uint64_t(width)*height*bpp;
-        if(bytes>budget-used_){fprintf(log_,"startup_d3d8_allocation_denied=storage_budget request:%llu used:%u maximum:%u\n",(unsigned long long)bytes,used_,budget);report_native_memory(log_,"storage_budget",used_,budget);return false;}
+        const bool reduced=half_resolution_ && (format==21 || format==22) && (usage&1);
+        const uint64_t total=bytes+(reduced?d3d8_quad::HalfSurface::required(width,height):0);
+        if(total>budget-used_){th075::diagnostic_log(log_,"startup_d3d8_allocation_denied=storage_budget request:%llu used:%u maximum:%u\n",(unsigned long long)total,used_,budget);report_native_memory(log_,"storage_budget",used_,budget);return false;}
         auto& r=resources_[count_];
-        try {r.bytes.resize(bytes);}catch(const std::bad_alloc&){fprintf(log_,"startup_d3d8_allocation_denied=native_heap request:%llu\n",(unsigned long long)bytes);report_native_memory(log_,"allocation_failed",used_,budget);return false;}
+        try {r.bytes.resize(bytes);if(reduced)r.half.initialize(width,height,format);}catch(const std::bad_alloc&){th075::diagnostic_log(log_,"startup_d3d8_allocation_denied=native_heap request:%llu\n",(unsigned long long)total);report_native_memory(log_,"allocation_failed",used_,budget);r=Resource{};return false;}
         r.handle=handles+count_*8;r.refs=1;r.width=width;r.height=height;r.format=format;
         r.usage=usage;r.pool=pool;r.texture=texture;r.pitch=width*bpp;
         const uint32_t vt=texture?texture_table:surface_table;
-        if(!put(r.handle,vt)){r.bytes.clear();r.refs=0;return false;}
-        ++count_;used_+=bytes;output=r.handle;
+        if(!put(r.handle,vt)){r=Resource{};return false;}
+        ++count_;used_+=total;output=r.handle;
+        if(reduced)th075::diagnostic_log(log_,"startup_d3d8_reduced_surface=object:0x%08X guest:%ux%u native:%ux%u extra_bytes:%u\n",r.handle,width,height,r.half.image().width,r.half.image().height,unsigned(r.half.size()));
         if(used_>peak_) {
             peak_=used_;
-            fprintf(log_,"startup_d3d8_storage_peak=bytes:%u maximum:%u handles:%u\n",peak_,budget,count_);
+            th075::diagnostic_log(log_,"startup_d3d8_storage_peak=bytes:%u maximum:%u handles:%u\n",peak_,budget,count_);
             const unsigned bucket=peak_/(8u*1024u*1024u);
             if(bucket>reported_memory_bucket_){reported_memory_bucket_=bucket;report_native_memory(log_,"storage_growth",used_,budget);}
         }
@@ -284,7 +291,7 @@ private:
                  depth_data->width<color_data->width || depth_data->height<color_data->height))){value=0x8876086C;return serviced();}
             if(!replace_surface(target_,color_handle) || !replace_surface(depth_,w[3]))return failure();
             viewport_={0,0,color_data->width,color_data->height,0,0x3F800000};
-            fprintf(log_,"startup_d3d8_render_target=color:0x%08X depth:0x%08X dimensions:%ux%u viewport_reset:yes\n",target_,depth_,color_data->width,color_data->height);return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_render_target=color:0x%08X depth:0x%08X dimensions:%ux%u viewport_reset:yes\n",target_,depth_,color_data->width,color_data->height);return serviced();
         }
         case 40: {
             std::array<uint32_t,6> v{};float minz=0,maxz=0;
@@ -292,7 +299,7 @@ private:
             std::memcpy(&minz,&v[4],4);std::memcpy(&maxz,&v[5],4);
             auto* target=find(target_);auto* data=target && target->parent?find(target->parent):target;
             const uint32_t width=data?data->width:0,height=data?data->height:0;
-            fprintf(log_,"startup_d3d8_viewport=request x:%u y:%u width:%u height:%u minz:%g maxz:%g recording:%s\n",v[0],v[1],v[2],v[3],double(minz),double(maxz),recording_on_?"yes":"no");
+            th075::diagnostic_log(log_,"startup_d3d8_viewport=request x:%u y:%u width:%u height:%u minz:%g maxz:%g recording:%s\n",v[0],v[1],v[2],v[3],double(minz),double(maxz),recording_on_?"yes":"no");
             if(!v[2] || !v[3] || uint64_t(v[0])+v[2]>width || uint64_t(v[1])+v[3]>height ||
                 !std::isfinite(minz) || !std::isfinite(maxz) || minz<0 || maxz>1 || minz>maxz){value=0x8876086C;return serviced();}
             if(recording_on_){recording_.viewport=v;recording_.viewport_mask=true;}else viewport_=v;
@@ -308,7 +315,7 @@ private:
             if(!put(w[6],h))return failure();
             ++refs_;
             find(h)->device_ref=true;
-            fprintf(log_,"startup_d3d8_depth_surface=owned object=0x%08X width=%u height=%u format=D16\n",h,w[2],w[3]);
+            th075::diagnostic_log(log_,"startup_d3d8_depth_surface=owned object=0x%08X width=%u height=%u format=D16\n",h,w[2],w[3]);
             return serviced();
         }
         case 20: {
@@ -318,11 +325,11 @@ private:
                 (w[5] && (w[6]!=21 || w[7]!=0)))return unsupported();
             uint32_t h=0;if(!allocate(w[2],w[3],w[6],w[5],w[7],true,h)) {value=0x8876017C;return serviced();}
             ++refs_;find(h)->device_ref=true;if(!put(w[8],h))return failure();
-            fprintf(log_,"startup_d3d8_texture=allocated object=0x%08X width=%u height=%u format=%u pitch=%u bytes=%u used=%u\n",h,w[2],w[3],w[6],find(h)->pitch,unsigned(find(h)->bytes.size()),used_);
+            th075::diagnostic_log(log_,"startup_d3d8_texture=allocated object=0x%08X width=%u height=%u format=%u pitch=%u bytes=%u used=%u\n",h,w[2],w[3],w[6],find(h)->pitch,unsigned(find(h)->bytes.size()),used_);
             return serviced();
         }
         case 50:
-            fprintf(log_,"startup_d3d8_render_state=state:%u value:0x%08X recording:%s\n",w[2],w[3],recording_on_?"yes":"no");
+            th075::diagnostic_log(log_,"startup_d3d8_render_state=state:%u value:0x%08X recording:%s\n",w[2],w[3],recording_on_?"yes":"no");
             if(w[2]>=render_.size() || !render_valid_[w[2]] || !render_state(w[2],w[3]))return unsupported();
             if(recording_on_){recording_.render[w[2]]=w[3];recording_.render_mask[w[2]]=true;}else render_[w[2]]=w[3];return serviced();
         case 51:if(w[2]>=render_.size() || !render_valid_[w[2]])return unsupported();return put(w[3],render_[w[2]])?serviced():failure();
@@ -330,29 +337,29 @@ private:
             if(w[2])return unsupported();
             if(!replace_texture(recording_on_?recording_.texture:bound_texture_,w[3]))return failure();
             if(recording_on_)recording_.texture_mask=true;
-            fprintf(log_,"startup_d3d8_texture_binding=stage:0 object:0x%08X recording:%s\n",w[3],recording_on_?"yes":"no");return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_texture_binding=stage:0 object:0x%08X recording:%s\n",w[3],recording_on_?"yes":"no");return serviced();
         case GetTexture: {
             if(w[2])return unsupported();
             auto* texture=bound_texture_?find(bound_texture_):nullptr;
             if(bound_texture_ && (!texture || !texture->texture || texture->refs==0xFFFFFFFFu))return failure();
             if(!put(w[3],bound_texture_))return failure();
             if(texture)++texture->refs;
-            fprintf(log_,"startup_d3d8_texture_get=stage:0 object:0x%08X addref:%s\n",bound_texture_,texture?"yes":"no");return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_texture_get=stage:0 object:0x%08X addref:%s\n",bound_texture_,texture?"yes":"no");return serviced();
         }
         case 72:return draw(w);
         case 52:
             if(recording_on_){value=0x8876086C;return serviced();}
             recording_=StateBlock{};recording_on_=true;
-            fprintf(log_,"startup_d3d8_stateblock=begin scope:render_stage_fvf_viewport_texture0\n");return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_stateblock=begin scope:render_stage_fvf_viewport_texture0\n");return serviced();
         case 53:
             if(!recording_on_){value=0x8876086C;return serviced();}
             if(state_block_count_>=state_blocks_.size())return unsupported();
             if(!put(w[2],state_block_count_+1))return failure();
             recording_.alive=true;state_blocks_[state_block_count_++]=recording_;recording_on_=false;
-            fprintf(log_,"startup_d3d8_stateblock=end token:%u render:%u stage:%u fvf:%u\n",state_block_count_,
+            th075::diagnostic_log(log_,"startup_d3d8_stateblock=end token:%u render:%u stage:%u fvf:%u\n",state_block_count_,
                 unsigned(std::count(recording_.render_mask.begin(),recording_.render_mask.end(),true)),
                 unsigned(std::count(recording_.stage_mask.begin(),recording_.stage_mask.end(),true)),recording_.fvf_mask?1:0);
-            fprintf(log_,"startup_d3d8_stateblock_texture=token:%u mask:%u object:0x%08X ownership:transferred\n",state_block_count_,recording_.texture_mask?1:0,recording_.texture);
+            th075::diagnostic_log(log_,"startup_d3d8_stateblock_texture=token:%u mask:%u object:0x%08X ownership:transferred\n",state_block_count_,recording_.texture_mask?1:0,recording_.texture);
             recording_=StateBlock{};return serviced();
         case 54:case 55:case 56: {
             if(recording_on_ || !w[2] || w[2]>state_block_count_ || !state_blocks_[w[2]-1].alive){value=0x8876086C;return serviced();}
@@ -367,16 +374,16 @@ private:
                 if(block.fvf_mask){if(s==54)fvf_=block.fvf;else block.fvf=fvf_;}
                 if(block.viewport_mask){if(s==54)viewport_=block.viewport;else block.viewport=viewport_;}
             }
-            fprintf(log_,"startup_d3d8_stateblock=method:%s token:%u\n",method(device_trap+16*s),w[2]);return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_stateblock=method:%s token:%u\n",method(device_trap+16*s),w[2]);return serviced();
         }
         case GetTextureStageState:
             if(w[2] || w[3]>=stage_.size() || !stage_valid_[w[3]])return unsupported();
-            fprintf(log_,"startup_d3d8_stage_get=stage:%u type:%u output:0x%08X value:%u\n",w[2],w[3],w[4],stage_[w[3]]);
+            th075::diagnostic_log(log_,"startup_d3d8_stage_get=stage:%u type:%u output:0x%08X value:%u\n",w[2],w[3],w[4],stage_[w[3]]);
             return put(w[4],stage_[w[3]])?serviced():failure();
         case SetTextureStageState:
             if(w[2] || w[3]>=stage_.size() || !stage_state(w[3],w[4]))return unsupported();
             if(recording_on_){recording_.stage[w[3]]=w[4];recording_.stage_mask[w[3]]=true;}else{stage_[w[3]]=w[4];stage_valid_[w[3]]=true;}
-            fprintf(log_,"startup_d3d8_stage_set=stage:%u type:%u value:%u output_write:none\n",w[2],w[3],w[4]);
+            th075::diagnostic_log(log_,"startup_d3d8_stage_set=stage:%u type:%u value:%u output_write:none\n",w[2],w[3],w[4]);
             return serviced();
         case 76:if(w[2]!=0x144)return unsupported();if(recording_on_){recording_.fvf=w[2];recording_.fvf_mask=true;}else fvf_=w[2];return serviced();
         case 77:return put(w[2],fvf_)?serviced():failure();
@@ -392,11 +399,12 @@ private:
             if(right>color->width || bottom>color->height || ((w[4]&2) && (right>depth->width || bottom>depth->height)))return failure();
             const uint16_t d=(w[4]&2)?uint16_t(z*65535.0f):0;
             const uint32_t clear_color=color->format==22?(w[5]|0xFF000000u):w[5];
-            for(uint32_t y=viewport_[1];y<bottom;++y)for(uint32_t x=viewport_[0];x<right;++x){
-                if(w[4]&1)std::memcpy(color->bytes.data()+size_t(y)*color->pitch+size_t(x)*4,&clear_color,4);
+            if((w[4]&1) && color->half.active())color->half.clear({viewport_[0],viewport_[1],viewport_[2],viewport_[3]},clear_color);
+            if((w[4]&2) || !color->half.active())for(uint32_t y=viewport_[1];y<bottom;++y)for(uint32_t x=viewport_[0];x<right;++x){
+                if((w[4]&1) && !color->half.active())std::memcpy(color->bytes.data()+size_t(y)*color->pitch+size_t(x)*4,&clear_color,4);
                 if(w[4]&2)std::memcpy(depth->bytes.data()+size_t(y)*depth->pitch+size_t(x)*2,&d,2);
             }
-            fprintf(log_,"startup_d3d8_clear=owned_storage flags:%u viewport:%u,%u,%u,%u pixels:%u\n",w[4],viewport_[0],viewport_[1],viewport_[2],viewport_[3],viewport_[2]*viewport_[3]);return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_clear=owned_storage flags:%u viewport:%u,%u,%u,%u pixels:%u\n",w[4],viewport_[0],viewport_[1],viewport_[2],viewport_[3],viewport_[2]*viewport_[3]);return serviced();
         }
         default:return unsupported();
         }
@@ -428,7 +436,7 @@ private:
                 child.handle=handles+count_*8;child.refs=1;child.parent=r.handle;
                 if(!put(child.handle,surface_table))return failure();
                 ++count_;r.surface=child.handle;
-                fprintf(log_,"startup_d3d8_surface=level0_alias object:0x%08X parent:0x%08X references:forwarded\n",child.handle,r.handle);
+                th075::diagnostic_log(log_,"startup_d3d8_surface=level0_alias object:0x%08X parent:0x%08X references:forwarded\n",child.handle,r.handle);
             }
             return surface_output(r.surface,w[3]);
         }
@@ -436,15 +444,17 @@ private:
         if((tex && s==16)||(!tex && s==9)) {
             const uint32_t output=w[tex?3:2],rect=w[tex?4:3],flags=w[tex?5:4];
             if((tex && w[2]) || rect || flags || data->locked || locked_ || data->format==80)return unsupported();
-            if(data->bytes.size()>staging_size){fprintf(log_,"startup_d3d8_lock_error=staging_capacity_exceeded\n");return failure();}
-            if(!cpu_.write(staging,data->bytes.data(),data->bytes.size())){fprintf(log_,"startup_d3d8_lock_error=staging_write_failed\n");return failure();}
-            if(!put(output,std::array<uint32_t,2>{data->pitch,staging})){fprintf(log_,"startup_d3d8_lock_error=locked_rect_output_failed\n");return failure();}
+            if(data->bytes.size()>staging_size){th075::diagnostic_log(log_,"startup_d3d8_lock_error=staging_capacity_exceeded\n");return failure();}
+            if(data->half.active() && !data->half.readback({data->bytes.data(),data->bytes.size(),data->width,data->height,data->pitch,data->format}))return failure();
+            if(!cpu_.write(staging,data->bytes.data(),data->bytes.size())){th075::diagnostic_log(log_,"startup_d3d8_lock_error=staging_write_failed\n");return failure();}
+            if(!put(output,std::array<uint32_t,2>{data->pitch,staging})){th075::diagnostic_log(log_,"startup_d3d8_lock_error=locked_rect_output_failed\n");return failure();}
             data->locked=true;locked_=data->handle;
-            fprintf(log_,"startup_d3d8_texture_lock=object:0x%08X pitch:%u guest_bits:0x%08X bytes:%u\n",data->handle,data->pitch,staging,unsigned(data->bytes.size()));return serviced();
+            th075::diagnostic_log(log_,"startup_d3d8_texture_lock=object:0x%08X pitch:%u guest_bits:0x%08X bytes:%u\n",data->handle,data->pitch,staging,unsigned(data->bytes.size()));return serviced();
         }
         if((tex && s==17)||(!tex && s==10)) {
             if((tex && w[2]) || !data->locked || locked_!=data->handle)return failure();
             if(!cpu_.read(staging,data->bytes.data(),data->bytes.size()))return failure();
+            if(data->half.active() && !data->half.upload({data->bytes.data(),data->bytes.size(),data->width,data->height,data->pitch,data->format}))return failure();
             uint32_t hash=2166136261u,alpha_zero=0,alpha_full=0,alpha_partial=0;
             for(uint8_t b:data->bytes)hash=(hash^b)*16777619u;
             for(size_t i=0;i<data->bytes.size();i+=data->format==25?2:4) {
@@ -452,7 +462,7 @@ private:
                 if(!a)++alpha_zero;else if(a==255)++alpha_full;else ++alpha_partial;
             }
             data->locked=false;locked_=0;
-            fprintf(log_,"startup_d3d8_texture_upload=object:0x%08X format:%u bytes:%u fnv1a:0x%08X alpha_zero:%u alpha_full:%u alpha_partial:%u\n",data->handle,data->format,unsigned(data->bytes.size()),hash,alpha_zero,alpha_full,alpha_partial);
+            th075::diagnostic_log(log_,"startup_d3d8_texture_upload=object:0x%08X format:%u bytes:%u fnv1a:0x%08X alpha_zero:%u alpha_full:%u alpha_partial:%u\n",data->handle,data->format,unsigned(data->bytes.size()),hash,alpha_zero,alpha_full,alpha_partial);
             return serviced();
         }
         return unsupported();
@@ -493,30 +503,30 @@ private:
         return !outgoing || release_reference(*outgoing,ignored);
     }
     StartupServiceResult present(const uint32_t* w) {
-        fprintf(log_,"startup_d3d8_present_request=source_rect:0x%08X destination_rect:0x%08X window:0x%08X dirty:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],scene_?"yes":"no");
+        th075::diagnostic_log(log_,"startup_d3d8_present_request=source_rect:0x%08X destination_rect:0x%08X window:0x%08X dirty:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],scene_?"yes":"no");
         if(scene_ || recording_on_ || w[5] || (w[4] && w[4]!=focus_))return unsupported();
         std::array<int32_t,4> source={0,0,640,480},destination=source;
         if((w[2] && (w[2]<0x10000 || !cpu_.read(w[2],source.data(),sizeof(source)))) ||
             (w[3] && (w[3]<0x10000 || !cpu_.read(w[3],destination.data(),sizeof(destination)))))return failure();
-        fprintf(log_,"startup_d3d8_present_rect=source:%d,%d,%d,%d destination:%d,%d,%d,%d\n",source[0],source[1],source[2],source[3],destination[0],destination[1],destination[2],destination[3]);
+        th075::diagnostic_log(log_,"startup_d3d8_present_rect=source:%d,%d,%d,%d destination:%d,%d,%d,%d\n",source[0],source[1],source[2],source[3],destination[0],destination[1],destination[2],destination[3]);
         if(!d3d8_present::full_rect(source,640,480) || !d3d8_present::full_rect(destination,640,480))return unsupported();
         auto* back=find(back_);
         if(!back || back->locked || back->width!=640 || back->height!=480 || back->format!=22)return failure();
-        if(present_calls_>=startup_limits::present_frames){fprintf(log_,"startup_d3d8_present_scope_limit=frames:%u maximum:%u\n",present_calls_,startup_limits::present_frames);return unsupported();}
-        const d3d8_quad::Image image={back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,back->format};
+        if(present_calls_>=startup_limits::present_frames){th075::diagnostic_log(log_,"startup_d3d8_present_scope_limit=frames:%u maximum:%u\n",present_calls_,startup_limits::present_frames);return unsupported();}
+        const d3d8_quad::Image image=back->half.active()?back->half.image():d3d8_quad::Image{back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,back->format};
         const uint64_t started=sceKernelGetProcessTimeWide();
         if(!presenter_.present(image))return failure();
         ++present_calls_;
-        th075::capture_presented_exe_frame(back->bytes.data(),back->bytes.size(),back->width,back->height,back->pitch,present_calls_,log_,presenter_.reused_source());
-        fprintf(log_,"startup_d3d8_present_elapsed_us=%llu frame:%u scope:prepare_native_capture\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),present_calls_);
-        fprintf(log_,"startup_d3d8_present=executed frame:%u backbuffer:0x%08X\n",present_calls_,back_);
+        th075::capture_presented_exe_frame(image.bytes,image.size,image.width,image.height,image.pitch,present_calls_,log_,presenter_.reused_source());
+        th075::diagnostic_log(log_,"startup_d3d8_present_elapsed_us=%llu frame:%u scope:prepare_native_capture\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),present_calls_);
+        th075::diagnostic_log(log_,"startup_d3d8_present=executed frame:%u backbuffer:0x%08X\n",present_calls_,back_);
         return serviced();
     }
     StartupServiceResult draw(const uint32_t* w) {
-        fprintf(log_,"startup_d3d8_draw_request=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
+        th075::diagnostic_log(log_,"startup_d3d8_draw_request=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
         const auto dump_states=[&]{
-            for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
-            for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])fprintf(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
+            for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])th075::diagnostic_log(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
+            for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])th075::diagnostic_log(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
         };
         if(!raster_executor_)dump_states();
         uint32_t count=0;
@@ -524,11 +534,13 @@ private:
         if(fvf_==0x144 && w[5]==28 && count && w[4]>=0x10000 && uint64_t(w[4])+uint64_t(count)*28<=0x02000000){
             std::array<uint32_t,48*7> vertices{};
             if(!cpu_.read(w[4],vertices.data(),count*28))return failure();
+            if(!th075::compact_diagnostics){
             uint32_t hash=2166136261u;const auto* bytes=reinterpret_cast<const uint8_t*>(vertices.data());for(unsigned i=0;i<count*28;++i)hash=(hash^bytes[i])*16777619u;
-            fprintf(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
+            th075::diagnostic_log(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
             for(unsigned i=0;i<std::min(count,8u);++i){const auto* v=vertices.data()+i*7;float f[7]{};std::memcpy(f,v,28);
-                fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));
-                fprintf(log_,"startup_d3d8_vertex_bits=%u x:%08X y:%08X z:%08X rhw:%08X color:%08X u:%08X v:%08X\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6]);}
+                th075::diagnostic_log(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));
+                th075::diagnostic_log(log_,"startup_d3d8_vertex_bits=%u x:%08X y:%08X z:%08X rhw:%08X color:%08X u:%08X v:%08X\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6]);}
+            }
             const bool profile=scene_ && !recording_on_ && w[2]==5 && w[3]==2 &&
                 render_[7]==0 && render_[8]==3 && render_[9]==2 && render_[22]==1 &&
                 render_[26]==0 && render_[28]==0 && render_[29]==0 && render_[137]==0 && render_[168]==15 && render_[171]==1 &&
@@ -543,12 +555,13 @@ private:
             if(profile && texture && texture->texture && target && !texture->locked && !target->locked){
                 const uint64_t pixels=uint64_t(viewport_[2])*viewport_[3];
                 if(draw_calls_>=startup_limits::draw_calls || pixels>startup_limits::draw_pixels-draw_pixels_){
-                    fprintf(log_,"startup_d3d8_draw_scope_limit=calls:%u covered:%u max_calls:%u max_pixels:%u\n",draw_calls_,draw_pixels_,startup_limits::draw_calls,startup_limits::draw_pixels);return unsupported();
+                    th075::diagnostic_log(log_,"startup_d3d8_draw_scope_limit=calls:%u covered:%u max_calls:%u max_pixels:%u\n",draw_calls_,draw_pixels_,startup_limits::draw_calls,startup_limits::draw_pixels);return unsupported();
                 }
                 d3d8_quad::Vertex quad[4]{};std::memcpy(quad,vertices.data(),sizeof(quad));
-                const d3d8_quad::Image image={texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
-                const d3d8_quad::Target output={target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,target->format};
-                const d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
+                const d3d8_quad::Image image=texture->half.active()?texture->half.image():d3d8_quad::Image{texture->bytes.data(),texture->bytes.size(),texture->width,texture->height,texture->pitch,texture->format};
+                const d3d8_quad::Target output=target->half.active()?target->half.target():d3d8_quad::Target{target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,target->format};
+                d3d8_quad::Viewport view={viewport_[0],viewport_[1],viewport_[2],viewport_[3]};
+                if(target->half.active()){target->half.vertices(quad);view=target->half.viewport(view);}
                 const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1,stage_[16]};
                 d3d8_quad::Stats stats;
                 const uint64_t started=sceKernelGetProcessTimeWide();
@@ -556,24 +569,24 @@ private:
                     d3d8_quad::rasterize(quad,image,output,view,settings,stats);
                 if(result==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
-                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_executor_no_pixel_hashes");
-                    fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
-                    fprintf(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
-                    fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
-                    if(settings.filter==2)fprintf(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
-                    fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
-                    if(stats.hashes_valid)fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
-                    else fprintf(log_,"startup_d3d8_draw_hash=disabled scope:performance_pixel_output_unchanged\n");
-                    const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
+                    th075::diagnostic_log(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_executor_no_pixel_hashes");
+                    th075::diagnostic_log(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    th075::diagnostic_log(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
+                    th075::diagnostic_log(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
+                    if(settings.filter==2)th075::diagnostic_log(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
+                    th075::diagnostic_log(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
+                    if(stats.hashes_valid)th075::diagnostic_log(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
+                    else th075::diagnostic_log(log_,"startup_d3d8_draw_hash=disabled scope:performance_pixel_output_unchanged\n");
+                    const auto probe=[&](const char* name,const d3d8_quad::Probe& p){th075::diagnostic_log(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
                     if(stats.covered){probe("first",stats.first);probe("last",stats.last);}
-                    if(stats.changed)th075::capture_first_exe_quad(target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,view.x,view.y,view.width,view.height,log_);
+                    if(stats.changed)th075::capture_first_exe_quad(output.bytes,output.size,output.width,output.height,output.pitch,view.x,view.y,view.width,view.height,log_);
                     return serviced();
                 }
-                fprintf(log_,"startup_d3d8_draw_rejected=reason:%s output_write:none\n",d3d8_quad::reject_name(stats.reject));
-            }else fprintf(log_,"startup_d3d8_draw_rejected=state_or_resource_profile output_write:none\n");
+                th075::diagnostic_log(log_,"startup_d3d8_draw_rejected=reason:%s output_write:none\n",d3d8_quad::reject_name(stats.reject));
+            }else th075::diagnostic_log(log_,"startup_d3d8_draw_rejected=state_or_resource_profile output_write:none\n");
         }
         if(raster_executor_)dump_states(); // Keep complete evidence at an actual boundary.
-        fprintf(log_,"startup_d3d8_draw_boundary=executed:no\n");
+        th075::diagnostic_log(log_,"startup_d3d8_draw_boundary=executed:no\n");
         return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
@@ -596,5 +609,5 @@ private:
     std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     uint32_t peak_=0;unsigned reported_memory_bucket_=0;
-    bool scene_=false;
+    bool scene_=false,half_resolution_=false;
 };

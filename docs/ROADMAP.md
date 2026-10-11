@@ -1,3 +1,26 @@
+# Roadmap actual — iteración 91
+
+La 90 recuperó el menú y 360 Present en Vita. La 91 prueba dibujo interno
+320×240, trazas compactas y floor de clocks con 118 grupos locales.
+Arranque, FPS y audio de la 91 deben medirse en Vita antes de aceptar ganancia.
+
+1. Validar la 91 y comparar CPU raster, Present, guest y tiempo total con 90.
+2. Implementar y verificar quads/texturas D3D8 sobre GXM; cache de uploads,
+   alpha/blend/filtros y propiedad/sincronización, con rollback al renderer CPU.
+3. Medir y optimizar scheduler/JIT a partir del coste restante.
+4. Si se necesita pool CPU, registrar pthread correctamente o usar kernel sync;
+   comprobar espera/TLS/afinidad/teardown en hardware por etapas.
+5. Continuar selección de personaje/combate y servicios realmente solicitados.
+
+La GPU y el pool corregido aún no están integrados. La compresión runtime no
+se añade al renderer CPU. Los DAT y EXE originales permanecen fuera de Git.
+
+[Informe y evidencia de la 91](STATUS_ITERATION91.md)
+[Comprobaciones de la 91](EXE_CHECKLIST_ITERATION91.md)
+[Diagnóstico de la regresión 87–89 y recuperación 90](STATUS_ITERATION90.md)
+
+## Historial anterior
+
 # Touhou 7.5 Vita port roadmap
 
 ## Current checkpoint — iteration 90, version 01.94

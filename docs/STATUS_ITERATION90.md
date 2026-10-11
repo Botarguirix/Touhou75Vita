@@ -1,5 +1,13 @@
 # Iteración 90 — revisión de regresión y recuperación serial
 
+## Resultado físico recibido — 11 de octubre de 2026
+
+La 90 recuperó el menú original y completó 360/360 Present sin excepción;
+watchdog disarmed y límite esperado de 361 esperas. La recuperación serial
+se confirma. Tiempos de dibujo: 86,69 s; tramo total: 142,44 s; trazas: 32 MB.
+La siguiente prueba es la [91 de resolución reducida](STATUS_ITERATION91.md).
+Combate completo y rendimiento suficiente siguen pendientes.
+
 ## Último checkpoint funcional
 
 La referencia es la 86, commit a874ffd, versión 01.90: el usuario confirmó
@@ -13,7 +21,7 @@ completo ni un port terminado.
 | 87 / 01.91 | Dos workers para repartir filas entre núcleos 0/1/2; condition_variable; menos hashes/logs; mayor límite de draws | Mutex nulo al esperar el primer worker |
 | 88 / 01.92 | Fuerza pthread_cancel y verifica activación/mutex antes del VM | Mutex pasa; emutls del JIT falla por pthread_once omitido |
 | 89 / 01.93 | Fuerza pthread_once/cond_destroy, comprueba TLS y renueva LiveArea | VM/JIT/inicialización original pasan; primer worker falla al esperar |
-| 90 / 01.94 | Retira la ejecución de los workers; usa el renderer serial con hashes diagnósticos desactivados | Pendiente Vita |
+| 90 / 01.94 | Retira la ejecución de los workers; usa el renderer serial con hashes diagnósticos desactivados | Menú y 360 Present confirmados |
 
 git diff a874ffd..a62974d no muestra cambios en el runtime WinVita/Box86,
 dsound_bootstrap.h, dsound_pcm_mixer.h, dinput8_bridge.h o exe_boot_options.h.
@@ -101,5 +109,5 @@ etapas. El pool experimental permanece como referencia host, desactivado.
 Instalar la 90 y comprobar preflight, serial_recovery y Present mayor que
 cero, entrada al menú, navegación y efectos. Recoger iteration90.log,
 iteration90-runtime.log, iteration90-watchdog.log y log.txt, más captura.
-Si vuelve a fallar, conservar el nuevo core. Arranque físico de la 90,
-rendimiento y combate: pendientes. No se promete recuperar FPS con este paquete.
+Si vuelve a fallar, conservar el nuevo core. Arranque físico de la 90: menú
+y 360 Present confirmados. Rendimiento suficiente y combate: pendientes.

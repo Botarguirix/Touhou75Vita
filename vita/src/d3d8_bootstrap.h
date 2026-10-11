@@ -13,6 +13,7 @@ public:
     static constexpr unsigned slots=16;
     D3D8Bootstrap(d2rt::Cpu& cpu, FILE* log):cpu_(cpu),log_(log),storage_(cpu,log,references_) {}
     unsigned serviced_calls() const { return serviced_calls_; }
+    void enable_half_resolution() { storage_.enable_half_resolution(); }
     void set_raster_executor(d3d8_quad::RasterExecutor executor,void* context) {
         storage_.set_raster_executor(executor,context);
     }

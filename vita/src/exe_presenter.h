@@ -33,8 +33,8 @@ public:
         const int query_rc=wait_rc>=0?sceDisplayGetFrameBuf(&active,SCE_DISPLAY_SETBUF_IMMEDIATE):wait_rc;
         const bool matches=query_rc>=0 && active.base==fb.base && active.pitch==fb.pitch &&
             active.width==fb.width && active.height==fb.height && active.pixelformat==fb.pixelformat;
-        fprintf(log_,"startup_d3d8_present_native=set_rc:0x%08X wait_rc:0x%08X query_rc:0x%08X matches:%s slot:%u source:640x480 output:960x544 image:725x544\n",
-            unsigned(rc),unsigned(wait_rc),unsigned(query_rc),matches?"yes":"no",index);
+        fprintf(log_,"startup_d3d8_present_native=set_rc:0x%08X wait_rc:0x%08X query_rc:0x%08X matches:%s slot:%u source:%ux%u output:960x544 image:725x544\n",
+            unsigned(rc),unsigned(wait_rc),unsigned(query_rc),matches?"yes":"no",index,source.width,source.height);
         if(hash_scanout_)fprintf(log_,"startup_d3d8_scanout_hash=fnv1a:0x%08X\n",hash);
         else fprintf(log_,"startup_d3d8_scanout_hash=disabled equality:all_source_bytes scanout:%s\n",matches?"confirmed":"failed");
         if(rc<0 || wait_rc<0 || !matches){cache_.invalidate();return false;}
