@@ -24,13 +24,22 @@ inline void capture_first_exe_quad(const uint8_t* bytes,size_t size,
     unsigned dw=260,dh=uint64_t(view_height)*260/view_width;
     if(dh>180){dh=180;dw=uint64_t(view_width)*180/view_height;}
     dw=std::max(dw,1u);dh=std::max(dh,1u);
-    for(unsigned y=0;y<dh;++y)for(unsigned x=0;x<dw;++x){
-        const unsigned sx=x0+uint64_t(x)*view_width/dw,sy=y0+uint64_t(y)*view_height/dh;
-        uint32_t argb=0;std::memcpy(&argb,bytes+size_t(sy)*pitch+size_t(sx)*4,4);
+    // Preserve the original nearest-neighbor coordinates exactly; divide once
+    // per column/row instead of twice for every preview pixel on ARM.
+    std::array<unsigned,260> columns{};std::array<unsigned,180> rows{};
+    for(unsigned x=0;x<dw;++x)columns[x]=x0+uint64_t(x)*view_width/dw;
+    for(unsigned y=0;y<dh;++y)rows[y]=y0+uint64_t(y)*view_height/dh;
+    for(unsigned y=0;y<dh;++y) {
+        auto* destination=exe_draw_preview.data()+((180-dh)/2+y)*260+(260-dw)/2;
+        if(y && rows[y]==rows[y-1]){std::memcpy(destination,destination-260,dw*4);continue;}
+        const auto* source=bytes+size_t(rows[y])*pitch;
+        for(unsigned x=0;x<dw;++x){
+        uint32_t argb=0;std::memcpy(&argb,source+size_t(columns[x])*4,4);
         // Display stored RGB opaquely; intermediate render-target alpha remains
         // intact in owned storage and is not recomposited by this preview.
-        exe_draw_preview[((180-dh)/2+y)*260+(260-dw)/2+x]=
+        destination[x]=
             0xFF000000u | ((argb&255u)<<16) | (argb&0xFF00u) | ((argb>>16)&255u);
+        }
     }
     exe_draw_width=view_width;exe_draw_height=view_height;exe_draw_ready=true;
     fprintf(log,"startup_d3d8_draw_capture=ready viewport:%u,%u,%u,%u preview:260x180 scope:%s\n",x0,y0,view_width,view_height,replace?"presented_backbuffer_rgb":"first_quad_rgb_not_present");

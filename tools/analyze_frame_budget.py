@@ -52,7 +52,7 @@ def analyze(text):
         match=re.match(r'startup_frame_cycle_elapsed_us=(\d+) cycle:(\d+)',line)
         if match:
             duration=int(match[1])
-            if active['presents']==1 and 0<duration<=210000000:
+            if active['presents']==1 and 0<duration<=330000000:
                 rest=duration-active['draw_us']-active['present_us']
                 samples.append(dict(cycle=int(match[2]),cycle_us=duration,
                                     draw_us=active['draw_us'],present_us=active['present_us'],
@@ -67,6 +67,8 @@ def analyze(text):
                 remaining_scope='guest_other_bridges_timer_and_diagnostics_not_pure_jit',
                 all=summarize(samples),
                 menu=summarize([s for s in samples if s['scene']=='0X00658308']),
+                scenes={v:summarize([s for s in samples if s['scene']==v])
+                        for v in sorted({s['scene'] for s in samples if s['scene']})},
                 excluded_no_multi_present_or_invalid=excluded,
                 incomplete_cycles=incomplete,samples=samples)
 

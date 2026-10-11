@@ -5,11 +5,16 @@
 #include <string>
 #include <vector>
 
-namespace pad_stub {SceCtrlData pad{};unsigned peeks=0;int result=1;}
+namespace pad_stub {SceCtrlData pad{};std::vector<SceCtrlData> history;uint64_t stamp=0;unsigned peeks=0;int result=1;}
 int sceCtrlSetSamplingMode(SceCtrlPadInputMode mode){assert(mode==SCE_CTRL_MODE_ANALOG_WIDE);return 0;}
 int sceCtrlPeekBufferPositive(int port,SceCtrlData* pad,int count){
-    assert(port==0 && count==1);++pad_stub::peeks;
-    if(pad_stub::result==1)*pad=pad_stub::pad;
+    assert(port==0 && count==64);++pad_stub::peeks;
+    if(!pad_stub::history.empty()) {
+        assert(pad_stub::history.size()<=64);
+        std::copy(pad_stub::history.begin(),pad_stub::history.end(),pad);
+        return int(pad_stub::history.size());
+    }
+    if(pad_stub::result==1){*pad=pad_stub::pad;pad->timeStamp=++pad_stub::stamp;}
     return pad_stub::result;
 }
 class HostCpu final:public d2rt::Cpu {
@@ -31,7 +36,7 @@ struct Fixture {
     static constexpr uint32_t out=0x00900000,stack=0x009F0000,ret=0x0040710E;
     HostCpu cpu;FILE* log=std::tmpfile();DirectInput8Bridge input{cpu,log};
     Fixture(bool acquire=true){
-        assert(log);pad_stub::pad={};pad_stub::result=1;
+        assert(log);pad_stub::pad={};pad_stub::result=1;pad_stub::history.clear();pad_stub::stamp=0;
         const uint32_t iid[]={0xBF798030,0x4DA2483A,0x645D99AA,0x009736ED},
             guid[]={0x6F1D2B61,0x11CFD5A0,0x4544C7BF,0x00005453},
             key[]={0x55728220,0x11CFD33C,0x4544C7BF,0x00005453};
@@ -116,7 +121,7 @@ int main(){
     }
     {
         Fixture f;std::memset(f.cpu.hostptr(Fixture::out+0x400,256),0xA5,256);
-        for(int rc:{0,-123}){pad_stub::result=rc;f.call(false,25,{},StartupServiceResult::ContractFailure);}
+        for(int rc:{0,-123,65}){pad_stub::result=rc;f.call(false,25,{},StartupServiceResult::ContractFailure);}
         for(unsigned i=0;i<256;++i)assert(f.cpu.bytes[Fixture::out+0x400+i]==0xA5);
         pad_stub::result=1;puts("PASS native sampling failure refuses the call without consuming its frame or output");
     }
@@ -132,6 +137,25 @@ int main(){
         const auto trace=f.trace();assert(trace.find("startup_dinput_bindings=")!=std::string::npos);
         assert(trace.find("scan:0x2C down:1")!=std::string::npos && trace.find("scan:0x2C down:0")!=std::string::npos);
         puts("PASS delivered key edges and configured mapping logged; menu and combat responses require Vita");
+    }
+    {
+        Fixture f;SceCtrlData off{},on{};off.timeStamp=10;on.timeStamp=11;on.buttons=SCE_CTRL_CROSS;
+        SceCtrlData release=off;release.timeStamp=12;pad_stub::history={release,on,off};
+        assert(f.snapshot()[0x2C]==0x80);
+        assert(f.snapshot()[0x2C]==0); // Same history cannot replay its edge.
+        f.input.report_usage();const auto trace=f.trace();
+        assert(trace.find("short_presses:0x00004000")!=std::string::npos);
+        assert(trace.find("cross_presses:1 circle_presses:0 short_polls:1")!=std::string::npos);
+        puts("PASS short Cross tap between guest polls reaches Z once through shipping COM bridge");
+    }
+    {
+        Fixture f;SceCtrlData on{},off{};on.timeStamp=10;on.buttons=SCE_CTRL_CIRCLE;
+        off.timeStamp=11;pad_stub::history={on,off};
+        assert(f.snapshot()[0x2D]==0x80);
+        assert(f.call(false,8,{})==0 && f.call(false,7,{})==0);
+        assert(f.call(false,9,{256,Fixture::out+0x400})==0);
+        assert(!f.cpu.bytes[Fixture::out+0x400+0x2D]);
+        puts("PASS reacquire discards old action history and preserves keyboard ABI");
     }
     {
         Fixture f;

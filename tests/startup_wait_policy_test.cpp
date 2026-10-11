@@ -67,10 +67,11 @@ int main() {
 
     for(unsigned i=0;i<=8;++i)assert(slice_cap(i)==32+4*i);
     assert(slice_cap(100)==64);
-    assert(startup_limits::present_frames==360 && startup_limits::frame_wait_resumes==361);
+    assert(startup_limits::present_frames==1800 && startup_limits::frame_wait_resumes==1801);
     assert(startup_limits::frame_wait_resumes==startup_limits::present_frames+1);
-    assert(startup_limits::draw_calls==12288 && startup_limits::draw_pixels==768u*1024u*1024u);
-    assert(startup_limits::audio_trap_dispatches==1024);
+    assert(startup_limits::draw_calls==65536 && startup_limits::draw_pixels==768u*1024u*1024u);
+    assert(startup_limits::audio_trap_dispatches==8192);
+    assert(startup_limits::time_cap_us==300000000 && startup_limits::watchdog_timeout_us==330000000);
     assert(startup_limits::time_cap_us<startup_limits::watchdog_timeout_us);
     assert(slice_cap(startup_limits::frame_wait_resumes)==64);
     Event frame{false,false};

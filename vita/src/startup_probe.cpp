@@ -3,6 +3,7 @@
 #include "startup_resume_policy.h"
 #include "startup_limits.h"
 #include "frame_budget.h"
+#include "scene_trace.h"
 #include "guest_string_probe.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
@@ -34,7 +35,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration92-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration93-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -100,7 +101,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration92\n");
+        fprintf(report_, "watchdog_revision=iteration93\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -558,6 +559,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
     unsigned frame_wait_resumes=0;
     th075::FrameBudget frame_budget;
+    th075::SceneTrace scene_trace;
+    const char* session_stop_reason="boundary";
+    th075::diagnostic_log(log,"startup_session_limits=present:%u waits:%u time_us:%llu watchdog_us:%llu draw_calls:%u scope:interactive_scene_handoff\n",startup_limits::present_frames,startup_limits::frame_wait_resumes,(unsigned long long)startup_limits::time_cap_us,(unsigned long long)startup_limits::watchdog_timeout_us,startup_limits::draw_calls);
     th075::diagnostic_log(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
     th075::diagnostic_log(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
     auto run_until_boundary=[&](uint32_t entry,uint64_t budget) {
@@ -787,10 +791,12 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
            !cpu.read(0x0068BE34,&timer_event,4) || timer_event!=worker.event ||
            !cpu.read(0x0066C23C,&period,4) || period!=worker.timeout_ms)break;
         if(tick>=startup_limits::frame_wait_resumes) {
+            session_stop_reason="frame_limit";
             th075::diagnostic_log(log,"startup_frame_wait_stop=resume_scope_limit resumes:%u maximum:%u scope:observed_original_wait\n",
                 frame_wait_resumes,startup_limits::frame_wait_resumes);break;
         }
         if(sceKernelGetProcessTimeWide()-start>=startup_limits::time_cap_us) {
+            session_stop_reason="time_limit";
             th075::diagnostic_log(log,"startup_frame_wait_stop=time_cap\n");break;
         }
         d2rt::X86Context saved{},restored{};cpu.save_context(saved);
@@ -811,6 +817,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
             vtable>=image.load_base() && uint64_t(vtable)+sizeof(methods)<=uint64_t(image.load_base())+image.image_size() &&
             cpu.read(vtable,methods,sizeof(methods))) {
             th075::diagnostic_log(log,"startup_frame_scene=object:0x%08X vtable:0x%08X update:0x%08X draw:0x%08X scope:observed_guest_object\n",scene,vtable,methods[1],methods[2]);
+            scene_trace.observe(scene,vtable,methods[1],methods[2],d3d8.present_count(),log);
             uint16_t age=0;
             if(vtable==0x00657BE0 && cpu.read(scene+0xC,&age,2))
                 th075::diagnostic_log(log,"startup_frame_logo_age=%u transition_after:0 scope:user_requested_menu_boot\n",unsigned(age));
@@ -860,6 +867,14 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         th075::diagnostic_log(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)frame_elapsed,frame_wait_resumes);
     }
     frame_budget.log(log);
+    scene_trace.log(log);
+    input.report_usage();
+    if(service_failed)session_stop_reason="contract_failure";
+    else if(!worker_ok)session_stop_reason="worker_failure";
+    else if(limit)session_stop_reason="cpu_budget";
+    else if(!stopped)session_stop_reason="cpu_fault";
+    else if(d3d8.present_count()>=startup_limits::present_frames)session_stop_reason="frame_limit";
+    th075::diagnostic_log(log,"startup_session_stop_reason=%s\n",session_stop_reason);
     sound.shutdown_playback();
     if(!sound.healthy()){service_failed=true;expected_boundary=false;th075::diagnostic_log(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");}
     th075::diagnostic_log(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);

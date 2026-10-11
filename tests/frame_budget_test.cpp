@@ -20,7 +20,12 @@ int main() {
     for(unsigned i=0;i<FrameBudget::capacity;++i)assert(full.observe(210000000u,1));
     assert(!full.observe(1,1));r=full.report();
     assert(r.frames==512 && r.dropped==1 && r.total_us==uint64_t(512)*210000000u && r.within_budget==0);
+    assert(r.all_frames==513 && r.all_within==1 && r.all_total_us==r.total_us+1);
     puts("PASS bounded storage and 64-bit duration accumulation without allocation");
+    FrameBudget longer;
+    assert(longer.observe(330000000u,1) && !longer.observe(330000001u,1));
+    assert(longer.report().all_frames==1 && longer.report().invalid==1);
+    puts("PASS longer session keeps full-cycle totals and explicit bounded quantile sampling");
     FrameBudget ranks;for(unsigned i=100;i;--i)assert(ranks.observe(i,1));
     r=ranks.report();assert(r.p50_us==50 && r.p95_us==95 && r.p99_us==99);
     assert(ranks.report().total_us==5050 && ranks.observe(101,1));

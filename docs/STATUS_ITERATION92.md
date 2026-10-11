@@ -116,3 +116,10 @@ con validación de alpha, filtro, blend, orden, uploads y ownership. El renderer
 CPU queda como referencia de píxeles y fallback. Cualquier nuevo pool deberá
 usar contexto pthread registrado o sincronización kernel y validación física
 antes de activarse; no se reactiva la ruta que falló en 87–89.
+
+## Resultado físico recibido
+
+360 Present, 49,215 s total, 19,421 s raster y fin por 361 esperas. Sin excepción;
+337 ciclos menú a 121,707 ms/8,216 frames/s. Capturas 7–10 FPS instantáneos.
+Usuario: Cross en opciones produce negro y diagnóstico. Este log sólo registra
+flechas y logo/título; no demuestra esa transición. [Seguimiento 93](STATUS_ITERATION93.md).

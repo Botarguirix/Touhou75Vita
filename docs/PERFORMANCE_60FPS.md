@@ -5,6 +5,19 @@ presupuesto de aproximadamente **16,7 ms/frame**, respuesta de controles y
 sonido estable en combate. Una captura del menú o una media de microbenchmark
 no acepta el juego de pelea. Todavía no se alcanzó ni se verificó ese objetivo.
 
+## Actualización física 92 y prueba 93
+
+La 92 completó 360 Present en 49,215 s, con 19,421 s de dibujo. En 337 ciclos
+de menú: 121,707 ms/8,216 frames por segundo; dibujo 54,122 ms, Present/captura
+35,147 ms y resto 32,438 ms. 0/337 cumplieron 16,667 ms. Cambian selección/input
+entre corridas; el menor raster no demuestra un FPS total mayor.
+
+El usuario informa negro al confirmar Cross. El log recibido no registra Z ni
+salida del título, y termina por el límite normal. La 93 registra esa transición,
+conserva taps breves, amplía la prueba a 1800 Present/300 s y reduce divisiones
+del preview. El objetivo de 60 FPS y el combate físico siguen pendientes.
+[Prueba 93](STATUS_ITERATION93.md) · [Recursos y ruta jugable](PLAYABLE_PATH.md).
+
 ## Requisitos originales publicados para PC
 
 | Recurso | Mínimo | Recomendado |

@@ -1,4 +1,5 @@
 #pragma once
+#include "pad_history.h"
 #include "startup_services.h"
 #include "runtime/cpu.h"
 #include <psp2/ctrl.h>
@@ -26,6 +27,9 @@ public:
         return n[(t-keyboard_trap)/16];
     }
     unsigned serviced_calls() const {return calls_;}
+    void report_usage() const {
+        fprintf(log_,"startup_dinput_summary=snapshots:%u cross_presses:%u circle_presses:%u short_polls:%u history_capacity:64 confirm:cross_Z cancel:circle_X\n",samples_,cross_presses_,circle_presses_,short_polls_);
+    }
     StartupServiceResult create() {
         uint32_t w[6]{};const uint32_t esp=cpu_.reg(d2rt::R_ESP);
         if(!frame(esp,sizeof(w)) || !cpu_.read(esp,w,sizeof(w)))return failure();
@@ -43,6 +47,7 @@ public:
         if(!output(w[4],root))return failure();
         fprintf(log_,"startup_dinput_root=owned object=0x%08X vtable_readback=passed\n",root);
         fprintf(log_,"startup_dinput_scope=native_pad_snapshot_keyboard_adapter joystick_callbacks_pending\n");
+        fprintf(log_,"startup_dinput_history_policy=nonblocking_peek64 timestamp_dedup action_tap_latch movement:latest no_native_worker\n");
         fprintf(log_,"startup_dinput_bindings=dpad_left_stick:arrows cross:Z circle:X square:C triangle:A start:Return select:Escape L:LeftShift R:Space\n");
         return finish(0,sizeof(w),w[0],esp);
     }
@@ -117,8 +122,8 @@ public:
                 cooperative_=true;fprintf(log_,"startup_dinput_cooperative=owned_window_nonexclusive_background_nowinkey\n");
             } else if(slot==7) {
                 if(!configured_ || !cooperative_)hr=0x80070057;
-                else {if(!sample())return failure();acquired_=true;snapshot_pending_=true;}
-            } else if(slot==8) {acquired_=false;snapshot_pending_=false;}
+                else {if(!acquired_)history_.reset();if(!sample())return failure();acquired_=true;snapshot_pending_=true;}
+            } else if(slot==8) {acquired_=false;snapshot_pending_=false;history_.reset();}
             else if(slot==9) {
                 if(w[2]!=256)return unsupported();
                 if(!acquired_)hr=0x8007000C; // DIERR_NOTACQUIRED
@@ -128,6 +133,8 @@ public:
                     fprintf(log_,"startup_dinput_keyboard_state=bytes:256 snapshot:%u native_buttons:0x%08X analog:%u,%u\n",samples_,pad_.buttons,pad_.lx,pad_.ly);
                     for(unsigned key=0;key<keys_.size();++key)if(keys_[key]!=delivered_[key])
                         fprintf(log_,"startup_dinput_key=scan:0x%02X down:%u snapshot:%u\n",key,keys_[key]?1u:0u,samples_);
+                    if(keys_[0x2C] && !delivered_[0x2C])++cross_presses_;
+                    if(keys_[0x2D] && !delivered_[0x2D])++circle_presses_;
                     delivered_=keys_;
                 }
             } else if(slot==25) {
@@ -152,18 +159,21 @@ private:
         return cpu_.write(p,a.data(),count*4) && cpu_.read(p,b.data(),count*4) && a==b;
     }
     bool sample() {
-        SceCtrlData next{};const int rc=sceCtrlPeekBufferPositive(0,&next,1);
-        if(rc!=1) {keys_.fill(0);pad_={};fprintf(log_,"startup_dinput_sample_error=rc:0x%08X neutralized:yes\n",unsigned(rc));return false;}
-        pad_=next;++samples_;keys_.fill(0);
+        std::array<SceCtrlData,th075::PadHistory::capacity> native{};
+        const int rc=sceCtrlPeekBufferPositive(0,native.data(),int(native.size()));
+        if(rc<1 || rc>int(native.size())) {keys_.fill(0);pad_={};fprintf(log_,"startup_dinput_sample_error=rc:0x%08X neutralized:yes\n",unsigned(rc));return false;}
+        const auto snapshot=history_.observe(native.data(),unsigned(rc));
+        pad_=snapshot.latest;const uint32_t buttons=snapshot.buttons;++samples_;keys_.fill(0);
+        if(snapshot.short_presses){++short_polls_;fprintf(log_,"startup_dinput_history=short_presses:0x%08X latest_buttons:0x%08X fresh:%u capacity:64 snapshot:%u scope:one_guest_poll_action_latch\n",snapshot.short_presses,pad_.buttons,snapshot.fresh,samples_);}
         auto bind=[&](bool held,unsigned key){if(held)keys_[key]=0x80;};
         bind((pad_.buttons&SCE_CTRL_UP)||pad_.ly<64,0xC8);
         bind((pad_.buttons&SCE_CTRL_DOWN)||pad_.ly>192,0xD0);
         bind((pad_.buttons&SCE_CTRL_LEFT)||pad_.lx<64,0xCB);
         bind((pad_.buttons&SCE_CTRL_RIGHT)||pad_.lx>192,0xCD);
-        bind(pad_.buttons&SCE_CTRL_CROSS,0x2C);bind(pad_.buttons&SCE_CTRL_CIRCLE,0x2D);
-        bind(pad_.buttons&SCE_CTRL_SQUARE,0x2E);bind(pad_.buttons&SCE_CTRL_TRIANGLE,0x1E);
-        bind(pad_.buttons&SCE_CTRL_START,0x1C);bind(pad_.buttons&SCE_CTRL_SELECT,0x01);
-        bind(pad_.buttons&SCE_CTRL_LTRIGGER,0x2A);bind(pad_.buttons&SCE_CTRL_RTRIGGER,0x39);
+        bind(buttons&SCE_CTRL_CROSS,0x2C);bind(buttons&SCE_CTRL_CIRCLE,0x2D);
+        bind(buttons&SCE_CTRL_SQUARE,0x2E);bind(buttons&SCE_CTRL_TRIANGLE,0x1E);
+        bind(buttons&SCE_CTRL_START,0x1C);bind(buttons&SCE_CTRL_SELECT,0x01);
+        bind(buttons&SCE_CTRL_LTRIGGER,0x2A);bind(buttons&SCE_CTRL_RTRIGGER,0x39);
         if(samples_==1)fprintf(log_,"startup_dinput_native_sample=passed buttons:0x%08X analog:%u,%u\n",pad_.buttons,pad_.lx,pad_.ly);
         return true;
     }
@@ -179,6 +189,8 @@ private:
     }
     static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
     StartupServiceResult unsupported(){fprintf(log_,"startup_dinput_method_executed=no\n");return StartupServiceResult::Unsupported;}
+    th075::PadHistory history_;
+    unsigned cross_presses_=0,circle_presses_=0,short_polls_=0;
     d2rt::Cpu& cpu_;FILE* log_;uint32_t root_refs_=0,keyboard_refs_=0,samples_=0;unsigned calls_=0;
     bool configured_=false,cooperative_=false,acquired_=false,snapshot_pending_=false;
     SceCtrlData pad_{};std::array<uint8_t,256> keys_{},delivered_{};

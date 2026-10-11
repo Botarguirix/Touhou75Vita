@@ -48,6 +48,15 @@ class BudgetAnalysis(unittest.TestCase):
         self.assertEqual(result['all']['timing_overlap_cycles'],1)
         self.assertEqual(result['all']['remaining_mean_us'],0)
 
+    def test_scene_groups_and_long_session_bound(self):
+        data='startup_frame_scene=object:0x00C00000 vtable:0x00658308\n'+cycle(10000)
+        data+='startup_frame_scene=object:0x00C10000 vtable:0x00658400\n'+cycle(330000000)
+        result=budget.analyze(data)
+        self.assertEqual(result['menu']['frames'],1)
+        self.assertEqual(result['scenes']['0X00658400']['frames'],1)
+        self.assertEqual(result['all']['frames'],2)
+        self.assertEqual(budget.analyze(cycle(330000001))['all']['frames'],0)
+
 
 if __name__=='__main__':
     unittest.main()

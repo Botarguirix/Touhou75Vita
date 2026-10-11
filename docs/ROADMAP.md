@@ -1,4 +1,24 @@
-# Roadmap actual — iteración 92
+# Roadmap actual — iteración 93
+
+Física 92 completó 360 Present y terminó por límite de prueba. Raster: 19,42 s;
+menú: 121,71 ms de ciclo medio, 8,22 frames/s, 0/337 dentro de 16,7 ms. El usuario
+reporta negro al confirmar; el log recibido sólo muestra flechas y logo/título.
+La 93 amplía sesión/input/seguimiento y reduce el trabajo de miniatura.
+
+1. Verificar Cross/Z y entrada real a Practice/selección; resolver la frontera
+   de API, geometría, carga o recursos observada, con 320×240 provisional.
+2. Llegar a combate básico y validar controles, HUD, sonido y estabilidad.
+3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
+4. Reducir guest/otras APIs/scheduler: el resto físico 92 es 32,44 ms por ciclo.
+5. Verificar 60 actualizaciones/frames por segundo y después recuperar calidad.
+
+147 grupos C++ y 6 pruebas Python locales; build/paquete 93 comprobados.
+La corrida física 93 y combate jugable siguen pendientes.
+[Recursos y fases](PLAYABLE_PATH.md) · [Reporte 93](STATUS_ITERATION93.md).
+
+## Historial de la 92
+
+## Plan previo — iteración 92
 
 Física 91 completó menú y 360 Present sin excepción: 47,83 s total y
 23,91 s de raster CPU, frente a 142,44 / 86,69 s de la 90. Captura: 9 FPS;
