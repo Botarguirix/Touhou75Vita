@@ -9,23 +9,91 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   endif()
 endif()
 
-project(touhou75_vita C)
+project(touhou75_vita C CXX)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Diagnostic")
+# A blank build type left the software pixel loops unoptimized in 75.
+# Keep explicit Debug/Release choices; use strict -O2 with symbols by default.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build configuration" FORCE)
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
+
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 87 Parallel Raster")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.00")
+set(VITA_VERSION "01.91")
+# vita-mksfoex also writes NAME into the 52-byte STITLE field.
+# Reserve one byte for its NUL terminator before generating the package.
+string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
+if(VITA_APP_NAME_BYTES GREATER 51)
+  message(FATAL_ERROR "VITA_APP_NAME exceeds the 51-byte STITLE limit")
+endif()
+
+set(WINVITA_ARCHIVE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/build-vita/libwinx86_vita.a")
+if(NOT EXISTS "${WINVITA_ARCHIVE}")
+  message(FATAL_ERROR
+    "WinVita ARMv7 runtime archive is missing. Run TARGET=vita third_party/winvita/build.sh first.")
+endif()
+add_library(winx86_vita STATIC IMPORTED GLOBAL)
+set_target_properties(winx86_vita PROPERTIES IMPORTED_LOCATION "${WINVITA_ARCHIVE}")
 
 add_executable(${PROJECT_NAME}
-  src/main.c
+  src/main.cpp
+  src/import_smoke.cpp
+  src/service_smoke.cpp
+  src/thread_smoke.cpp
+  src/startup_probe.cpp
+  src/worker_probe.cpp
+  src/startup_services.cpp
+  src/sha256.cpp
+  src/diagnostic_screen.cpp
 )
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -fno-fast-math -ffp-contract=off)
+# VitaSDK's linker script reserves this gap before the next load segment.
+# vita-elf-create appends SCE module/import metadata to the code segment;
+# page alignment alone can leave too little space as the executable grows.
+target_link_options(${PROJECT_NAME} PRIVATE
+  "LINKER:--defsym=__sce_headroom=0x10000"
+)
+target_include_directories(${PROJECT_NAME} PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/src"
+)
 target_link_libraries(${PROJECT_NAME}
+  winx86_vita
+  pthread
+  m
   SceIofilemgr_stub
+  SceLibKernel_stub
+  SceKernelThreadMgr_stub
+  SceProcessmgr_stub
+  SceSysmem_stub
+  SceDisplay_stub
+  SceCtrl_stub
+  SceAudio_stub
+  SceRtc_stub
 )
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
+set(VITA_LIVEAREA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys" CACHE PATH
+  "Local generated LiveArea assets; game artwork stays outside Git")
+set(VITA_LIVEAREA_FILES)
+if(EXISTS "${VITA_LIVEAREA_DIR}/livearea/contents/template.xml")
+  foreach(ASSET icon0.png pic0.png livearea/contents/bg0.png
+                livearea/contents/startup.png livearea/contents/template.xml)
+    if(NOT EXISTS "${VITA_LIVEAREA_DIR}/${ASSET}")
+      message(FATAL_ERROR "LiveArea asset missing: ${ASSET}")
+    endif()
+    list(APPEND VITA_LIVEAREA_FILES FILE "${VITA_LIVEAREA_DIR}/${ASSET}" "sce_sys/${ASSET}")
+  endforeach()
+else()
+  message(STATUS "Local LiveArea art absent: building diagnostic package without artwork")
+endif()
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME "${VITA_APP_NAME}"
+  ${VITA_LIVEAREA_FILES}
 )

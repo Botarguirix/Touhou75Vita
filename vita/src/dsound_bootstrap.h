@@ -1,0 +1,372 @@
+#pragma once
+#include "startup_services.h"
+#include "runtime/cpu.h"
+#include "dsound_pcm_mixer.h"
+#include <psp2/audioout.h>
+#include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/processmgr.h>
+#include <array>
+#include <limits>
+#include <vector>
+#include <algorithm>
+#include <new>
+#include <mutex>
+#include <atomic>
+#include <cstring>
+
+// Restricted original TH075 COM activation and native audio-port ownership.
+// PCM storage belongs to the original EXE; output never opens or selects a DAT.
+class DirectSoundBootstrap {
+public:
+    static constexpr uint32_t object=0x00AD1000, vtable=object+0x100, trap_base=0x00BF6000,
+        primary=0x00AD2000,primary_table=primary+0x100,primary_trap=0x00BF5000,
+        secondary=0x00AE0000,secondary_table=0x00AE1000,secondary_trap=0x00BF4000,
+        pcm_staging=0x01800000,pcm_capacity=0x00400000;
+    DirectSoundBootstrap(d2rt::Cpu& cpu,FILE* log):cpu_(cpu),log_(log) {}
+    ~DirectSoundBootstrap(){close_port();}
+    bool owns(uint32_t t)const{return (t>=trap_base && t<trap_base+12*16 && (t-trap_base)%16==0) || (t>=primary_trap && t<primary_trap+21*16 && (t-primary_trap)%16==0) || (t>=secondary_trap && t<secondary_trap+24*16 && (t-secondary_trap)%16==0);}
+    const char* interface_name(uint32_t t)const{return t< trap_base?"IDirectSoundBuffer":"IDirectSound8";}
+    const char* method_name(uint32_t t)const{
+        if(t<trap_base){static const char* names[]={"QueryInterface","AddRef","Release","GetCaps","GetCurrentPosition","GetFormat","GetVolume","GetPan","GetFrequency","GetStatus","Initialize","Lock","Play","SetCurrentPosition","SetFormat","SetVolume","SetPan","SetFrequency","Stop","Unlock","Restore","SetFX","AcquireResources","GetObjectInPath"};return names[(t-(t<primary_trap?secondary_trap:primary_trap))/16];}
+        static const char* names[]={"QueryInterface","AddRef","Release","CreateSoundBuffer","GetCaps","DuplicateSoundBuffer","SetCooperativeLevel","Compact","GetSpeakerConfig","SetSpeakerConfig","Initialize","VerifyCertification"};
+        return names[(t-trap_base)/16];
+    }
+    unsigned serviced_calls()const{return calls_;}
+    bool playback_active(){std::lock_guard<std::mutex> guard(audio_mutex_);for(const auto& b:buffers_)if(b.refs && b.playing)return true;return false;}
+    bool refill_dispatch_safe()const{return locked_handle_==0;}
+    bool healthy()const{return audio_error_.load(std::memory_order_acquire)>=0;}
+    void shutdown_playback(){
+        if(audio_thread_<0)return;
+        quit_.store(true,std::memory_order_release);
+        const int wait=sceKernelWaitThreadEnd(audio_thread_,nullptr,nullptr);
+        fprintf(log_,"startup_dsound_output_join_rc=0x%08X\n",unsigned(wait));
+        // Do not release the object while an unjoined output thread may use it.
+        if(wait<0)sceKernelExitProcess(1);
+        const int deleted=sceKernelDeleteThread(audio_thread_);audio_thread_=-1;
+        fprintf(log_,"startup_dsound_output_delete_rc=0x%08X\n",unsigned(deleted));
+        if(deleted<0)audio_error_.store(deleted,std::memory_order_release);
+        std::lock_guard<std::mutex> guard(audio_mutex_);
+        dsound_pcm::positions(buffers_,0);
+        for(auto& b:buffers_)if(b.refs)dsound_pcm::stop(b);
+        fprintf(log_,"startup_dsound_output_summary=blocks:%llu nonzero_samples:%llu first_fnv1a:0x%08X first_peak:%u max_fill_us:%llu rc:0x%08X drain_rc:0x%08X scope:original_guest_pcm_native_output audible:pending_user\n",
+            (unsigned long long)output_blocks_,(unsigned long long)nonzero_samples_,first_hash_,first_peak_,
+            (unsigned long long)max_fill_us_,unsigned(audio_error_.load()),unsigned(drain_rc_));
+        fprintf(log_,"startup_dsound_output_timing=max_submit_interval_us:%llu intervals_over_two_blocks:%llu max_native_call_us:%llu max_mutex_wait_us:%llu inactive_blocks:%llu silent_blocks:%llu block_period_us:21333 scope:host_clock_not_hardware_underrun_counter\n",
+            (unsigned long long)max_submit_interval_us_,(unsigned long long)late_submit_intervals_,
+            (unsigned long long)max_native_call_us_,(unsigned long long)max_mutex_wait_us_,
+            (unsigned long long)inactive_blocks_,(unsigned long long)silent_blocks_);
+    }
+    StartupServiceResult create(bool apartment_ready){
+        uint32_t w[6]{};const uint32_t esp=cpu_.reg(d2rt::R_ESP);
+        if(!frame(esp,sizeof(w)) || !cpu_.read(esp,w,sizeof(w)))return failure();
+        Guid clsid{},iid{};
+        if(!guid(w[1],clsid) || !guid(w[4],iid) || !write(w[5],0u))return failure();
+        fprintf(log_,"startup_dsound_create=clsid:%08X-%08X-%08X-%08X iid:%08X-%08X-%08X-%08X outer:0x%08X context:%u output:0x%08X apartment:%s\n",clsid[0],clsid[1],clsid[2],clsid[3],iid[0],iid[1],iid[2],iid[3],w[2],w[3],w[5],apartment_ready?"ready":"missing");
+        if(!apartment_ready)return finish(0x800401F0,sizeof(w),w[0],esp);
+        if(clsid!=sound_clsid || iid!=sound_iid || w[2] || w[3]!=3 || refs_)return unsupported();
+        if(!cpu_.map(object,0x1000,nullptr,d2rt::P_RW))return failure();
+        std::array<uint32_t,12> table{},check{};
+        for(unsigned i=0;i<table.size();++i)table[i]=trap_base+16*i;
+        if(!cpu_.write(vtable,table.data(),sizeof(table)) || !cpu_.read(vtable,check.data(),sizeof(check)) || table!=check || !write(object,vtable) || !write(w[5],object))return failure();
+        refs_=1;
+        fprintf(log_,"startup_dsound_root=owned vtable_readback=passed initialized:no playback:no\n");
+        return finish(0,sizeof(w),w[0],esp);
+    }
+    StartupServiceResult call(uint32_t t){
+        if(!healthy()){fprintf(log_,"startup_dsound_async_error=0x%08X\n",unsigned(audio_error_.load()));return failure();}
+        if(t<primary_trap)return secondary_call(t);
+        if(t<trap_base)return primary_call(t);
+        const unsigned slot=(t-trap_base)/16;
+        static const unsigned argc[]={3,1,1,4,2,3,3,1,2,2,2,2};
+        const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=4*(argc[slot]+1);
+        uint32_t w[5]{},table=0;
+        fprintf(log_,"startup_dsound_method=IDirectSound8::%s slot=%u\n",method_name(t),slot);
+        if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || !refs_ || w[1]!=object || !cpu_.read(object,&table,4) || table!=vtable)return failure();
+        for(unsigned i=1;i<=argc[slot];++i)fprintf(log_,"startup_dsound_arg%u=0x%08X\n",i-1,w[i]);
+        uint32_t hr=0;
+        if(slot==0){
+            Guid iid{};if(!guid(w[2],iid))return failure();
+            const bool match=iid==unknown_iid || iid==sound_iid;
+            if(match && refs_==std::numeric_limits<uint32_t>::max())return failure();
+            if(!write(w[3],match?object:0u))return failure();
+            if(match)++refs_;else hr=0x80004002;
+        }else if(slot==1){
+            if(refs_==std::numeric_limits<uint32_t>::max())return failure();
+            hr=++refs_;
+        }else if(slot==2){
+            hr=--refs_;
+            if(!refs_){if(!write(object,0u))return failure();close_port();cooperative_=false;}
+        }else if(slot==10){
+            if(w[2])return unsupported(); // Only the original default playback request.
+            if(port_>=0)hr=0x88780082; // DSERR_ALREADYINITIALIZED
+            else{
+                port_=sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN,1024,48000,SCE_AUDIO_OUT_MODE_STEREO);
+                fprintf(log_,"startup_dsound_native_open_rc=0x%08X\n",unsigned(port_));
+                if(port_<0)return failure();
+                const int len=sceAudioOutGetConfig(port_,SCE_AUDIO_OUT_CONFIG_TYPE_LEN);
+                const int freq=sceAudioOutGetConfig(port_,SCE_AUDIO_OUT_CONFIG_TYPE_FREQ);
+                const int mode=sceAudioOutGetConfig(port_,SCE_AUDIO_OUT_CONFIG_TYPE_MODE);
+                fprintf(log_,"startup_dsound_native_config=frames:%d hz:%d mode:%d playback:no\n",len,freq,mode);
+                if(len!=1024 || freq!=48000 || mode!=SCE_AUDIO_OUT_MODE_STEREO){close_port();return failure();}
+                fprintf(log_,"startup_dsound_native_port=owned readback:passed\n");
+            }
+        }else if(slot==6){
+            if(port_<0)return failure();
+            if(w[2]!=0x00AB7000 || (w[3]!=1 && w[3]!=2))return unsupported();
+            cooperative_=true;
+            fprintf(log_,"startup_dsound_cooperative=owned_window level:%u\n",w[3]);
+        }else if(slot==3){
+            if(port_<0 || !cooperative_)return failure();
+            std::array<uint32_t,9> desc{};
+            if(w[2]<0x10000 || !cpu_.read(w[2],desc.data(),sizeof(desc)))return failure();
+            fprintf(log_,"startup_dsound_buffer_boundary=size:%u flags:0x%08X bytes:%u reserved:%u format:0x%08X output:0x%08X aggregate:0x%08X\n",desc[0],desc[1],desc[2],desc[3],desc[4],w[3],w[4]);
+            if(desc[0]==36 && desc[1]==0x00058080 && desc[2] && desc[4]) {
+                const auto result=allocate_secondary(desc,w);
+                return result==StartupServiceResult::Serviced?finish(0,cleanup,w[0],esp):result;
+            }
+            if(desc[0]!=36 || desc[1]!=0x00040001 || desc[2] || desc[3] || desc[4] || desc[5] || desc[6] || desc[7] || desc[8] || w[4] || primary_refs_)return unsupported();
+            if(refs_==std::numeric_limits<uint32_t>::max() || !cpu_.map(primary,0x1000,nullptr,d2rt::P_RW))return failure();
+            std::array<uint32_t,21> table{},check{};for(unsigned i=0;i<21;++i)table[i]=primary_trap+i*16;
+            if(!cpu_.write(primary_table,table.data(),sizeof(table)) || !cpu_.read(primary_table,check.data(),sizeof(check)) || table!=check || !write(primary,primary_table) || !write(w[3],primary))return failure();
+            primary_refs_=1;++refs_;
+            fprintf(log_,"startup_dsound_primary=owned_native_output_port vtable_readback:passed bytes:0 playback:no\n");
+        }else return unsupported();
+        return finish(hr,cleanup,w[0],esp);
+    }
+private:
+    dsound_pcm::Buffers buffers_{};unsigned buffer_count_=0;uint32_t pcm_used_=0,locked_handle_=0;
+    std::mutex audio_mutex_;std::atomic<bool> quit_{false};std::atomic<int> audio_error_{0};
+    SceUID audio_thread_=-1;uint64_t output_blocks_=0,nonzero_samples_=0,max_fill_us_=0;
+    uint64_t max_submit_interval_us_=0,late_submit_intervals_=0,max_native_call_us_=0,
+        max_mutex_wait_us_=0,inactive_blocks_=0,silent_blocks_=0;
+    uint32_t first_hash_=0,first_peak_=0;int drain_rc_=0;
+    static int output_entry(SceSize size,void* arg){
+        DirectSoundBootstrap* self=nullptr;
+        if(size!=sizeof(self) || !arg)return -1;
+        std::memcpy(&self,arg,sizeof(self));return self?self->output_loop():-1;
+    }
+    int output_loop(){
+        alignas(64) std::array<dsound_pcm::Block,2> blocks{};unsigned index=0;
+        uint64_t last_submit=0;
+        do {
+            dsound_pcm::Commit pending{};
+            const uint64_t before=sceKernelGetProcessTimeWide();
+            {
+                std::lock_guard<std::mutex> guard(audio_mutex_);
+                max_mutex_wait_us_=std::max(max_mutex_wait_us_,sceKernelGetProcessTimeWide()-before);
+                const int rest=sceAudioOutGetRestSample(port_);
+                if(rest<0){audio_error_.store(rest,std::memory_order_release);break;}
+                dsound_pcm::positions(buffers_,unsigned(rest));
+                if(!dsound_pcm::prepare(buffers_,blocks[index],pending))++inactive_blocks_;
+            }
+            const uint64_t submit=sceKernelGetProcessTimeWide();
+            max_fill_us_=std::max(max_fill_us_,submit-before);
+            if(last_submit){
+                const uint64_t interval=submit-last_submit;
+                max_submit_interval_us_=std::max(max_submit_interval_us_,interval);
+                // Queue depth and native blocking affect this interval. It is
+                // a scheduling clue, not proof of an audio hardware underrun.
+                if(interval>uint64_t(2)*dsound_pcm::block_frames*1000000/dsound_pcm::output_hz)
+                    ++late_submit_intervals_;
+            }
+            last_submit=submit;
+            const int rc=sceAudioOutOutput(port_,blocks[index].data());
+            max_native_call_us_=std::max(max_native_call_us_,sceKernelGetProcessTimeWide()-submit);
+            if(rc<0){audio_error_.store(rc,std::memory_order_release);break;}
+            {
+                std::lock_guard<std::mutex> guard(audio_mutex_);
+                dsound_pcm::commit(buffers_,pending);
+            }
+            uint32_t hash=2166136261u,peak=0;
+            for(const int16_t v:blocks[index]){
+                const uint16_t word=uint16_t(v);hash=(hash^uint8_t(word))*16777619u;hash=(hash^uint8_t(word>>8))*16777619u;
+                if(v)++nonzero_samples_;
+                peak=std::max(peak,uint32_t(v<0?-int(v):int(v)));
+            }
+            if(!output_blocks_){first_hash_=hash;first_peak_=peak;}
+            if(!peak)++silent_blocks_;
+            ++output_blocks_;index^=1;
+        }while(!quit_.load(std::memory_order_acquire));
+        drain_rc_=sceAudioOutOutput(port_,nullptr);
+        if(drain_rc_<0)audio_error_.store(drain_rc_,std::memory_order_release);
+        return audio_error_.load();
+    }
+    bool start_output(){
+        if(audio_thread_>=0)return healthy();
+        quit_.store(false,std::memory_order_release);
+        int volume[2]={SCE_AUDIO_OUT_MAX_VOL,SCE_AUDIO_OUT_MAX_VOL};
+        const int rc=sceAudioOutSetVolume(port_,static_cast<SceAudioOutChannelFlag>(SCE_AUDIO_VOLUME_FLAG_L_CH|SCE_AUDIO_VOLUME_FLAG_R_CH),volume);
+        fprintf(log_,"startup_dsound_output_volume_rc=0x%08X gain:guest_volume\n",unsigned(rc));
+        if(rc<0)return false;
+        audio_thread_=sceKernelCreateThread("th075_guest_pcm",output_entry,0x10000100,64*1024,0,0,nullptr);
+        fprintf(log_,"startup_dsound_output_thread_create_rc=0x%08X\n",unsigned(audio_thread_));
+        if(audio_thread_<0)return false;
+        auto* self=this;const int started=sceKernelStartThread(audio_thread_,sizeof(self),&self);
+        fprintf(log_,"startup_dsound_output_thread_start_rc=0x%08X\n",unsigned(started));
+        if(started<0){sceKernelDeleteThread(audio_thread_);audio_thread_=-1;return false;}
+        fprintf(log_,"startup_dsound_output_pipeline=guest_owned_pcm linear_48000_stereo blocks:1024 double_buffer:64byte_aligned cursor:submitted_minus_native_queue\n");
+        return true;
+    }
+    std::array<uint32_t,4> lock_spans_{};
+    static void put16(uint8_t* p,uint32_t v){p[0]=uint8_t(v);p[1]=uint8_t(v>>8);}
+    static void put32(uint8_t* p,uint32_t v){put16(p,v);put16(p+2,v>>16);}
+    bool output(uint32_t p,const void* value,uint32_t size){return p>=0x10000 && uint64_t(p)+size<=0x02000000 && cpu_.write(p,value,size);}
+    static uint16_t le16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
+    static uint32_t le32(const uint8_t* p){return uint32_t(le16(p))|uint32_t(le16(p+2))<<16;}
+    StartupServiceResult allocate_secondary(const std::array<uint32_t,9>& d,const uint32_t* w){
+        std::lock_guard<std::mutex> guard(audio_mutex_);
+        // PCM may use PCMWAVEFORMAT's 16-byte prefix. cbSize is ignored for
+        // WAVE_FORMAT_PCM; reading it can consume the following RIFF chunk.
+        // https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/ns-mmeapi-waveformatex
+        std::array<uint8_t,16> fmt{};
+        if(!cpu_.read(d[4],fmt.data(),fmt.size()))return failure();
+        const uint32_t tag=le16(fmt.data()),channels=le16(fmt.data()+2),hz=le32(fmt.data()+4),rate=le32(fmt.data()+8),align=le16(fmt.data()+12),bits=le16(fmt.data()+14);
+        fprintf(log_,"startup_dsound_pcm_format=tag:%u channels:%u hz:%u rate:%u align:%u bits:%u format_bytes_read:16 cbsize:%s\n",tag,channels,hz,rate,align,bits,tag==1?"ignored_pcm":"unsupported_format");
+        if(w[4] || d[3] || d[5] || d[6] || d[7] || d[8] || tag!=1 || (channels!=1 && channels!=2) ||
+            (bits!=8 && bits!=16) || hz<11025 || hz>48000 || align!=channels*bits/8 || rate!=hz*align ||
+            d[2]>pcm_capacity || d[2]%align || buffer_count_>=buffers_.size() || d[2]>16u*1024*1024-pcm_used_)return unsupported();
+        if(!buffer_count_){
+            if(!cpu_.hostptr(pcm_staging,pcm_capacity) || !cpu_.map(pcm_staging,pcm_capacity,nullptr,d2rt::P_RW) ||
+                !cpu_.map(secondary,0x2000,nullptr,d2rt::P_RW))return failure();
+            std::array<uint32_t,24> table{},check{};for(unsigned i=0;i<24;++i)table[i]=secondary_trap+i*16;
+            if(!cpu_.write(secondary_table,table.data(),sizeof(table)) || !cpu_.read(secondary_table,check.data(),sizeof(check)) || table!=check)return failure();
+        }
+        auto& b=buffers_[buffer_count_];try{b.bytes.assign(d[2],bits==8?128:0);}catch(const std::bad_alloc&){return failure();}
+        const uint32_t handle=secondary+buffer_count_*8;
+        if(!write(handle,secondary_table) || !write(w[3],handle))return failure();
+        b.refs=1;b.flags=d[1];b.channels=channels;b.hz=hz;b.original_hz=hz;b.bits=bits;b.align=align;
+        ++buffer_count_;++refs_;pcm_used_+=d[2];
+        fprintf(log_,"startup_dsound_secondary=owned handle:0x%08X bytes:%u buffers:%u used:%u playback:no\n",handle,d[2],buffer_count_,pcm_used_);
+        return StartupServiceResult::Serviced;
+    }
+    StartupServiceResult secondary_call(uint32_t t){
+        const unsigned slot=(t-secondary_trap)/16;
+        unsigned argc=0;switch(slot){case 0:argc=3;break;case 1:case 2:argc=1;break;case 3:case 6:case 7:case 8:case 9:case 13:case 15:case 16:case 17:argc=2;break;case 4:argc=3;break;case 5:case 12:argc=4;break;case 18:case 20:argc=1;break;case 11:argc=8;break;case 19:argc=5;break;default:return unsupported();}
+        uint32_t w[9]{},vt=0;const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=4*(argc+1);
+        fprintf(log_,"startup_dsound_method=IDirectSoundBuffer::%s secondary slot=%u\n",method_name(t),slot);
+        if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || w[1]<secondary || (w[1]-secondary)%8 ||
+            (w[1]-secondary)/8>=buffer_count_ || !cpu_.read(w[1],&vt,4) || vt!=secondary_table)return failure();
+        std::lock_guard<std::mutex> guard(audio_mutex_);
+        auto& b=buffers_[(w[1]-secondary)/8];if(!b.refs)return failure();uint32_t hr=0;
+        unsigned queued=0;
+        if(audio_thread_>=0){const int rest=sceAudioOutGetRestSample(port_);
+            if(rest<0){audio_error_.store(rest,std::memory_order_release);fprintf(log_,"startup_dsound_native_queue_rc=0x%08X\n",unsigned(rest));return failure();}
+            queued=unsigned(rest);dsound_pcm::positions(buffers_,queued);}
+        if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();const bool match=iid==unknown_iid || iid==buffer_iid || iid==buffer8_iid;
+            fprintf(log_,"startup_dsound_pcm_qi=iid:%08X-%08X-%08X-%08X supported:%s\n",iid[0],iid[1],iid[2],iid[3],match?"yes":"no");
+            if(match && b.refs==0xFFFFFFFFu)return failure();
+            if(!write(w[3],match?w[1]:0u))return failure();
+            if(match)++b.refs;else hr=0x80004002;
+        }else if(slot==1){if(b.refs==0xFFFFFFFFu)return failure();hr=++b.refs;
+        }else if(slot==2){if(locked_handle_==w[1])return unsupported();hr=--b.refs;
+            if(!b.refs){dsound_pcm::stop(b);pcm_used_-=b.bytes.size();std::vector<uint8_t>().swap(b.bytes);if(!write(w[1],0u) || !refs_)return failure();--refs_;}
+        }else if(slot==3){
+            uint32_t size=0;if(!cpu_.read(w[2],&size,4))return failure();
+            if(size!=20)hr=0x80070057;
+            else{std::array<uint32_t,5> caps={20,(b.flags&~0x40004u)|8u,uint32_t(b.bytes.size()),0,0};
+                if(!output(w[2],caps.data(),sizeof(caps)))return failure();}
+        }else if(slot==4){
+            const uint32_t next=dsound_pcm::write_cursor(b,queued);
+            if((w[2] && !write(w[2],b.position)) || (w[3] && !write(w[3],next)))return failure();
+            fprintf(log_,"startup_dsound_pcm_cursor=handle:0x%08X play:%u write:%u native_queued_frames:%u source:submitted_minus_native_queue block_resolution:1024 monotonic_phase:%llu\n",w[1],b.position,next,queued,(unsigned long long)b.played_phase);
+        }else if(slot==5){
+            std::array<uint8_t,18> fmt{};put16(fmt.data(),1);put16(fmt.data()+2,b.channels);
+            put32(fmt.data()+4,b.original_hz);put32(fmt.data()+8,b.original_hz*b.align);
+            put16(fmt.data()+12,b.align);put16(fmt.data()+14,b.bits);
+            if(!w[2]){if(!w[4])hr=0x80070057;else if(!write(w[4],18))return failure();}
+            else if(w[3]<18)hr=0x80070057;
+            else{if(!output(w[2],fmt.data(),fmt.size()) || (w[4] && !write(w[4],18)))return failure();}
+        }else if(slot==6 || slot==7 || slot==8){
+            const uint32_t cap=slot==6?0x80u:slot==7?0x40u:0x20u;
+            if(!(b.flags&cap))hr=0x8878001E; // DSERR_CONTROLUNAVAIL
+            else if(!write(w[2],slot==6?uint32_t(b.volume):slot==7?uint32_t(b.pan):b.hz))return failure();
+        }else if(slot==17){
+            if(!(b.flags&0x20u))hr=0x8878001E;
+            else if(w[2] && (w[2]<100 || w[2]>200000))hr=0x80070057;
+            else b.hz=w[2]?w[2]:b.original_hz;
+        }else if(slot==12){
+            fprintf(log_,"startup_dsound_play=handle:0x%08X reserved1:%u reserved2:%u flags:0x%08X bytes:%u hz:%u volume:%d\n",w[1],w[2],w[3],w[4],unsigned(b.bytes.size()),b.hz,b.volume);
+            if(w[2] || w[3] || w[4]>1 || locked_handle_==w[1])return unsupported();
+            // Repeating the observed flags must retain an in-flight commit.
+            // Switching loop mode mid-stream needs a separate end/queue anchor.
+            if(b.playing && b.looping!=(w[4]==1))return unsupported();
+            if(!b.playing)dsound_pcm::seek(b,b.position);
+            b.looping=w[4]==1;b.playing=true;
+            if(!start_output()){dsound_pcm::stop(b);return failure();}
+        }else if(slot==18){dsound_pcm::stop(b);
+        }else if(slot==20){ // No device-loss transition; retain owned samples.
+        }else if(slot==9){if(!write(w[2],b.playing?(1u|(b.looping?4u:0u)):0u))return failure();
+        }else if(slot==13){if(w[2]>=b.bytes.size() || w[2]%b.align)return unsupported();dsound_pcm::seek(b,w[2]);
+        }else if(slot==15 || slot==16){
+            if(!(b.flags&(slot==15?0x80u:0x40u)))return unsupported();
+            const int32_t v=int32_t(w[2]);if((slot==15 && (v>0 || v< -10000)) || (slot==16 && (v< -10000 || v>10000)))return unsupported();
+            if(slot==15)b.volume=v;else b.pan=v;
+        }else if(slot==11){
+            for(unsigned i=2;i<=8;++i)fprintf(log_,"startup_dsound_lock_arg%u=0x%08X\n",i-2,w[i]);
+            if(locked_handle_ || (w[8]!=0 && w[8]!=2))return unsupported();
+            // ENTIREBUFFER ignores the byte count, not the caller's offset.
+            // Original refill code writes into pointer 1 at successive 128 KiB
+            // offsets. Returning the ring start here overwrites earlier music.
+            // https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mt708932(v=vs.85)
+            const uint32_t offset=w[2],bytes=w[8]==2?uint32_t(b.bytes.size()):w[3];
+            if(offset>=b.bytes.size() || !bytes || bytes>b.bytes.size() || offset%b.align || bytes%b.align)return unsupported();
+            const uint32_t first=std::min(bytes,uint32_t(b.bytes.size())-offset),second=bytes-first;
+            if(second && (!w[6] || !w[7]))return failure();
+            if(!cpu_.write(pcm_staging,b.bytes.data(),b.bytes.size()) || !write(w[4],pcm_staging+offset) || !write(w[5],first) ||
+                (w[6] && !write(w[6],second?pcm_staging:0u)) || (w[7] && !write(w[7],second)))return failure();
+            locked_handle_=w[1];lock_spans_={pcm_staging+offset,first,second?pcm_staging:0u,second};
+            fprintf(log_,"startup_dsound_pcm_lock=handle:0x%08X bytes:%u first:%u second:%u offset:%u flags:0x%08X requested_bytes:%u ptr1:0x%08X ptr2:0x%08X\n",
+                w[1],bytes,first,second,offset,w[8],w[3],lock_spans_[0],lock_spans_[2]);
+        }else if(slot==19){
+            if(locked_handle_!=w[1] || !std::equal(lock_spans_.begin(),lock_spans_.end(),w+2))return failure();
+            if(!cpu_.read(pcm_staging,b.bytes.data(),b.bytes.size()))return failure();
+            uint32_t hash=2166136261u;for(uint8_t v:b.bytes)hash=(hash^v)*16777619u;
+            locked_handle_=0;fprintf(log_,"startup_dsound_pcm_upload=handle:0x%08X bytes:%u fnv1a:0x%08X playback:%s\n",w[1],unsigned(b.bytes.size()),hash,b.playing?"active":"stopped");
+        }
+        fprintf(log_,"startup_dsound_pcm_contract=method:%s handle:0x%08X result:0x%08X bytes:%u cursor:%u playback:%s\n",method_name(t),w[1],hr,unsigned(b.bytes.size()),b.position,b.playing?"active":"stopped");
+        return finish(hr,cleanup,w[0],esp);
+    }
+    StartupServiceResult primary_call(uint32_t t){
+        const unsigned slot=(t-primary_trap)/16;
+        fprintf(log_,"startup_dsound_method=IDirectSoundBuffer::%s slot=%u\n",method_name(t),slot);
+        if(slot>2)return unsupported();
+        const uint32_t esp=cpu_.reg(d2rt::R_ESP),cleanup=slot==0?16:8;uint32_t w[4]{},vt=0;
+        if(!frame(esp,cleanup) || !cpu_.read(esp,w,cleanup) || !primary_refs_ || w[1]!=primary || !cpu_.read(primary,&vt,4) || vt!=primary_table)return failure();
+        uint32_t hr=0;
+        if(slot==0){Guid iid{};if(!guid(w[2],iid))return failure();
+            const bool match=iid==unknown_iid || iid==buffer_iid;
+            if(match && primary_refs_==std::numeric_limits<uint32_t>::max())return failure();
+            if(!write(w[3],match?primary:0u))return failure();
+            if(match)++primary_refs_;else hr=0x80004002;
+        }else if(slot==1){if(primary_refs_==std::numeric_limits<uint32_t>::max())return failure();hr=++primary_refs_;}
+        else{hr=--primary_refs_;if(!primary_refs_){if(!write(primary,0u) || !refs_)return failure();--refs_;if(!refs_)close_port();}}
+        return finish(hr,cleanup,w[0],esp);
+    }
+    using Guid=std::array<uint32_t,4>;
+    inline static constexpr Guid sound_clsid={0x3901CC3F,0x4FA484B5,0x81AA35BA,0x9BA0B872};
+    inline static constexpr Guid sound_iid={0xC50A7E93,0x4834F395,0xA97FF69E,0x6609E59D};
+    inline static constexpr Guid unknown_iid={0,0,0x000000C0,0x46000000};
+    inline static constexpr Guid buffer8_iid={0x6825A449,0x4D827524,0xE3500F92,0x1EABB36A};
+    inline static constexpr Guid buffer_iid={0x279AFA85,0x11CE4981,0x200021A5,0x60E50BAF};
+    static bool frame(uint32_t esp,uint32_t size){return (esp>=0x00800000 && uint64_t(esp)+size<=0x00A00000) ||
+        (esp>=0x00A00000 && uint64_t(esp)+size<=0x00A20000) || (esp>=0x00A20000 && uint64_t(esp)+size<=0x00A40000);}
+    bool guid(uint32_t p,Guid& value){return p>=0x10000 && cpu_.read(p,value.data(),sizeof(value));}
+    bool write(uint32_t p,uint32_t value){return p>=0x10000 && uint64_t(p)+4<=0x02000000 && cpu_.write(p,&value,4);}
+    void close_port(){
+        shutdown_playback();
+        if(port_>=0){const int rc=sceAudioOutReleasePort(port_);fprintf(log_,"startup_dsound_native_release_rc=0x%08X\n",unsigned(rc));port_=-1;}
+    }
+    StartupServiceResult finish(uint32_t hr,uint32_t cleanup,uint32_t ret,uint32_t esp){
+        const int regs[]={d2rt::R_EBX,d2rt::R_EBP,d2rt::R_ESI,d2rt::R_EDI};
+        std::array<uint32_t,4> before{};for(unsigned i=0;i<4;++i)before[i]=cpu_.reg(regs[i]);
+        cpu_.trap_epilogue(hr,cleanup,ret);
+        bool valid=cpu_.reg(d2rt::R_EAX)==hr && cpu_.reg(d2rt::R_ESP)==esp+cleanup && cpu_.reg(d2rt::R_EIP)==ret;
+        for(unsigned i=0;i<4;++i)valid=valid && cpu_.reg(regs[i])==before[i];
+        fprintf(log_,"startup_dsound_abi=%s cleanup=%u hresult=0x%08X return=0x%08X\n",valid?"passed":"failed",cleanup,hr,ret);
+        if(valid)++calls_;
+        return valid?StartupServiceResult::Serviced:failure();
+    }
+    StartupServiceResult unsupported(){fprintf(log_,"startup_dsound_method_executed=no\n");return StartupServiceResult::Unsupported;}
+    static StartupServiceResult failure(){return StartupServiceResult::ContractFailure;}
+    d2rt::Cpu& cpu_;FILE* log_;uint32_t refs_=0,primary_refs_=0;unsigned calls_=0;int port_=-1;bool cooperative_=false;
+};

@@ -1,6 +1,7 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
 #define ENGLISH_PATCH_PATH APP_DIR "/TH075E.exe"
 #define LOG_PATH APP_DIR "/iteration06.log"
+#define BUILD_ID "iteration06-dual-pe-probe-r1"
 
 enum {
     PE_PROBE_OK = 0,
@@ -89,7 +91,7 @@ static int inspect_pe32(FILE *exe, FILE *log, const char *prefix) {
     fprintf(log, "%s_pe_optional_header_size=%u\n", prefix,
             (unsigned)optional_size);
 
-    if (optional_size < sizeof(optional_header) ||
+    if ((size_t)optional_size < sizeof(optional_header) ||
         !read_at(exe, file_size, (uint64_t)pe_offset + sizeof(nt_headers),
                  optional_header, sizeof(optional_header))) {
         fprintf(log, "%s_probe_error=optional_header_truncated\n", prefix);
@@ -123,11 +125,20 @@ static int inspect_pe32(FILE *exe, FILE *log, const char *prefix) {
 }
 
 static void inspect_executable(const char *path, const char *prefix, FILE *log) {
-    FILE *exe = fopen(path, "rb");
+    FILE *exe;
+    int open_errno;
 
     fprintf(log, "%s_exe_path=%s\n", prefix, path);
+    errno = 0;
+    exe = fopen(path, "rb");
     if (exe == NULL) {
-        fprintf(log, "%s_probe_result=game_executable_missing\n", prefix);
+        open_errno = errno;
+        if (open_errno == ENOENT) {
+            fprintf(log, "%s_probe_result=file_missing\n", prefix);
+        } else {
+            fprintf(log, "%s_probe_result=file_open_error\n", prefix);
+            fprintf(log, "%s_open_errno=%d\n", prefix, open_errno);
+        }
         return;
     }
 
@@ -147,6 +158,7 @@ int main(void) {
     }
 
     fprintf(log, "Touhou 7.5 Vita - Iteration 06 game and translation patch diagnostic\n");
+    fprintf(log, "build_id=%s\n", BUILD_ID);
     fprintf(log, "execution=not_attempted\n");
     inspect_executable(GAME_EXE_PATH, "game", log);
     inspect_executable(ENGLISH_PATCH_PATH, "english_patch", log);

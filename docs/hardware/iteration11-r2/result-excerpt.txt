@@ -1,0 +1,65 @@
+Source: user's iteration11.log and iteration11-watchdog.log, read 2026-10-01.
+The accompanying photo shows ITERATION 11 R2 / ENTRY CHECKPOINT PASS.
+This is an excerpt of observed results, not an expected-output fixture.
+
+build_id=iteration11-original-entrypoint-first-import-r2
+preflight_result=passed
+startup_scope=original_exe_until_first_import
+startup_import_policy=stop_before_every_import
+startup_pe_tls_rva=0x00000000
+startup_pe_tls_size=0
+startup_iat_intercept_count=157
+startup_guest_image=restored_from_verified_pe
+startup_text_patch=none
+startup_run_budget=4096
+startup_budget_unit=approx_instructions_via_512_block_entries
+startup_runner_pin_rc=0x00070000
+startup_runner_affinity_readback=0x00010000
+startup_watchdog_priority=0x10000100
+startup_watchdog=armed
+startup_watchdog_timeout_us=5000000
+startup_entry_va=0x0064232C
+startup_initial_esp=0x009FEFFC
+game_entrypoint=attempted
+startup_first_import=KERNEL32.dll!GetVersionExA
+startup_first_iat_va=0x00657090
+startup_stop_trap_va=0x00B00180
+startup_return_va=0x00642352
+startup_arg0_va=0x009FEEE8
+startup_version_info_size=148
+startup_stack_buffer=valid
+startup_seh_record_va=0x009FEFE8
+startup_seh_previous=0xFFFFFFFF
+startup_seh_handler=0x00645468
+startup_seh_registration=passed
+startup_exception_dispatch=not_implemented
+startup_api_executed=no
+startup_elapsed_us=271927
+startup_final_eip=0x00B00180
+startup_limit_hit=no
+game_code_executed=yes
+startup_result=reached_first_import
+startup_runner_affinity_restore_rc=0x00010000
+result=real_entrypoint_first_import_passed
+screen_present_sync=nextframe
+screen_present_rc=0x00000000
+screen_vblank_rc=0x00000000
+screen_query_rc=0x00000000
+screen_active_matches=yes
+screen_result=presented
+
+Separate watchdog log:
+watchdog_revision=iteration11-r2
+watchdog_scope=original_entrypoint_only
+watchdog_timeout_us=5000000
+watchdog_result=prepared
+watchdog_priority=0x10000100
+watchdog_pin_rc=0x00020000
+watchdog_affinity_readback=0x00020000
+watchdog_actual_priority=0x000000A0
+watchdog_result=disarmed
+
+Runtime log: guest arena 16 MiB; RW pool 8 MiB; JIT pool initially 16 MiB;
+vm-domain first rc=0x00000000. No runtime fault appears in the supplied log.
+The supplied main log ends at screen_result=presented; exit with X is not
+established by this particular log. Full game boot remains unverified.

@@ -1,0 +1,16 @@
+# Extracted from the iteration08.log and iteration08-runtime.log supplied
+# by the user and read during this session. This is not a full log copy.
+build_id=iteration08-winvita-iat-bridge-r1
+game_code_executed=no
+game_pe_load_result=loaded_by_winvita_peimage
+game_guest_map_result=passed
+dynarec_smoke_result=passed
+import_bridge_unresolved=154
+import_smoke_lasterror_eax=0x00000000
+import_smoke_lasterror_esp=0x009FF000
+import_smoke_lasterror_result=failed
+import_smoke_calls=set:0 get:1 tick:0
+import_smoke_result=failed
+result=failed
+# Runtime log: arena initialized with 16 MiB guest span; first 16 MiB
+# JIT segment allocated; vm-domain bracket first rc=0x00000000.
