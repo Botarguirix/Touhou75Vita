@@ -1,5 +1,13 @@
 # Iteración 88 — Thread Startup
 
+## Resultado físico posterior
+
+La 88 pasó su chequeo del mutex, pero no arrancó el EXE. Su core parcial
+localiza otro mutex nulo en libgcc emutls, antes de crear los workers:
+pthread_once seguía omitido del enlace estático. La corrección de la 88
+era insuficiente. [Iteración 89](STATUS_ITERATION89.md) documenta el nuevo
+diagnóstico, chequeo TLS, paquete y arte. Rendimiento de la 88 no medido.
+
 ## Fallo físico de la 87
 
 El usuario informa que el juego no alcanza a iniciar. La Vita genera

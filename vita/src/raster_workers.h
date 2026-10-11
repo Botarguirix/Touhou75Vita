@@ -1,5 +1,6 @@
 #pragma once
 #include "d3d8_raster_executor.h"
+#include "native_thread_support.h"
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/cpu.h>
 #include <psp2/kernel/processmgr.h>
@@ -55,6 +56,7 @@ private:
     struct Worker {
         SceUID id=-1;unsigned core=0;bool started=false,initialized=false,pending=false,quit=false;
         int affinity=-1,cpu=-1;
+        bool tls_ok=false;
         std::mutex mutex;std::condition_variable wake,done;
         Job job{};d3d8_quad::Stats stats{};
         d3d8_quad::Result result=d3d8_quad::Result::Unsupported;
@@ -66,7 +68,8 @@ private:
         if(!worker)return -1;
         std::unique_lock<std::mutex> lock(worker->mutex);
         worker->affinity=sceKernelGetThreadCpuAffinityMask(sceKernelGetThreadId());
-        worker->cpu=sceKernelGetCpuId();worker->initialized=true;worker->done.notify_one();
+        worker->cpu=sceKernelGetCpuId();worker->tls_ok=check_native_thread_tls(0x7500+worker->core);
+        worker->initialized=true;worker->done.notify_one();
         while(true) {
             worker->wake.wait(lock,[&]{return worker->pending || worker->quit;});
             if(worker->quit)return 0;
@@ -96,9 +99,9 @@ private:
             worker.started=true;
             std::unique_lock<std::mutex> lock(worker.mutex);
             worker.done.wait(lock,[&]{return worker.initialized;});
-            const bool matches=worker.affinity==mask && worker.cpu==int(worker.core);
-            fprintf(log_,"startup_raster_worker=core:%u affinity:0x%08X actual_cpu:%d priority:0x10000110 stack:131072 verified:%s\n",
-                worker.core,unsigned(worker.affinity),worker.cpu,matches?"yes":"no");
+            const bool matches=worker.affinity==mask && worker.cpu==int(worker.core) && worker.tls_ok;
+            fprintf(log_,"startup_raster_worker=core:%u affinity:0x%08X actual_cpu:%d priority:0x10000110 stack:131072 verified:%s tls:%s\n",
+                worker.core,unsigned(worker.affinity),worker.cpu,matches?"yes":"no",worker.tls_ok?"passed":"failed");
             fflush(log_);
             lock.unlock();
             if(!matches){shutdown();return false;}

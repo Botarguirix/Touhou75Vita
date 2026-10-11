@@ -1,28 +1,32 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 88, version 01.92
+## Current checkpoint — iteration 89, version 01.93
 
 Physical 86 confirmed the original menu, controls and clean effects.
 Physical 87 crashed during first worker initialization: the static ELF
 omitted pthread_cancel, GCC/VitaSDK's C++ mutex activation marker. The
 core shows pthread_cond_wait calling pthread_mutex_unlock on a null mutex.
 
-88 fixes static linking, checks active threading/mutex support before the
-EXE and flushes worker create/start/verification checkpoints. Multicore row
-rendering and menu/input remain. 107 portable groups, native ELF symbol/code
-inspection, sanitizers, VitaSDK and package checks passed.
+Physical 88 passed its native mutex check, then crashed in the JIT's emutls
+access: libgcc's weak pthread_once call had been omitted from the static
+link, so its TLS mutex was never initialized. 89 includes pthread_once and
+pthread_cond_destroy as well as pthread_cancel, and tests once/TLS before
+the VM and TLS within both raster workers. Build identity and startup logs
+are flushed before VM initialization. 109 portable groups, native ELF
+inspection, sanitizers, VitaSDK and package checks passed. New LiveArea art
+uses original imagegen masters; stale iteration/version assets reject packaging.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Menu/input | Physical 86 confirmed; recheck in 88. |
+| Menu/input | Physical 86 confirmed; recheck in 89. |
 | Native PCM | Complete music in 85, clean menu effects in 86; recheck with active native mutexes. |
-| Multicore raster | 87 startup crash diagnosed; 88 boot/scheduling/performance pending Vita. |
+| Multicore raster | 87/88 crashes diagnosed; 89 boot/scheduling/performance pending Vita. |
 | GPU | GXM/libvita2d researched; backend pending. |
 | Match | Real character selection, gameplay, collision, audio and return to menu pending. |
 
 360 Present / 361 waits / 180 s / 210 s watchdog / 12288 draws /
 768 Mi pixels / 64 MiB graphics / 1024 audio dispatches remain bounded.
-[Status/package](STATUS_ITERATION88.md), [checks](EXE_CHECKLIST_ITERATION88.md),
+[Status/package](STATUS_ITERATION89.md), [checks](EXE_CHECKLIST_ITERATION89.md),
 [CPU/GPU investigation](PERFORMANCE_ITERATION87.md).
 
 Historical observations follow below.

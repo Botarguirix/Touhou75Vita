@@ -37,6 +37,12 @@ jobs:
         run: |
           arm-vita-eabi-nm vita/build/touhou75_vita > vita/build/native-symbols.txt
           grep -Eq '^[[:xdigit:]]+ T pthread_cancel$' vita/build/native-symbols.txt
+          grep -Eq '^[[:xdigit:]]+ T pthread_once$' vita/build/native-symbols.txt
+          grep -Eq '^[[:xdigit:]]+ T pthread_cond_destroy$' vita/build/native-symbols.txt
+          if grep -Eq '^[[:space:]]+[Uw] pthread_' vita/build/native-symbols.txt; then
+            echo 'Referenced pthread function omitted from static link'
+            exit 1
+          fi
 
       - name: Show linked ELF segments
         if: always()
@@ -48,6 +54,6 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-iteration88-thread-startup-vpk
+          name: Touhou75Vita-iteration89-tls-startup-vpk
           path: vita/build/*.vpk
           if-no-files-found: error

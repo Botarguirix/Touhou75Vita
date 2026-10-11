@@ -25,15 +25,15 @@
 
 #define APP_DIR "ux0:data/TH075Vita"
 #define GAME_EXE_PATH APP_DIR "/TH075.exe"
-#define LOG_PATH APP_DIR "/iteration88.log"
-#define BUILD_ID "iteration88-thread-startup-r1"
+#define LOG_PATH APP_DIR "/iteration89.log"
+#define BUILD_ID "iteration89-tls-startup-r1"
 
 static const uint32_t kArenaGuestLimit = 0x02000000;
 static const uint32_t kSmokeResult = 0x00000075;
 static const char* const kExpectedGameSha256 =
     "BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98";
 
-extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration88-runtime.log";
+extern "C" const char* const wx86_vita_progress_path = APP_DIR "/iteration89-runtime.log";
 
 static void write_u32_le(uint8_t* out, uint32_t value) {
     out[0] = (uint8_t)value;
@@ -189,10 +189,11 @@ static bool run_dynarec_smoke(d2rt::Cpu& cpu, uint32_t code_va,
 }
 
 static int run(FILE* log) {
-    if(!check_native_thread_support(log))return 1;
     fprintf(log,"diagnostic_scope=exe_only native_music:disabled dat_browser:disabled native_dat_title:disabled\n");
-    fprintf(log, "Touhou 7.5 Vita - Iteration 88 original EXE process startup\n");
+    fprintf(log, "Touhou 7.5 Vita - Iteration 89 original EXE process startup\n");
     fprintf(log, "build_id=%s\n", BUILD_ID);
+    fflush(log);
+    if(!check_native_thread_support(log))return 1;
     report_native_memory(log,"process_start",0,0);
 #ifdef __OPTIMIZE__
     fprintf(log,"startup_native_optimization=enabled strict_fp:yes\n");
@@ -200,7 +201,7 @@ static int run(FILE* log) {
     fprintf(log,"startup_native_optimization=disabled\n");
 #endif
     errno = 0;
-    const int old_watchdog = remove(APP_DIR "/iteration88-watchdog.log");
+    const int old_watchdog = remove(APP_DIR "/iteration89-watchdog.log");
     const int watchdog_errno = errno;
     fprintf(log, "watchdog_previous_log_cleared=%s\n",
         old_watchdog == 0 || watchdog_errno == ENOENT ? "yes" : "no");
@@ -240,6 +241,7 @@ static int run(FILE* log) {
     fprintf(log, "guest_arena_requested_bytes=0x03000000\n");
     fprintf(log, "guest_address_span_required=0x02000000\n");
 
+    fprintf(log,"startup_runtime_init=begin\n");fflush(log);
     std::unique_ptr<d2rt::Cpu> cpu(d2rt::make_cpu_box86());
     if (!cpu) {
         fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
@@ -253,6 +255,7 @@ static int run(FILE* log) {
     fprintf(log,"guest_arena_span_validation=at_least_32MiB\n");
     fprintf(log, "dynarec_backend=Box86-derived-ARMv7\n");
     fprintf(log, "dynarec_init_result=created\n");
+    fprintf(log,"startup_runtime_init=passed\n");fflush(log);
 
     bool game_mapped = false;
     if (pe_loaded) {
@@ -281,8 +284,10 @@ static int run(FILE* log) {
         return 1;
     }
 
+    fprintf(log,"startup_dynarec_smoke=begin\n");fflush(log);
     const bool smoke_passed = run_dynarec_smoke(
         *cpu, (uint32_t)code64, (uint32_t)stack64, (uint32_t)trap64, log);
+    fflush(log);
     const bool imports_passed = pe_loaded && game_mapped && smoke_passed &&
         run_import_smoke(*cpu, exe_bytes, log);
     const bool diagnostics_passed = pe_loaded && game_mapped && smoke_passed && imports_passed;

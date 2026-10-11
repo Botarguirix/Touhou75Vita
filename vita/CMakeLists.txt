@@ -22,9 +22,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 88 Thread Startup")
+set(VITA_APP_NAME "Touhou 7.5 Vita - Iteration 89 TLS Startup")
 set(VITA_TITLEID "T075VITA1")
-set(VITA_VERSION "01.92")
+set(VITA_VERSION "01.93")
 # vita-mksfoex also writes NAME into the 52-byte STITLE field.
 # Reserve one byte for its NUL terminator before generating the package.
 string(LENGTH "${VITA_APP_NAME}" VITA_APP_NAME_BYTES)
@@ -63,6 +63,11 @@ target_link_options(${PROJECT_NAME} PRIVATE
   # does not pull this object from libpthread.a. Force its inclusion: without
   # it, std::mutex is inert while condition_variable still calls pthread.
   "LINKER:--undefined=pthread_cancel"
+  # libgcc emutls uses weak pthread_once to initialize its mutex/TLS key.
+  # Retain it too, plus condition-variable cleanup; all referenced pthread
+  # entry points must exist when the activation marker is present.
+  "LINKER:--undefined=pthread_once"
+  "LINKER:--undefined=pthread_cond_destroy"
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/winvita/src"
@@ -87,6 +92,23 @@ set(VITA_LIVEAREA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys" CACHE PATH
   "Local generated LiveArea assets; game artwork stays outside Git")
 set(VITA_LIVEAREA_FILES)
 if(EXISTS "${VITA_LIVEAREA_DIR}/livearea/contents/template.xml")
+  # DAT artwork may contain visible iteration text; generated art may not.
+  # Refuse stale asset metadata even when SFO/executable identity is current.
+  string(REGEX MATCH "Iteration ([0-9]+)" VITA_ITERATION_MATCH "${VITA_APP_NAME}")
+  set(VITA_ITERATION "${CMAKE_MATCH_1}")
+  file(READ "${VITA_LIVEAREA_DIR}/livearea/contents/template.xml" LIVEAREA_TEMPLATE)
+  if(NOT VITA_ITERATION OR NOT LIVEAREA_TEMPLATE MATCHES "content-rev=\"${VITA_ITERATION}\"")
+    message(FATAL_ERROR "LiveArea iteration does not match ${VITA_APP_NAME}; prepare artwork for this build")
+  endif()
+  if(NOT EXISTS "${VITA_LIVEAREA_DIR}/provenance.json")
+    message(FATAL_ERROR "Local LiveArea provenance is missing; prepare artwork for this build")
+  endif()
+  file(READ "${VITA_LIVEAREA_DIR}/provenance.json" LIVEAREA_PROVENANCE)
+  string(REPLACE "." "\\." VITA_VERSION_REGEX "${VITA_VERSION}")
+  if(NOT LIVEAREA_PROVENANCE MATCHES "\"iteration\"[ \t\r\n]*:[ \t\r\n]*${VITA_ITERATION}[, \t\r\n]"
+     OR NOT LIVEAREA_PROVENANCE MATCHES "\"version\"[ \t\r\n]*:[ \t\r\n]*\"${VITA_VERSION_REGEX}\"")
+    message(FATAL_ERROR "LiveArea provenance iteration/version mismatch; prepare artwork for this build")
+  endif()
   foreach(ASSET icon0.png pic0.png livearea/contents/bg0.png
                 livearea/contents/startup.png livearea/contents/template.xml)
     if(NOT EXISTS "${VITA_LIVEAREA_DIR}/${ASSET}")
