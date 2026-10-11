@@ -13,6 +13,9 @@ public:
     static constexpr unsigned slots=16;
     D3D8Bootstrap(d2rt::Cpu& cpu, FILE* log):cpu_(cpu),log_(log),storage_(cpu,log,references_) {}
     unsigned serviced_calls() const { return serviced_calls_; }
+    void set_raster_executor(d3d8_quad::RasterExecutor executor,void* context) {
+        storage_.set_raster_executor(executor,context);
+    }
     void report_usage() const { storage_.report_usage(); }
     bool owns_trap(uint32_t trap) const {
         return storage_.owns(trap) || (trap>=trap_base && trap<trap_base+slots*16 && (trap-trap_base)%16==0);

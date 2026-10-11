@@ -8,3 +8,5 @@ int sceKernelStartThread(SceUID,SceSize,void*);
 int sceKernelWaitThreadEnd(SceUID,int*,unsigned*);
 int sceKernelDeleteThread(SceUID);
 int sceKernelDelayThread(unsigned);
+int sceKernelGetThreadId();
+int sceKernelGetThreadCpuAffinityMask(SceUID);

@@ -2,6 +2,7 @@
 #include "startup_services.h"
 #include "runtime/cpu.h"
 #include "d3d8_quad_raster.h"
+#include "d3d8_raster_executor.h"
 #include "exe_draw_preview.h"
 #include "exe_presenter.h"
 #include "startup_limits.h"
@@ -32,6 +33,10 @@ public:
         SetTextureStageState=63, ValidateDevice=64
     };
     D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs),presenter_(log) { initialize_states(); }
+    void set_raster_executor(d3d8_quad::RasterExecutor executor,void* context) {
+        raster_executor_=executor;raster_context_=context;
+        presenter_.set_hash_diagnostics(executor==nullptr);
+    }
     void report_usage() const {
         unsigned owned=0,aliases=0;
         for(const auto& r:resources_)if(r.refs){if(r.parent)++aliases;else ++owned;}
@@ -509,8 +514,11 @@ private:
     }
     StartupServiceResult draw(const uint32_t* w) {
         fprintf(log_,"startup_d3d8_draw_request=type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
-        for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
-        for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])fprintf(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
+        const auto dump_states=[&]{
+            for(unsigned i=0;i<render_.size();++i)if(render_valid_[i])fprintf(log_,"startup_d3d8_draw_state=state:%u value:0x%08X\n",i,render_[i]);
+            for(unsigned i=0;i<stage_.size();++i)if(stage_valid_[i])fprintf(log_,"startup_d3d8_draw_stage=type:%u value:0x%08X\n",i,stage_[i]);
+        };
+        if(!raster_executor_)dump_states();
         uint32_t count=0;
         if(w[3]<=16){switch(w[2]){case 1:count=w[3];break;case 2:count=w[3]*2;break;case 3:count=w[3]+1;break;case 4:count=w[3]*3;break;case 5:case 6:count=w[3]+2;break;}}
         if(fvf_==0x144 && w[5]==28 && count && w[4]>=0x10000 && uint64_t(w[4])+uint64_t(count)*28<=0x02000000){
@@ -544,15 +552,18 @@ private:
                 const d3d8_quad::Settings settings={render_[24],render_[15]!=0,render_[27]!=0,render_[19]==2 && render_[20]==1,stage_[16]};
                 d3d8_quad::Stats stats;
                 const uint64_t started=sceKernelGetProcessTimeWide();
-                if(d3d8_quad::rasterize(quad,image,output,view,settings,stats)==d3d8_quad::Result::Rendered){
+                const auto result=raster_executor_?raster_executor_(raster_context_,quad,image,output,view,settings,stats):
+                    d3d8_quad::rasterize(quad,image,output,view,settings,stats);
+                if(result==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
-                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:raster_and_pixel_hashes\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_);
+                    fprintf(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_workers_and_join_no_pixel_hashes");
                     fprintf(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
                     fprintf(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
                     fprintf(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
                     if(settings.filter==2)fprintf(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
                     fprintf(log_,"startup_d3d8_draw_blend=mode:%s\n",!render_[27]?"disabled":settings.replace_blend?"one_zero":"source_alpha");
-                    fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
+                    if(stats.hashes_valid)fprintf(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
+                    else fprintf(log_,"startup_d3d8_draw_hash=disabled scope:performance_pixel_output_unchanged\n");
                     const auto probe=[&](const char* name,const d3d8_quad::Probe& p){fprintf(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
                     if(stats.covered){probe("first",stats.first);probe("last",stats.last);}
                     if(stats.changed)th075::capture_first_exe_quad(target->bytes.data(),target->bytes.size(),target->width,target->height,target->pitch,view.x,view.y,view.width,view.height,log_);
@@ -561,11 +572,13 @@ private:
                 fprintf(log_,"startup_d3d8_draw_rejected=reason:%s output_write:none\n",d3d8_quad::reject_name(stats.reject));
             }else fprintf(log_,"startup_d3d8_draw_rejected=state_or_resource_profile output_write:none\n");
         }
+        if(raster_executor_)dump_states(); // Keep complete evidence at an actual boundary.
         fprintf(log_,"startup_d3d8_draw_boundary=executed:no\n");
         return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
     ExePresenter presenter_;uint32_t present_calls_=0;
+    d3d8_quad::RasterExecutor raster_executor_=nullptr;void* raster_context_=nullptr;
     struct StateBlock {
         std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};
         std::array<bool,256> render_mask{};std::array<bool,32> stage_mask{};

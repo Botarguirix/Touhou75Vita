@@ -12,7 +12,7 @@ inline bool full_rect(const std::array<int32_t,4>& rect,uint32_t w,uint32_t h) {
 // an opaque ABGR scanout with preserved aspect ratio and black side bars.
 // Validation precedes writes. No guest memory or Vita calls in this helper.
 inline bool prepare(const d3d8_quad::Image& source,uint32_t* output,
-    size_t output_pixels,uint32_t& hash) {
+    size_t output_pixels,uint32_t& hash,bool hash_pixels=true) {
     if(source.width!=640 || source.height!=480 ||
         (source.format!=21 && source.format!=22) || !output ||
         output_pixels<width*height ||
@@ -34,8 +34,11 @@ inline bool prepare(const d3d8_quad::Image& source,uint32_t* output,
                 (argb&0xFF00u) | ((argb>>16)&255);
         }
     }
-    hash=2166136261u;
-    for(unsigned i=0;i<width*height;++i)hash=d3d8_quad::detail::hash(hash,output[i]);
+    hash=0; // Explicitly absent in performance mode; never used for equality.
+    if(hash_pixels) {
+        hash=2166136261u;
+        for(unsigned i=0;i<width*height;++i)hash=d3d8_quad::detail::hash(hash,output[i]);
+    }
     return true;
 }
 }

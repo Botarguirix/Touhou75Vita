@@ -4,6 +4,7 @@
 #include "guest_string_probe.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
+#include "raster_workers.h"
 #include "dinput8_bridge.h"
 #include "exe_boot_options.h"
 #include "dsound_bootstrap.h"
@@ -31,7 +32,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration86-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration87-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -97,7 +98,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration86\n");
+        fprintf(report_, "watchdog_revision=iteration87\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -229,6 +230,7 @@ struct RunnerPlacement {
         pinned = rc >= 0;
         fprintf(log, "startup_runner_pin_rc=0x%08X\n", (unsigned)rc);
         fprintf(log, "startup_runner_affinity_readback=0x%08X\n", mask);
+        fprintf(log, "startup_runner_cpu_id=%d scope:native_query\n",sceKernelGetCpuId());
         return pinned;
     }
     ~RunnerPlacement() {
@@ -275,7 +277,10 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         fprintf(log, "startup_result=context_failed\n"); return false;
     }
     StartupServices services(cpu, image, log);
+    RasterWorkers raster_workers(log);
     D3D8Bootstrap d3d8(cpu,log);
+    d3d8.set_raster_executor(RasterWorkers::execute,&raster_workers);
+    fprintf(log,"startup_raster_policy=main_user_core0 workers_user_core1_core2 sleep_when_idle pixel_hashes:disabled draw_state_dump:boundaries gpu:not_initialized\n");
     DirectInput8Bridge input(cpu,log);
     DirectSoundBootstrap sound(cpu,log);
     TrapCleanup cleanup{cpu};
@@ -858,6 +863,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     fprintf(log,"startup_frame_wait_resumes=%u\n",frame_wait_resumes);
     fprintf(log, "startup_thread_create_calls=%u\n", (thread_created?1u:0u)+(audio_created?1u:0u));
     fprintf(log, "startup_d3d8_serviced_calls=%u\n",d3d8.serviced_calls());
+    raster_workers.shutdown();raster_workers.report();
     d3d8.report_usage();
     fprintf(log, "startup_dinput_serviced_calls=%u\n",input.serviced_calls());
     fprintf(log, "startup_dsound_serviced_calls=%u\n",sound.serviced_calls());

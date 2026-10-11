@@ -13,6 +13,7 @@ public:
     ~ExePresenter(){release();}
     ExePresenter(const ExePresenter&)=delete;
     ExePresenter& operator=(const ExePresenter&)=delete;
+    void set_hash_diagnostics(bool enabled){hash_scanout_=enabled;cache_.invalidate();}
     bool present(const d3d8_quad::Image& source) {
         reused_source_=false;
         if(!allocate())return false;
@@ -21,7 +22,7 @@ public:
         const bool reused=cache_.lookup(source,index,hash);
         // On a hit the confirmed scanout is reused without any writes. A miss
         // always prepares the other owned buffer, leaving active scanout intact.
-        if(!reused && !d3d8_present::prepare(source,bases_[index],960u*544u,hash))return false;
+        if(!reused && !d3d8_present::prepare(source,bases_[index],960u*544u,hash,hash_scanout_))return false;
         fprintf(log_,"startup_d3d8_present_conversion=%s slot:%u equality:%s\n",
             reused?"reused":"prepared",index,reused?"all_source_bytes":"not_cached");
         SceDisplayFrameBuf fb={};fb.size=sizeof(fb);fb.base=bases_[index];fb.pitch=960;
@@ -32,8 +33,10 @@ public:
         const int query_rc=wait_rc>=0?sceDisplayGetFrameBuf(&active,SCE_DISPLAY_SETBUF_IMMEDIATE):wait_rc;
         const bool matches=query_rc>=0 && active.base==fb.base && active.pitch==fb.pitch &&
             active.width==fb.width && active.height==fb.height && active.pixelformat==fb.pixelformat;
-        fprintf(log_,"startup_d3d8_present_native=set_rc:0x%08X wait_rc:0x%08X query_rc:0x%08X matches:%s slot:%u scanout_fnv1a:0x%08X source:640x480 output:960x544 image:725x544\n",
-            unsigned(rc),unsigned(wait_rc),unsigned(query_rc),matches?"yes":"no",index,hash);
+        fprintf(log_,"startup_d3d8_present_native=set_rc:0x%08X wait_rc:0x%08X query_rc:0x%08X matches:%s slot:%u source:640x480 output:960x544 image:725x544\n",
+            unsigned(rc),unsigned(wait_rc),unsigned(query_rc),matches?"yes":"no",index);
+        if(hash_scanout_)fprintf(log_,"startup_d3d8_scanout_hash=fnv1a:0x%08X\n",hash);
+        else fprintf(log_,"startup_d3d8_scanout_hash=disabled equality:all_source_bytes scanout:%s\n",matches?"confirmed":"failed");
         if(rc<0 || wait_rc<0 || !matches){cache_.invalidate();return false;}
         if(!reused && !cache_.remember_confirmed(source,index,hash))
             fprintf(log_,"startup_d3d8_present_cache=unavailable fallback:normal_conversion\n");
@@ -77,5 +80,5 @@ private:
         }
     }
     FILE* log_;SceUID blocks_[2]={-1,-1};uint32_t* bases_[2]={nullptr,nullptr};unsigned next_=0;
-    d3d8_present::FrameCache cache_;bool reused_source_=false;
+    d3d8_present::FrameCache cache_;bool reused_source_=false,hash_scanout_=true;
 };

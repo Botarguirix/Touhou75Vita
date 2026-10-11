@@ -1,44 +1,33 @@
 # Touhou 7.5 Vita port roadmap
 
-## Current checkpoint — iteration 86, version 01.90
+## Current checkpoint — iteration 87, version 01.91
 
-Physical 85 reached 339 Present, 2999 draws and the original TitleScene for
-97 observed waits. The user saw part of the menu and heard complete music
-without problems. All 343 main-wait and 626 audio-dispatch contexts preserved.
-The run stopped by time cap, 180.532 s. Native output: 5777 blocks, maximum
-interval 21759 us, no intervals over two blocks; 473 silent blocks, all inactive.
-Graphics final 28.1 MiB, peak 40.9 MiB, cap 64 MiB; earlier intro storage released.
+Physical 86 confirmed original menu boot/navigation and clean effects.
+272 Present, 5811 draws, 250 observed title waits; selection 0..9.
+Stop by 180 s time cap, graphics final/peak 29.0 MiB.
+Raster/hashes 88.729 s; Present/conversion/capture/display waits 54.769 s.
 
-Raster/hashing took 99.620 s. Approximate grouping by scene at the prior wait:
-29.559 s logo, 35.589 s opening, 33.704 s title. Skipping intro saves total work,
-but the per-frame renderer is still CPU-bound and needs GPU acceleration.
-
-86 applies the user's requested menu boot to the mapped known Japanese EXE:
-four validated sites, ten changed bytes; shorten logo, change its original
-transition to title, suppress timed attract demo and keep menu confirmation
-available. Original title constructor/resources/update/draw/input/destructor
-remain. Fingerprints validated against the local target and its dispatcher.
-Disk EXE/DAT are intact. Opening music is omitted with the opening scene.
+87 keeps the same boot/controls, divides large draws into three disjoint row
+bands (main core 0 plus native workers cores 1/2), omits per-pixel/scanout
+diagnostic hashes and repetitive state dumps. Workers sleep between jobs,
+use lower priority than audio/watchdog and join before resources can change.
+Complete byte/count/probe comparisons, failure/lifetime tests, 106 groups,
+oracles/replay, sanitizers, VitaSDK and package checks passed. Physical speed,
+image/audio preservation and entry to a playable match remain pending.
 
 | Milestone | Evidence / remaining work |
 |---|---|
-| Original menu | TitleScene observed in 85; menu boot and selections need physical 86. |
-| Audio | Complete opening music confirmed in 85; effects/combats need validation. |
-| Input | Keyboard adapter exists; nine shipping COM groups pass, key-edge/title-state logs added. |
-| Ownership | Storage drops after intro; subsequent scene lifetimes pending. |
-| Performance | Intro work bypassed; CPU raster remains, implement native GPU preserving contracts. |
-| Playable match | Accept genuine selection, controls, logic/collisions, round and menu return. |
+| Menu boot and input | Confirmed in physical 86; preserve in 87. |
+| Native PCM | Complete music in 85 and clean menu effects in 86; combat voices pending. |
+| Multicore raster | Implemented with native affinity readback; physical scheduling/performance pending. |
+| GPU | GXM/libvita2d researched; D3D8 texture/filter/alpha/target ownership backend pending. |
+| Match | Genuine selection, character logic/collisions, controls, audio, round and menu return. |
 
-96 portable groups, ASan/UBSan, -Werror, local fingerprints, 1312-call replay,
-500 strip oracles and 200000 bilinear comparisons passed. POINT/LINEAR/triangle
--O0/-O2 digests match. VitaSDK/package checks passed. Hardware preset, menu
-interaction and combat remain pending. Alice is freshly decoded from DAT;
-user data/art/builds/decompiler output remain outside Git.
-
-Limits remain 360 Present / 361 waits / 180 s, watchdog 210 s,
-6144 draws / 768 Mi pixels / 64 MiB graphics, 1024 audio dispatches / 64 slices.
-[Status/package/controls](STATUS_ITERATION86.md), [checks](EXE_CHECKLIST_ITERATION86.md)
-and [external/decompiler research](RESEARCH_EXE_ITERATION73.md).
+360 Present / 361 waits / 180 s / 210 s watchdog; draw capacity becomes
+12288 so the observed draws/frame fit that frame scope. 768 Mi pixels,
+64 MiB graphics, 1024 audio trap dispatches remain bounded.
+[Status/package](STATUS_ITERATION87.md), [checks](EXE_CHECKLIST_ITERATION87.md),
+[CPU/GPU investigation](PERFORMANCE_ITERATION87.md).
 
 Historical observations follow below.
 

@@ -24,6 +24,15 @@ int main() {
     assert(prepare(image,second.data(),second.size(),again) && first==second && hash==again);
     puts("PASS cold_miss_confirmed_source_exact_copy_and_scanout_equivalence");
 
+    uint32_t absent=0x12345678;
+    assert(prepare(image,second.data(),second.size(),absent,false) && first==second && absent==0);
+    FrameCache performance_cache;
+    assert(performance_cache.remember_confirmed(image,1,absent));
+    assert(performance_cache.lookup(image,slot,hash) && slot==1 && hash==0);
+    bytes.back()^=1;image.bytes=bytes.data();assert(!performance_cache.lookup(image,slot,hash));bytes.back()^=1;
+    image.bytes=copy.data();
+    puts("PASS omitted scanout hashes preserve every output pixel and full-byte cache equality");
+
     image.bytes=bytes.data();
     for(size_t index:{size_t(0),size_t(3),bytes.size()/2,bytes.size()-1}) {
         bytes[index]^=1;

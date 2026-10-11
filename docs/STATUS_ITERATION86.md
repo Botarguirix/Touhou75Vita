@@ -144,3 +144,12 @@ backend GPU conservando filtros, alpha, estado y ownership. Se mantienen
 como referencias los snapshots TH075 para identidades/callsites y TH08-Web
 para separar D3D8 del renderer nativo: [investigación previa](RESEARCH_EXE_ITERATION73.md).
 No se presupone un motor TH075 completo en esas fuentes. Combate jugable pendiente.
+
+## Resultado físico recibido: 10 de octubre de 2026
+
+El salto al menú y la navegación funcionaron en Vita; sonidos limpios según
+el usuario. 272 Present, 273 esperas, 5811 draws, TitleScene por 250 esperas,
+selección original 0..9. Stop time_cap 180,484 s. Raster/hashes 88,729 s;
+Present/conversión/captura/esperas 54,769 s. Memoria gráfica final/pico 29,0 MiB.
+La CPU sigue cargada. Se distribuye el raster y se reduce diagnóstico en
+[iteración 87](STATUS_ITERATION87.md); combate sigue pendiente.

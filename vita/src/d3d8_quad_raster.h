@@ -37,6 +37,7 @@ struct Settings {
     bool alpha_test=true, alpha_blend=true;
     bool replace_blend=false; // D3DBLEND_ONE/ZERO with ADD.
     uint32_t filter=1; // D3DTEXF_POINT=1, D3DTEXF_LINEAR=2.
+    bool hash_pixels=true; // Diagnostics only; disabling preserves every output pixel.
 };
 
 // Storage owns exactly one mip level. MIP NONE/POINT/LINEAR all select that
@@ -60,6 +61,7 @@ struct Stats {
     Probe first{}, last{};
     uint32_t linear_exact=0,linear_constant=0,linear_reference=0;
     bool triangle_strip=false;
+    bool hashes_valid=true;
 };
 
 inline const char* reject_name(Reject r) {
@@ -230,9 +232,11 @@ inline void shade(uint32_t x,uint32_t y,const LinearAxis& ax,const LinearAxis& a
     if(!stats.covered)stats.first=probe;
     stats.last=probe;
     ++stats.covered;
-    stats.hash_source=hash(stats.hash_source,color);
-    stats.hash_before=hash(stats.hash_before,before);
-    stats.hash_after=hash(stats.hash_after,after);
+    if(settings.hash_pixels) {
+        stats.hash_source=hash(stats.hash_source,color);
+        stats.hash_before=hash(stats.hash_before,before);
+        stats.hash_after=hash(stats.hash_after,after);
+    }
 }
 
 struct Edge {
@@ -273,7 +277,7 @@ inline Triangle triangle(const Vertex (&v)[4],unsigned a,unsigned b,unsigned c) 
 }
 inline Result triangles(const Vertex (&v)[4],const Image& source,
     const Target& target,const Viewport& viewport,const Settings& settings,
-    unsigned bpp,Stats& stats) {
+    unsigned bpp,Stats& stats,bool validate_only=false) {
     // Strip order 0,1,2,3 has boundary polygon 0,1,3,2. Limit support to
     // strictly convex geometry: folded/concave/degenerate strips never write.
     constexpr unsigned order[]={0,1,3,2};double winding=0;
@@ -288,6 +292,7 @@ inline Result triangles(const Vertex (&v)[4],const Image& source,
     for(const auto& tri:strip)if(!(tri.area>0) || !std::isfinite(1/tri.area))
         return reject(stats,Reject::Quad);
     stats.triangle_strip=true;
+    if(validate_only)return Result::Rendered;
     double left=v[0].x,right=left,top=v[0].y,bottom=top;
     for(const auto& vertex:v) {
         left=std::min(left,double(vertex.x));right=std::max(right,double(vertex.x));
@@ -331,8 +336,9 @@ inline Result triangles(const Vertex (&v)[4],const Image& source,
 // it has no destination-alpha channel, so only the blended RGB is retained.
 inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
     const Target& target,const Viewport& viewport,const Settings& settings,
-    Stats& stats) {
+    Stats& stats,bool validate_only=false) {
     stats=Stats{};
+    stats.hashes_valid=settings.hash_pixels;
     if(!source.width || !source.height || source.width>1024 || source.height>1024 ||
         !target.width || !target.height || target.width>1024 || target.height>1024 ||
         !viewport.width || !viewport.height ||
@@ -366,7 +372,8 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
     if(tl.x!=bl.x || tr.x!=br.x || tl.y!=tr.y || bl.y!=br.y ||
         !(tl.x<tr.x) || !(tl.y<bl.y) || tl.u!=bl.u || tr.u!=br.u ||
         tl.v!=tr.v || bl.v!=br.v)
-        return detail::triangles(vertices,source,target,viewport,settings,bpp,stats);
+        return detail::triangles(vertices,source,target,viewport,settings,bpp,stats,validate_only);
+    if(validate_only)return Result::Rendered;
 
     const double left=tl.x,right=tr.x,top=tl.y,bottom=bl.y;
     const double x_begin=std::max(std::ceil(left),double(viewport.x)),
