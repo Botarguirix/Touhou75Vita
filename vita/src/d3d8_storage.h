@@ -36,6 +36,7 @@ public:
     };
     D3D8Storage(d2rt::Cpu& cpu,FILE* log,uint32_t& root_refs):cpu_(cpu),log_(log),root_refs_(root_refs),presenter_(log) { initialize_states(); }
     void enable_half_resolution() { if(!refs_ && !count_)half_resolution_=true; }
+    unsigned present_count() const { return present_calls_; }
     void set_raster_executor(d3d8_quad::RasterExecutor executor,void* context) {
         raster_executor_=executor;raster_context_=context;
         presenter_.set_hash_diagnostics(executor==nullptr);
@@ -45,6 +46,7 @@ public:
         for(const auto& r:resources_)if(r.refs){if(r.parent)++aliases;else ++owned;}
         th075::diagnostic_log(log_,"startup_d3d8_storage_summary=used:%u peak:%u maximum:%u owned:%u aliases:%u handles_allocated:%u handle_capacity:%u\n",
             used_,peak_,budget,owned,aliases,count_,capacity);
+        th075::diagnostic_log(log_,"startup_d3d8_alpha_summary=skipped:%llu covered:%u bound:max_neighbor_alpha_modulate\n",(unsigned long long)alpha_shortcuts_,draw_pixels_);
         report_native_memory(log_,"startup_stop",used_,budget);
     }
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
@@ -570,7 +572,8 @@ private:
                 if(result==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
                     th075::diagnostic_log(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_executor_no_pixel_hashes");
-                    th075::diagnostic_log(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed);
+                    th075::diagnostic_log(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u alpha_shortcuts:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed,stats.alpha_shortcuts);
+                    alpha_shortcuts_+=stats.alpha_shortcuts;
                     th075::diagnostic_log(log_,"startup_d3d8_draw_geometry=%s shared_edge:top_left coordinates:unsnapped\n",stats.triangle_strip?"convex_triangle_strip":"axis_rectangle");
                     th075::diagnostic_log(log_,"startup_d3d8_draw_filter=mag:%u min:%u mip:%u levels:1 source:%ux%u probe_texel:%s\n",stage_[16],stage_[17],stage_[18],texture->width,texture->height,settings.filter==2?"wrapped_upper_left_neighbor":"nearest");
                     if(settings.filter==2)th075::diagnostic_log(log_,"startup_d3d8_linear_work=constant:%u exact_dyadic:%u reference_double:%u quantized_coefficients:no\n",stats.linear_constant,stats.linear_exact,stats.linear_reference);
@@ -578,7 +581,7 @@ private:
                     if(stats.hashes_valid)th075::diagnostic_log(log_,"startup_d3d8_draw_hash=source:0x%08X before:0x%08X after:0x%08X scope:covered_pixels\n",stats.hash_source,stats.hash_before,stats.hash_after);
                     else th075::diagnostic_log(log_,"startup_d3d8_draw_hash=disabled scope:performance_pixel_output_unchanged\n");
                     const auto probe=[&](const char* name,const d3d8_quad::Probe& p){th075::diagnostic_log(log_,"startup_d3d8_draw_probe=%s xy:%u,%u texel:%u,%u source:0x%08X before:0x%08X after:0x%08X\n",name,p.x,p.y,p.texel_x,p.texel_y,p.source,p.before,p.after);};
-                    if(stats.covered){probe("first",stats.first);probe("last",stats.last);}
+                    if(stats.covered && stats.probes_valid){probe("first",stats.first);probe("last",stats.last);}
                     if(stats.changed)th075::capture_first_exe_quad(output.bytes,output.size,output.width,output.height,output.pitch,view.x,view.y,view.width,view.height,log_);
                     return serviced();
                 }
@@ -606,6 +609,7 @@ private:
     std::array<bool,32> stage_valid_{};std::array<bool,256> render_valid_{};
     uint32_t bound_texture_=0;
     uint32_t draw_calls_=0,draw_pixels_=0;
+    uint64_t alpha_shortcuts_=0;
     std::array<uint32_t,6> viewport_={0,0,640,480,0,0x3F800000};
     uint32_t refs_=0,used_=0,count_=0,back_=0,depth_=0,target_=0,focus_=0,locked_=0,fvf_=0;
     uint32_t peak_=0;unsigned reported_memory_bucket_=0;

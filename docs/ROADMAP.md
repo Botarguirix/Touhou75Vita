@@ -1,23 +1,26 @@
-# Roadmap actual — iteración 91
+# Roadmap actual — iteración 92
 
-La 90 recuperó el menú y 360 Present en Vita. La 91 prueba dibujo interno
-320×240, trazas compactas y floor de clocks con 118 grupos locales.
-Arranque, FPS y audio de la 91 deben medirse en Vita antes de aceptar ganancia.
+Física 91 completó menú y 360 Present sin excepción: 47,83 s total y
+23,91 s de raster CPU, frente a 142,44 / 86,69 s de la 90. Captura: 9 FPS;
+clocks leídos: CPU 500 / bus 222 del plugin existente. La 92 conserva los
+mismos píxeles y optimiza transparencia/mezcla, con 131 grupos C++ y 5 pruebas Python locales.
 
-1. Validar la 91 y comparar CPU raster, Present, guest y tiempo total con 90.
-2. Implementar y verificar quads/texturas D3D8 sobre GXM; cache de uploads,
-   alpha/blend/filtros y propiedad/sincronización, con rollback al renderer CPU.
-3. Medir y optimizar scheduler/JIT a partir del coste restante.
-4. Si se necesita pool CPU, registrar pthread correctamente o usar kernel sync;
-   comprobar espera/TLS/afinidad/teardown en hardware por etapas.
+1. Medir física 92: presupuesto 16,7 ms / 60 FPS, percentiles, alpha y menú.
+2. Implementar y verificar quads/texturas D3D8 sobre GXM; uploads, alpha,
+   blend/filtros, ownership y sincronización con referencia/fallback CPU.
+3. Optimizar scheduler/JIT a partir del coste restante medido.
+4. Si hace falta pool CPU: pthread registrado o kernel sync, comprobar en
+   Vita espera/TLS/afinidad/teardown antes de activarlo.
 5. Continuar selección de personaje/combate y servicios realmente solicitados.
 
-La GPU y el pool corregido aún no están integrados. La compresión runtime no
-se añade al renderer CPU. Los DAT y EXE originales permanecen fuera de Git.
+La GPU y el pool corregido siguen pendientes. El preset omite la apertura
+musical. Los DAT y EXE originales permanecen fuera de Git.
 
-[Informe y evidencia de la 91](STATUS_ITERATION91.md)
-[Comprobaciones de la 91](EXE_CHECKLIST_ITERATION91.md)
-[Diagnóstico de la regresión 87–89 y recuperación 90](STATUS_ITERATION90.md)
+[Recursos PC y objetivo 60 FPS](PERFORMANCE_60FPS.md) ·
+[Informe de la 92](STATUS_ITERATION92.md) ·
+[Comprobaciones de la 92](EXE_CHECKLIST_ITERATION92.md) ·
+[Evidencia física de la 91](STATUS_ITERATION91.md) ·
+[Regresión 87–89 y recuperación 90](STATUS_ITERATION90.md)
 
 ## Historial anterior
 

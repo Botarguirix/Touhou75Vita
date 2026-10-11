@@ -1,5 +1,36 @@
 # Iteración 91 — resolución interna y rendimiento
 
+## Resultado físico de la 91 recibido el 11 de octubre
+
+La captura muestra menú original, 360/360 Present y un indicador de 9 FPS.
+Los logs confirman watchdog disarmed, sin excepción nativa ni límite de CPU:
+finaliza en la espera prevista de WaitForSingleObject, tras 361 resumes.
+
+| Medida | Física 90 | Física 91 |
+|---|---:|---:|
+| Tramo de arranque | 142,44 s | 47,83 s |
+| Dibujo CPU, 7835 llamadas | 86,69 s | 23,91 s |
+| Present, 360 frames | 15,15 s | 6,73 s |
+| Ciclo medio de frame | 369,52 ms | 118,52 ms |
+| Diagnóstico | 31,99 MB | 5,37 MB |
+
+La duración total se redujo a aproximadamente un tercio. Los alcances se
+solapan: frame incluye raster/Present/esperas y no se suma al tiempo de dibujo.
+El inverso del ciclo medio equivale a 8,44 frames/s en este tramo; la captura
+marca 9, sin demostrar un framerate de combate. La lectura real fue CPU 500 /
+bus 222 / GPU 222 / xbar 166 MHz: el floor no aumentó el clock existente del
+plugin. No se atribuye la mejora a una subida de frecuencia.
+
+Gráficos usados: 31.718.216 bytes de 64 MiB; quedan 60 MiB user y 108 MiB
+CDRAM libres al terminar. Se observaron 3055 dibujos LINEAR sin ninguna
+escritura: sus 4.908.800 muestras transparentes consumieron 6,13 s. Los 1075
+POINT consumieron 13,32 s y rechazaron 17.449.844 píxeles por alpha. Esto guía
+la optimización exacta de transparencia y mezcla de la iteración 92.
+
+En esta 91 no hay dispatches del worker original de audio; el preset de menú
+omite la pista de apertura. Los registros no confirman nueva reproducción
+musical, controles físicos de esta versión ni combate.
+
 ## Base física confirmada: 90
 
 Los logs y captura recibidos el 11 de octubre de 2026 muestran menú original,
@@ -88,14 +119,15 @@ con la 90. Confirmar startup_raster_policy=serial_half_resolution,
 source:320x240 en Present y lectura real de clocks. Comprobar selección de menú,
 texto/alpha, controles y audio. Si falla, conservar el core.
 
-Arranque/FPS/audio físicos de la 91 y combate: pendientes. La referencia 90
-queda conservada para comparar o recuperar el checkpoint.
+La prueba física de la 91 confirmó menú, 360 Present y reducción del tiempo.
+Audio/controles de esta versión y combate siguen pendientes de confirmación.
+Las referencias 90 y 91 quedan conservadas para comparar el siguiente paquete.
 
 ## Siguientes mejoras de recursos
 
 | Prioridad | Trabajo | Motivo / comprobación |
 |---|---|---|
-| 1 | Medir esta 91 en Vita | Separar ganancia del dibujo, Present y coste restante del guest |
+| 1 | Medir la 92 en Vita | Descarte temprano de alpha y mezcla exacta por canales empaquetados |
 | 2 | Backend GXM para quads/texturas | Trasladar filtro, modulación y blend a GPU; comparar capturas, alpha y orden de dibujo |
 | 3 | Cachear uploads GPU en UnlockRect | Un upload por modificación, mantener ownership y sincronización, evitar readback frecuente |
 | 4 | Optimizar scheduler/JIT según nuevos tiempos | El código x86 del juego es secuencial y no se reparte automáticamente entre cores |

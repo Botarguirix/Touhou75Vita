@@ -38,6 +38,8 @@ struct Settings {
     bool replace_blend=false; // D3DBLEND_ONE/ZERO with ADD.
     uint32_t filter=1; // D3DTEXF_POINT=1, D3DTEXF_LINEAR=2.
     bool hash_pixels=true; // Diagnostics only; disabling preserves every output pixel.
+    bool record_probes=true;
+    bool alpha_shortcuts=false; // Only with hashes/probes disabled; exact rejection bound.
 };
 
 // Storage owns exactly one mip level. MIP NONE/POINT/LINEAR all select that
@@ -62,6 +64,8 @@ struct Stats {
     uint32_t linear_exact=0,linear_constant=0,linear_reference=0;
     bool triangle_strip=false;
     bool hashes_valid=true;
+    bool probes_valid=true;
+    uint32_t alpha_shortcuts=0;
 };
 
 inline const char* reject_name(Reject r) {
@@ -111,12 +115,23 @@ inline uint32_t hash(uint32_t h,uint32_t color) {
     for(unsigned shift=0;shift<32;shift+=8)h=(h^((color>>shift)&255))*16777619u;
     return h;
 }
+// Exact division for the bounded products used here (0..255*255+127).
+// This also works on two independent 16-bit lanes: the intermediate maximum
+// is 65407, so the low lane cannot carry into the high lane.
+inline uint32_t divide255_pair(uint32_t value) {
+    return ((value+0x00010001u+((value>>8)&0x00FF00FFu))>>8)&0x00FF00FFu;
+}
+inline uint32_t divide255(uint32_t value) {
+    return (value+1+(value>>8))>>8;
+}
 inline uint32_t modulate(uint32_t texture,uint32_t diffuse) {
     if(diffuse==0xFFFFFFFFu)return texture;
+    if((diffuse&0x00FFFFFFu)==0x00FFFFFFu)
+        return (texture&0x00FFFFFFu) | (divide255((texture>>24)*(diffuse>>24)+127)<<24);
     uint32_t color=0;
     for(unsigned shift=0;shift<32;shift+=8) {
         const uint32_t a=(texture>>shift)&255,b=(diffuse>>shift)&255;
-        color|=((a*b+127)/255)<<shift;
+        color|=divide255(a*b+127)<<shift;
     }
     return color;
 }
@@ -124,14 +139,12 @@ inline uint32_t blend(uint32_t source,uint32_t destination) {
     const uint32_t alpha=source>>24;
     if(alpha==255)return source;
     if(!alpha)return destination;
-    uint32_t color=0;
     // D3DBLEND_SRCALPHA/INVSRCALPHA apply the source-alpha factor to all
     // four channels. Destination alpha therefore uses As*As+Ad*(1-As).
-    for(unsigned shift=0;shift<32;shift+=8) {
-        const uint32_t s=(source>>shift)&255,d=(destination>>shift)&255;
-        color|=((s*alpha+d*(255-alpha)+127)/255)<<shift;
-    }
-    return color;
+    const uint32_t mask=0x00FF00FFu,inverse=255-alpha;
+    const uint32_t rb=(source&mask)*alpha+(destination&mask)*inverse+0x007F007Fu;
+    const uint32_t ag=((source>>8)&mask)*alpha+((destination>>8)&mask)*inverse+0x007F007Fu;
+    return divide255_pair(rb) | (divide255_pair(ag)<<8);
 }
 inline uint16_t wrapped_point(double coordinate,uint32_t extent) {
     // Nearest-point sampling maps u*N-.5 to the nearest texel; floor(u*N)
@@ -197,22 +210,35 @@ inline void shade(uint32_t x,uint32_t y,const LinearAxis& ax,const LinearAxis& a
     const Image& source,const Target& target,const Settings& settings,
     unsigned bpp,uint32_t diffuse,Stats& stats) {
     uint32_t texel=sample(source_row+size_t(ax.first)*bpp,source.format);
+    uint32_t maximum_alpha=texel>>24;
+    uint32_t b=texel,c=texel,d=texel;
+    bool constant=true,exact=true;
     if(settings.filter==2) {
         if(ax.exact_weight==0 && ay.exact_weight==0)++stats.linear_exact;
         else {
-            const uint32_t b=sample(source_row+size_t(ax.second)*bpp,source.format),
-                c=sample(next_row+size_t(ax.first)*bpp,source.format),
-                d=sample(next_row+size_t(ax.second)*bpp,source.format);
-            if(texel==b && texel==c && texel==d)++stats.linear_constant;
-            else if(ax.exact_weight!=0xFFFFFFFFu && ay.exact_weight!=0xFFFFFFFFu) {
-                texel=bilinear_exact(texel,b,c,d,ax.exact_weight,ay.exact_weight);
-                ++stats.linear_exact;
-            }else {
-                texel=bilinear(texel,b,c,d,ax.weight,ay.weight);
-                ++stats.linear_reference;
-            }
+            b=sample(source_row+size_t(ax.second)*bpp,source.format);
+            c=sample(next_row+size_t(ax.first)*bpp,source.format);
+            d=sample(next_row+size_t(ax.second)*bpp,source.format);
+            maximum_alpha=std::max({maximum_alpha,b>>24,c>>24,d>>24});
+            constant=texel==b && texel==c && texel==d;
+            exact=ax.exact_weight!=0xFFFFFFFFu && ay.exact_weight!=0xFFFFFFFFu;
+            if(constant)++stats.linear_constant;
+            else if(exact)++stats.linear_exact;
+            else ++stats.linear_reference;
         }
     }
+    // Convex bilinear weights cannot exceed the largest neighbor alpha.
+    // MODULATE and nearest rounding are monotone. If this upper bound fails
+    // GREATEREQUAL, no RGB interpolation, modulation or destination access is
+    // needed. With diagnostics enabled, keep the full original sample path.
+    if(settings.alpha_shortcuts && !settings.hash_pixels && !settings.record_probes &&
+        settings.alpha_test && divide255(maximum_alpha*(diffuse>>24)+127)<settings.alpha_ref) {
+        ++stats.covered;++stats.alpha_rejected;++stats.alpha_shortcuts;
+        return;
+    }
+    if(settings.filter==2 && !constant)texel=exact?
+        bilinear_exact(texel,b,c,d,ax.exact_weight,ay.exact_weight):
+        bilinear(texel,b,c,d,ax.weight,ay.weight);
     const uint32_t color=modulate(texel,diffuse),
         before=load32(target_row+size_t(x)*4);
     uint32_t after=before;
@@ -228,9 +254,11 @@ inline void shade(uint32_t x,uint32_t y,const LinearAxis& ax,const LinearAxis& a
         ++stats.written;
         if(after!=before)++stats.changed;
     }
-    const Probe probe{x,y,ax.first,ay.first,color,before,after};
-    if(!stats.covered)stats.first=probe;
-    stats.last=probe;
+    if(settings.record_probes) {
+        const Probe probe{x,y,ax.first,ay.first,color,before,after};
+        if(!stats.covered)stats.first=probe;
+        stats.last=probe;
+    }
     ++stats.covered;
     if(settings.hash_pixels) {
         stats.hash_source=hash(stats.hash_source,color);
@@ -339,6 +367,7 @@ inline Result rasterize(const Vertex (&vertices)[4],const Image& source,
     Stats& stats,bool validate_only=false) {
     stats=Stats{};
     stats.hashes_valid=settings.hash_pixels;
+    stats.probes_valid=settings.record_probes;
     if(!source.width || !source.height || source.width>1024 || source.height>1024 ||
         !target.width || !target.height || target.width>1024 || target.height>1024 ||
         !viewport.width || !viewport.height ||

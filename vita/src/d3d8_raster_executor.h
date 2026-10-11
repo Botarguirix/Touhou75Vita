@@ -15,6 +15,15 @@ inline Result execute_serial_no_hashes(void*,const Vertex (&v)[4],const Image& s
     return rasterize(v,source,target,viewport,settings,stats);
 }
 
+// Physical 91 serial path, with unused pixel probes disabled and provably
+// rejected alpha samples skipped. No worker, cache or resource mutation.
+inline Result execute_serial_fast(void*,const Vertex (&v)[4],const Image& source,
+    const Target& target,const Viewport& viewport,const Settings& requested,Stats& stats) {
+    Settings settings=requested;settings.hash_pixels=false;
+    settings.record_probes=false;settings.alpha_shortcuts=true;
+    return rasterize(v,source,target,viewport,settings,stats);
+}
+
 inline std::array<Viewport,3> row_bands(const Vertex (&v)[4],const Viewport& vp) {
     double top=v[0].y,bottom=top;
     for(const auto& vertex:v){top=std::min(top,double(vertex.y));bottom=std::max(bottom,double(vertex.y));}
@@ -45,6 +54,8 @@ inline Stats combine_rows(const std::array<Stats,3>& parts) {
         combined.written+=p.written;combined.changed+=p.changed;
         combined.linear_exact+=p.linear_exact;combined.linear_constant+=p.linear_constant;
         combined.linear_reference+=p.linear_reference;
+        combined.alpha_shortcuts+=p.alpha_shortcuts;
+        combined.probes_valid=combined.probes_valid && p.probes_valid;
         combined.triangle_strip=combined.triangle_strip || p.triangle_strip;
         if(p.reject!=Reject::None)combined.reject=p.reject;
     }

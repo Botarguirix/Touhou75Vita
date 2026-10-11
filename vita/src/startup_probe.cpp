@@ -2,6 +2,7 @@
 #include "startup_probe.h"
 #include "startup_resume_policy.h"
 #include "startup_limits.h"
+#include "frame_budget.h"
 #include "guest_string_probe.h"
 #include "startup_services.h"
 #include "d3d8_bootstrap.h"
@@ -33,7 +34,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration91-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration92-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -99,7 +100,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration91\n");
+        fprintf(report_, "watchdog_revision=iteration92\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -279,9 +280,9 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     }
     StartupServices services(cpu, image, log);
     D3D8Bootstrap d3d8(cpu,log);
-    d3d8.set_raster_executor(d3d8_quad::execute_serial_no_hashes,nullptr);
+    d3d8.set_raster_executor(d3d8_quad::execute_serial_fast,nullptr);
     d3d8.enable_half_resolution();
-    th075::diagnostic_log(log,"startup_raster_policy=serial_half_resolution native:320x240 guest:640x480 main_user_core0 raster_workers:disabled pixel_hashes:disabled draw_state_dump:boundaries gpu:not_initialized baseline:physical90\n");
+    th075::diagnostic_log(log,"startup_raster_policy=serial_half_resolution native:320x240 guest:640x480 main_user_core0 raster_workers:disabled pixel_hashes:disabled pixel_probes:disabled alpha_shortcuts:max_neighbor_alpha_modulate packed_blend:exact draw_state_dump:boundaries gpu:not_initialized baseline:physical91\n");
     DirectInput8Bridge input(cpu,log);
     DirectSoundBootstrap sound(cpu,log);
     TrapCleanup cleanup{cpu};
@@ -556,6 +557,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
     bool stopped = false, limit = false;
     unsigned cosine_slices = 0, resume_slices = 0, import_resume_slices = 0;
     unsigned frame_wait_resumes=0;
+    th075::FrameBudget frame_budget;
     th075::diagnostic_log(log,"startup_slice_cap=32 frame_wait_extra:4 maximum:64\nstartup_time_cap_us=%llu\n",(unsigned long long)startup_limits::time_cap_us);
     th075::diagnostic_log(log,"startup_frame_scope=present:%u waits:%u\n",startup_limits::present_frames,startup_limits::frame_wait_resumes);
     auto run_until_boundary=[&](uint32_t entry,uint64_t budget) {
@@ -795,6 +797,7 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         saved.fs_base=wx86_cur_tib();
         const uint32_t error=wx86_get_lasterr(cpu),generation=services.event_generation(wait[1]);
         const uint64_t frame_started=sceKernelGetProcessTimeWide();
+        const unsigned presents_before=d3d8.present_count();
         uint32_t counter=0;uint16_t state=0;
         const uint32_t ebp=cpu.reg(d2rt::R_EBP);
         if(cpu.read(0x0066C240,&counter,4) && ebp>=kStack+0x3C && stack_range(ebp-0x3C,2) && cpu.read(ebp-0x3C,&state,2))
@@ -852,8 +855,11 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         if(!resumed){service_failed=true;break;}
         ++frame_wait_resumes;expected_boundary=false;
         run_main(wait[0],kRunBudget);
-        th075::diagnostic_log(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)(sceKernelGetProcessTimeWide()-frame_started),frame_wait_resumes);
+        const uint64_t frame_elapsed=sceKernelGetProcessTimeWide()-frame_started;
+        frame_budget.observe(frame_elapsed,d3d8.present_count()-presents_before);
+        th075::diagnostic_log(log,"startup_frame_cycle_elapsed_us=%llu cycle:%u scope:timer_and_main\n",(unsigned long long)frame_elapsed,frame_wait_resumes);
     }
+    frame_budget.log(log);
     sound.shutdown_playback();
     if(!sound.healthy()){service_failed=true;expected_boundary=false;th075::diagnostic_log(log,"startup_stop_import=NATIVE AUDIO OUTPUT ERROR\n");}
     th075::diagnostic_log(log,"startup_audio_worker_dispatches=%u scope:original_worker_real_timeouts\n",audio_dispatches);

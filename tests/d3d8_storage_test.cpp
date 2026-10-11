@@ -150,6 +150,33 @@ int main(int argc,char** argv) {
         puts("PASS shipping reduced DrawPrimitiveUP samples render-target companions and returns expanded guest readback");
     }
     {
+        Fixture f(true);f.storage.set_raster_executor(d3d8_quad::execute_serial_fast,nullptr);
+        const auto texture=f.texture(2,2);
+        assert(f.call(D3D8Storage::texture_trap,16,{texture,0,Fixture::out,0,0})==0);
+        for(unsigned i=0;i<4;++i)f.cpu.write_u32(D3D8Storage::staging+i*4,0x00112233+i*0x010203);
+        assert(f.call(D3D8Storage::texture_trap,17,{texture,0})==0);
+        const unsigned states[][2]={{7,0},{22,1},{137,0},{27,1},{15,1},{24,1},{25,7}};
+        for(const auto& state:states)assert(f.dev(50,{state[0],state[1]})==0);
+        assert(f.dev(63,{0,3,1})==0 && f.dev(63,{0,4,4})==0 && f.dev(63,{0,6,1})==0 &&
+            f.dev(76,{0x144})==0 && f.dev(61,{0,texture})==0);
+        const d3d8_quad::Vertex v[4]={{-.5f,-.5f,.5f,1,0x80FFFFFF,0,0},{639.5f,-.5f,.5f,1,0x80FFFFFF,1,0},
+            {-.5f,479.5f,.5f,1,0x80FFFFFF,0,1},{639.5f,479.5f,.5f,1,0x80FFFFFF,1,1}};
+        assert(f.cpu.write(Fixture::params,v,sizeof(v)) && f.dev(36,{0,0,1,0xFFABCDEF,0,0})==0);
+        for(unsigned filter:{1u,2u}) {
+            assert(f.dev(63,{0,16,filter})==0 && f.dev(63,{0,17,filter})==0);
+            assert(f.dev(34,{})==0 && f.dev(72,{5,2,Fixture::params,28})==0 && f.dev(35,{})==0);
+        }
+        assert(f.dev(16,{0,0,Fixture::out})==0);const auto back=f.cpu.read_u32(Fixture::out);
+        assert(f.call(D3D8Storage::surface_trap,9,{back,Fixture::out,0,0})==0);
+        for(unsigned i=0;i<640*480;++i)assert(f.cpu.read_u32(D3D8Storage::staging+i*4)==0xFFABCDEF);
+        assert(f.call(D3D8Storage::surface_trap,10,{back})==0);f.storage.report_usage();
+        std::rewind(f.log);std::string trace;char chunk[2048];while(std::fgets(chunk,sizeof(chunk),f.log))trace+=chunk;
+        assert(trace.find("alpha_shortcuts:76800")!=std::string::npos &&
+            trace.find("startup_d3d8_alpha_summary=skipped:153600 covered:153600")!=std::string::npos);
+        assert(trace.find("startup_d3d8_draw_probe=")==std::string::npos);
+        puts("PASS shipping fast executor COM draws discard transparent POINT/LINEAR samples and retain full guest readback");
+    }
+    {
         Fixture f;const auto h=f.texture(),s=f.surface(h);
         assert(f.surface(h)==s);
         assert(f.release(s,true)==2 && f.release(s,true)==1 && f.release(h)==0);
