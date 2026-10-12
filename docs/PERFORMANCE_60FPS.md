@@ -5,6 +5,26 @@ presupuesto de aproximadamente **16,7 ms/frame**, respuesta de controles y
 sonido estable en combate. Una captura del menú o una media de microbenchmark
 no acepta el juego de pelea. Todavía no se alcanzó ni se verificó ese objetivo.
 
+## Resultado físico 95 y prioridades nuevas
+
+Selección visible en Practice y Story. La traza disponible termina en
+GetTimeZoneInformation, con 188 Present, 339 no-ops de área cero y sin
+rechazo gráfico/memoria. Combate todavía no se observa.
+
+Para la escena 0065824C, 115 ciclos promedian 135,287 ms (7,39/s): raster
+64,623 ms, preparación de Present/captura 38,874 ms, resto 31,790 ms.
+El objetivo es 16,667 ms: se necesita una reducción aproximada de 8,1 veces
+en esta escena. No se extrapola su coste a combate. El resto mezcla guest,
+bridges, timer y diagnóstico; no representa sólo JIT. El máximo de carga
+8,404 s se contabiliza aparte; ningún ciclo válido cumplió el presupuesto.
+
+La prioridad de compatibilidad es la consulta de zona horaria y carga de
+partida. Para rendimiento: renderer GXM, texturas por versión, Present directo
+y perfilado del trabajo restante. Sólo retirar el raster CPU deja unos
+70,664 ms por ciclo, todavía por encima del presupuesto final. El cálculo
+describe la media actual; no predice un resultado real del backend futuro.
+[Roadmap desde selección](ROADMAP_AFTER_SELECTION95.md).
+
 ## Actualización física 94 y prueba 95
 
 La 94 salió del título y cargó 73,81 MiB gráficos sin el rechazo de memoria.

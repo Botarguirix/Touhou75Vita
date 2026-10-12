@@ -87,3 +87,27 @@ Se conservan 1800 Present/300 s y watchdog 330 s. Selección visible, combate
 y 60 FPS siguen pendientes.
 
 [Ruta jugable](PLAYABLE_PATH.md) · [60 FPS](PERFORMANCE_60FPS.md).
+
+## Resultado físico recibido de la 95
+
+El usuario confirmó selección visible en Practice y Story; ambas capturas
+terminan después de confirmar personaje con GetTimeZoneInformation. Una
+muestra 188 Present y otra 191; se recibió un único juego de logs, con 188
+Present/189 esperas, cuatro Cross/Z y una salida del título a 0065824C.
+Se procesaron 339 draws de área cero sin rechazo de geometría. No hay error
+de asignación ni límite CPU; el watchdog se desarmó. El servicio de zona
+horaria todavía no se ejecutó. Combate queda pendiente.
+
+Gráficos: 77.396.808 bytes (73,81 MiB), 399/512 handles; heap en uso
+91.916.456/134.217.728 bytes. Selección: 115 ciclos, media 135,287 ms,
+7,39 ciclos/s; raster 64,623 ms, Present/captura 38,874 ms y resto 31,790 ms.
+La mediana de todos los ciclos es 134,391 ms; 0/187 cumplen 16,667 ms.
+La carga máxima de 8,404 s se analiza por separado.
+
+Audio: 1205 bloques, máximo entre envíos 289,534 ms, un intervalo mayor que
+dos bloques, lateness guest 15,858 s. No hay reporte de audibilidad para esta
+corrida ni contador de underrun físico. Esta medición requiere seguimiento.
+
+La selección visible y su navegación quedan comprobadas para las rutas
+mostradas. La siguiente prioridad es GetTimeZoneInformation y la carga de
+partida. [Nuevo roadmap](ROADMAP_AFTER_SELECTION95.md).

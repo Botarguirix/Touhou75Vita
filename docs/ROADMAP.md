@@ -1,273 +1,38 @@
-# Roadmap actual — iteración 95
+# Roadmap actual — selección visible en la 95
 
-Física 94 confirmó la salida del título y cargó recursos de selección con
-73,81 MiB gráficos. La frontera pasó a DrawPrimitiveUP/quad, sin error de
-memoria. La 95 soporta dos triángulos de área exactamente cero sin fragmentos
-y conserva los vértices originales al detenerse bajo log compacto. La escala
-inicial cero del EXE es una causa probable, todavía sin replay físico exacto.
+La selección ya se presenta en **Practice y Story**. Las dos capturas terminan
+en GetTimeZoneInformation. La traza disponible registra 188 Present, 339 draws
+de área cero aceptados y 73,81 MiB gráficos, sin rechazo de memoria/geometría.
+El siguiente paso es atender la consulta de zona horaria y continuar la carga.
 
-1. Verificar la presentación completa de selección física 95 y capturar la
-   siguiente frontera real; conservar 320×240 y memoria acotada.
-2. Llegar a combate y validar controles, HUD, sonido y estabilidad.
-3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
-4. Reducir guest/otras APIs/scheduler con medidas por escena/carga.
-5. Verificar 60 actualizaciones/frames por segundo y recuperar calidad.
+Estamos más cerca del primer combate. Selección mide 135,287 ms por ciclo
+(7,39/s); el objetivo de 60 FPS exige unos 16,667 ms, además de lógica e input
+correctos. Combate y rendimiento final todavía requieren evidencia física.
 
-158 grupos C++ y 11 pruebas Python; build/paquete 95 comprobados.
-Selección visible, combate y 60 FPS siguen pendientes.
-[Reporte 95](STATUS_ITERATION95.md) · [Recursos y fases](PLAYABLE_PATH.md).
+| Orden | Hito | Resultado exigido |
+|---|---|---|
+| 1 | GetTimeZoneInformation, propuesta 96 | Contrato x86/RTC probado y confirmación de personaje supera esa API |
+| 2 | Carga de Practice y Story | Logs separados registran la siguiente escena y sus recursos |
+| 3 | Combate visible | Arena, dos personajes y HUD en varios frames sucesivos |
+| 4 | Combate controlable | Movimiento, salto, ataques, guardia, dash y pausa comprobados |
+| 5 | Renderer GXM | Selección GPU comparada con CPU, con menor tiempo medido |
+| 6 | Texturas/Present | Upload por cambio y presentación directa, con coherencia y ownership |
+| 7 | Guest y carga | Hot paths, imports, DAT y trabajo auxiliar optimizados con regresiones |
+| 8 | Cadencia y audio | 60 updates/frames por segundo, controles y sonido estables |
+| 9 | Rondas y modos | Reinicios/cambios y avance Story sin fugas ni nuevas fronteras |
+| 10 | Aceptación y calidad | Combate a 60 FPS durante 10 minutos y recuperación gradual de resolución |
 
-## Historial de la 94
+[Roadmap detallado, evidencias y condiciones de cierre](ROADMAP_AFTER_SELECTION95.md)
+· [Recursos de reconstrucción](PLAYABLE_PATH.md)
+· [Mediciones de rendimiento](PERFORMANCE_60FPS.md).
 
-# Roadmap actual — iteración 94
+Se conserva el menú directo, 320×240 provisional, raster serial, audio/input
+nativos y arte DAT de Alice. El trabajo GPU puede comenzar con selección
+como referencia mientras se completa combate. No hay una estimación fiable
+de cuántas iteraciones faltan. El VPK 96 aún no se ha generado.
 
-Física 93 confirmó Cross/Z y terminó en el error original de creación de
-textura: 66.386.760 bytes usados frente a 64 MiB, con una última imagen de
-selección de 2 MiB pendiente. La 94 permite 96 MiB dentro del heap existente,
-entra directamente al título sin logo/fade inicial y usa arte original DAT.
+## Historial
 
-1. Verificar menú directo y selección física 94; resolver la siguiente
-   frontera real de API, geometría o memoria con 320×240 provisional.
-2. Llegar a combate básico y validar controles, HUD, sonido y estabilidad.
-3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
-4. Reducir guest/otras APIs/scheduler a partir de medidas por escena.
-5. Verificar 60 actualizaciones/frames por segundo y después recuperar calidad.
-
-151 grupos C++ y 11 pruebas Python locales; build/paquete 94 comprobados.
-Selección física, combate y 60 FPS siguen pendientes.
-[Recursos y fases](PLAYABLE_PATH.md) · [Reporte 94](STATUS_ITERATION94.md).
-
-## Historial de la 93
-
-# Roadmap actual — iteración 93
-
-Física 92 completó 360 Present y terminó por límite de prueba. Raster: 19,42 s;
-menú: 121,71 ms de ciclo medio, 8,22 frames/s, 0/337 dentro de 16,7 ms. El usuario
-reporta negro al confirmar; el log recibido sólo muestra flechas y logo/título.
-La 93 amplía sesión/input/seguimiento y reduce el trabajo de miniatura.
-
-1. Verificar Cross/Z y entrada real a Practice/selección; resolver la frontera
-   de API, geometría, carga o recursos observada, con 320×240 provisional.
-2. Llegar a combate básico y validar controles, HUD, sonido y estabilidad.
-3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
-4. Reducir guest/otras APIs/scheduler: el resto físico 92 es 32,44 ms por ciclo.
-5. Verificar 60 actualizaciones/frames por segundo y después recuperar calidad.
-
-147 grupos C++ y 6 pruebas Python locales; build/paquete 93 comprobados.
-La corrida física 93 y combate jugable siguen pendientes.
-[Recursos y fases](PLAYABLE_PATH.md) · [Reporte 93](STATUS_ITERATION93.md).
-
-## Historial de la 92
-
-## Plan previo — iteración 92
-
-Física 91 completó menú y 360 Present sin excepción: 47,83 s total y
-23,91 s de raster CPU, frente a 142,44 / 86,69 s de la 90. Captura: 9 FPS;
-clocks leídos: CPU 500 / bus 222 del plugin existente. La 92 conserva los
-mismos píxeles y optimiza transparencia/mezcla, con 131 grupos C++ y 5 pruebas Python locales.
-
-1. Medir física 92: presupuesto 16,7 ms / 60 FPS, percentiles, alpha y menú.
-2. Implementar y verificar quads/texturas D3D8 sobre GXM; uploads, alpha,
-   blend/filtros, ownership y sincronización con referencia/fallback CPU.
-3. Optimizar scheduler/JIT a partir del coste restante medido.
-4. Si hace falta pool CPU: pthread registrado o kernel sync, comprobar en
-   Vita espera/TLS/afinidad/teardown antes de activarlo.
-5. Continuar selección de personaje/combate y servicios realmente solicitados.
-
-La GPU y el pool corregido siguen pendientes. El preset omite la apertura
-musical. Los DAT y EXE originales permanecen fuera de Git.
-
-[Recursos PC y objetivo 60 FPS](PERFORMANCE_60FPS.md) ·
-[Informe de la 92](STATUS_ITERATION92.md) ·
-[Comprobaciones de la 92](EXE_CHECKLIST_ITERATION92.md) ·
-[Evidencia física de la 91](STATUS_ITERATION91.md) ·
-[Regresión 87–89 y recuperación 90](STATUS_ITERATION90.md)
-
-## Historial anterior
-
-# Touhou 7.5 Vita port roadmap
-
-## Current checkpoint — iteration 90, version 01.94
-
-Physical 86 confirmed the original menu, controls and clean effects.
-The multicore integration in 87 caused successive startup failures: omitted
-pthread activation in 87, omitted emutls initialization in 88, then an
-unregistered OS pthread cancellation context in the first raw raster worker
-in 89. Physical 89 passes preflight/VM/JIT and original initialization.
-
-90 uses the serial renderer from the confirmed checkpoint; the raster pool
-is no longer included in the application's ELF/SELF. Reduced diagnostic
-hashing and the native TLS link corrections remain. 110 portable groups,
-sanitizers, VitaSDK, ELF/SELF and package checks passed. Physical recovery
-is pending; the pool's lifecycle must be corrected before reactivation.
-
-| Milestone | Evidence / remaining work |
-|---|---|
-| Menu/input | Physical 86 confirmed; recheck serial recovery in 90. |
-| Native PCM | Complete music in 85, clean menu effects in 86; recheck in 90. |
-| Multicore raster | 87–89 crashes diagnosed; disabled in 90; registered thread lifecycle and physical validation pending. |
-| GPU | GXM/libvita2d investigated; backend pending. |
-| Match | Real character selection, gameplay, collision, audio and return to menu pending. |
-
-360 Present / 361 waits / 180 s / 210 s watchdog / 12288 draws /
-768 Mi pixels / 64 MiB graphics / 1024 audio dispatches remain bounded.
-[Comparison/status/package](STATUS_ITERATION90.md), [checks](EXE_CHECKLIST_ITERATION90.md),
-[CPU/GPU investigation](PERFORMANCE_ITERATION87.md).
-
-Historical observations follow below.
-
-## Phase 0 — reproducible diagnostic shell (complete)
-
-- Build and install a Vita application without proprietary game files in the repository.
-- Verify the Japanese PE32 image, SHA-256, x86 register smoke tests, IAT bridge, heap, file, TEB/FS, TLS and process services.
-- Record every run in a versioned log and show the active iteration on screen.
-
-## Phase 1 — deterministic original entrypoint (checkpoint reached)
-
-Goal: execute the original PE entrypoint far enough to observe a stable import boundary.
-
-1. Serve `GetVersionExA`, `GetModuleHandleA` and `HeapCreate` with correct stdcall stack cleanup.
-2. Serve `HeapAlloc`, `HeapFree` and `HeapSize` using a bounded guest heap.
-3. Add an instruction trace and repeated-EIP guard so loops and bad returns are diagnosed instead of silently consuming budget.
-4. Reach and record the first unsupported import after allocator initialization.
-
-Hardware iteration 23 reached GetACP after HeapCreate, three HeapAlloc calls
-and critical-section acquisition. Entry and import interception work, but
-complete HeapFree/HeapSize behavior and instruction-level tracing remain work.
-
-## Phase 2 — Win32 startup surface (partially implemented)
-
-- Implement the small KERNEL32/USER32 contracts observed by the Japanese executable.
-- Add file, timing, window, input and thread shims only when the log proves they are needed.
-- Keep each service independently testable on Vita.
-
-## Phase 3 — graphics and audio replacement (current)
-
-- Replace Direct3D 8 with a Vita renderer while preserving the game's resource and draw semantics.
-- Replace DirectSound/MIDI paths with Vita audio services.
-- Validate a title screen and one interactive scene before attempting full gameplay.
-
-## Phase 4 — assets, input and save data
-
-- Load the user's external Touhou data files from `ux0:data/TH075Vita`.
-- Map keyboard commands to Vita controls.
-- Add configuration, save paths and clean shutdown.
-
-## Phase 5 — playable port and release validation
-
-- Boot to menu, start a match, complete a round, and return to menu.
-- Test on the remaining Vitas only after one device is stable.
-- Package a reproducible VPK and document required original files and hashes.
-
-### Current success criteria
-
-Hardware iteration 24 returned from GetACP and GetCPInfo with the Japanese
-CP932 profile and reached GetStringTypeW. Hardware iteration 25 passed that
-probe and reached MultiByteToWideChar. Iteration 26 adds CP932 decoding and
-classification of its character repertoire to continue CRT initialization.
-Hardware iteration 26 decoded and classified a 256-character block and reached
-LCMapStringW. Iteration 27 adds case mapping and reverse CP932 encoding.
-Hardware iteration 27 completed those operations and released its critical
-section. Iteration 28 serves GetModuleFileNameA for the original executable.
-Hardware iteration 28 returned that path and reached the extensionless kernel32
-query. Iteration 29 resolves that alias and the CRT's processor erratum query.
-Hardware iteration 29 passed both and reached SetUnhandledExceptionFilter.
-Iteration 30 implements filter registration state; exception dispatch remains
-an independent missing subsystem.
-Hardware iteration 30 R2 registered the filter and reached HeapReAlloc.
-Iteration 31 tracks allocations, corrects HeapSize/HeapFree and preserves
-contents on resizing. Free-space recycling remains needed for sustained play.
-Hardware iteration 31 returned HeapSize=128 and reached GetSystemTimeAsFileTime
-without a limit hit. Its changed path did not exercise HeapReAlloc.
-Iteration 32 adds UTC time, guest process identity and monotonic clocks for
-the CRT initialization routine, with output readback and explicit clock sources.
-Hardware iteration 32 passed the observed clocks and reached the repeated
-GetModuleHandleA(NULL) query just before the call to 0x00602A60. Iteration 33
-corrects that query contract; reaching its return site alone is not proof that
-the game function executed or that the game booted.
-Hardware iteration 33 reached timeBeginPeriod(1) in the helper called from the
-game's main function, providing evidence of game initialization execution.
-Iteration 34 serves that timer request and checks its saved caller chain.
-Hardware iteration 34 verified the saved game-entry caller chain, returned the
-timer request and reached CreateEventA. Iteration 35 tracks unnamed events;
-blocking waits and actual guest workers remain scheduler work.
-Hardware iteration 35 created the event and reached CreateThread. Iteration 36
-diagnoses the original worker's first import with its own stack/TEB while the
-main remains stopped. Full scheduling and thread creation remain required.
-Hardware iteration 36 executed the worker to its first WaitForSingleObject.
-Iteration 37 saves that wait context and resumes main after the observed
-CreateThread. Continuous scheduling, event/time wakeups and priority handling
-are still required; this is only the initial context handoff.
-Hardware iteration 37 passed the initial handoff and reached SetThreadPriority.
-Iteration 38 batches four independent event/heap/clock service checks to improve
-hardware coverage per install; it retains that original startup boundary.
-Hardware iteration 38 passed all four service checks. Iteration 39 expands
-coverage to ten checks, including closed handles, failure preservation, TLS,
-Japanese conversion, LastError and pathname buffer boundaries. These checks
-retain the original SetThreadPriority startup boundary.
-Hardware iteration 39 passed ten service checks. Iteration 40 adds ten more,
-serves worker priority state and dispatches one real timed wake, recording the
-next worker/main boundary. Continuous scheduling and rendering remain pending.
-The next major milestone is returning from game initialization's synchronization
-and thread setup. Then record actual game asset requests and
-the first graphics calls before implementing a renderer for a real game frame.
-No reliable iteration count or completion percentage is available yet.
-
-Hardware iteration 40 passed twenty cases, resumed the original worker after
-its real timeout and reached SetCurrentDirectoryA on main. Iteration 41 mounts
-the application directory and serves the observed logical window dimensions,
-with 100 individual service cases per installation. Next priorities are the
-actual resource/window boundary, guest window creation, then a real game frame
-through the graphics backend. The diagnostic screen is not a game title screen.
-Hardware iteration 41 passed 100 service cases and reached LoadIconA after the
-original directory setup and seven window metric queries. Iteration 42 adds
-200 cases (300 total) while preserving this original EXE boundary. The next
-implementation priority is real PE icon/resource loading, followed by window
-registration/creation and the graphics backend for an original game frame.
-Hardware iteration 42 passed 300 cases and remained at LoadIconA. Iteration 43
-loads and decodes real PE icon resources and records the guest window class,
-retaining an explicit CreateWindowExA boundary until synchronous callbacks
-exist. Windows D3D8 trace and archive inventory now provide concrete texture,
-draw, render-target and shader requirements for the graphics implementation.
-
-Hardware iteration 43 decoded and displayed the EXE icon and registered its window class, then stopped at CreateWindowExA with 300/300 cases passing. Iteration 44 adds synchronous WM_NCCREATE, WM_NCCALCSIZE and WM_CREATE execution in the original WndProc, an owned logical window surface and verification of the original create flag. Hardware callback validation, visibility/message handling and Direct3D rendering are the next milestones.
-
-Hardware iteration 44 validated all three original window creation callbacks and stopped at ShowWindow. Iteration 45 extracts 272 system images on the host, adds a direct DAT title-frame reader/preview on Vita, adds visibility callbacks and packages local LiveArea identity art. Next priorities are UpdateWindow/message processing, original file-access/texture upload integration and the D3D8 renderer. Resource previews and LiveArea art do not establish game boot.
-
-Hardware iteration 45 confirmed original visibility callbacks and DAT preview, then stopped at UpdateWindow. Iteration 46 removes the 300-case batch, adds native paint/COM/read-only file services and logs the actual stopping API. The Windows title trace was replayed and summarized: 35 Direct3D API functions plus memcpy before the reference frame. Next major work is guest D3D8 interface ownership and the Vita graphics backend feeding original EXE textures/draw calls.
-
-Hardware iteration 46 completed window paint and COM registration, then
-exhausted a CPU slice at 0064175D inside original cosine initialization.
-Iteration 47 observes the 3600-entry table loop through bounded stack frames
-and continues only that loop under slice/progress/time bounds. CPU-limit
-screens identify the final EIP instead of an earlier import. Synthetic
-batch cases remain disabled; actual resource loading and Direct3D rendering
-are still needed before claiming original title-screen boot.
-
-Hardware iteration 47 advanced through the original cosine initializer and
-read th075.dat's header and 215-entry directory through the original EXE.
-The next slice expired at the CRT SEH setup helper after 62 HeapAlloc calls.
-Iteration 48 extends bounded continuation to verified executable sections,
-logging sampled CPU/stack state and import/allocation counts while retaining
-the 16-slice cap, elapsed-time bound and independent watchdog.
-
-Hardware iteration 48 read all three archive directories and reached the
-game's write-only log.txt creation without a CPU limit. Iteration 49 adds
-the observed log creation/reopening and synchronous write path, and groups
-diagnostic writes by import boundary. The next milestone is returning from
-original logging and reaching actual resource/graphics initialization.
-
-Hardware iteration 49 completed original logging and reached Direct3DCreate8
-in 5.3 seconds. Iteration 50 adds an owned IDirect3D8 root/vtable and COM
-lifetime methods, with an explicit GetDeviceCaps boundary. Original static
-control flow includes that query even though the existing apitrace dump
-omits it. Native device/rendering and truthful capability reporting remain
-the next graphics milestones.
-
-Hardware iteration 50 validated the owned D3D8 root and original GetDeviceCaps
-dispatch. Reference pass 51 ran the original Windows EXE again to the menu,
-extracted and verified 286 archive entries and compared actual upload blobs
-against effective system PNGs: 225/226 uploads matched, including all title
-layers after applying the original 24-bit black color key. The remaining
-upload is a verified black rectangle, with no DAT source match. This pass
-improves the renderer's asset contract but does not provide a new Vita VPK.
+Los planes y evidencias anteriores quedan en los reportes
+[92](STATUS_ITERATION92.md), [93](STATUS_ITERATION93.md),
+[94](STATUS_ITERATION94.md) y [95](STATUS_ITERATION95.md).

@@ -1,20 +1,20 @@
 # Recursos y ruta hacia combate jugable
 
-## Orden de trabajo
+## Orden de trabajo actualizado con la física 95
 
-| Fase | Evidencia necesaria | Próximo cambio |
+| Fase | Estado observado | Próximo cambio |
 |---|---|---|
-| Menú → opción | Z entregado, escena o frontera nueva | Iteración 93: input histórico, sesión ampliada y seguimiento |
-| Selección → carga | Personajes/escenario y solicitudes reales | Implementar sólo contratos/formatos observados, validar ownership |
-| Combate básico | Movimiento, ataques, guardia, HUD y audio | Completar geometría/estados/API que efectivamente use el combate |
-| 60 FPS | Actualizaciones y frames completos ≤16,7 ms sostenidos | GXM + uploads por cambio + hot paths x86 medidos |
-| Calidad | Combate estable con margen de tiempo/memoria | Recuperar resolución y verificar transparencias/texto |
+| Menú → selección | Selección visible y controles en Practice/Story | Conservar regresiones e identidad de la 95 |
+| Selección → partida | Ambas capturas paran en GetTimeZoneInformation | Implementar contrato x86/RTC; recoger las nuevas solicitudes de carga |
+| Combate básico | Pendiente de presentación, HUD y control | Resolver sólo recursos, geometría, mezcla y APIs observadas |
+| 60 FPS | Selección medida en 7,39 ciclos/s | GXM, upload por cambio, Present directo y hot paths guest medidos |
+| Calidad | 320×240 provisional | Recuperar resolución después de estabilidad y margen de tiempo/memoria |
 
-La reducción de resolución es válida como perfil provisional. La resolución
-original no se recuperará antes de medir el coste de escenas y combate.
-Un contador instantáneo o un menú correcto no prueba velocidad de lógica ni
-jugabilidad. El objetivo se mantiene en 60 FPS; todavía no hay una estimación
-fiable que garantice alcanzarlo con el runtime actual.
+Un único juego de logs no identifica por separado las dos corridas. Se deben
+guardar logs de Practice y Story por separado. Las reglas de aceptación y
+los diez pasos están en el [roadmap detallado](ROADMAP_AFTER_SELECTION95.md).
+El objetivo continúa en 60 updates/frames por segundo; todavía no se puede
+garantizar con el runtime actual.
 
 ## Uso concreto de la reconstrucción
 
@@ -72,6 +72,6 @@ render targets, shaders y sincronización. La documentación de
 [SceCtrl](https://docs.vitasdk.org/group__SceCtrlUser.html) respalda Peek no
 bloqueante de hasta 64 muestras con timestamp usado en la 93.
 
-Primero recoger la transición real. Después integrar quads GPU con comparación
-de capturas y perfil de tiempos; finalmente optimizar funciones guest calientes
-que sigan fuera del presupuesto. [Mediciones de 60 FPS](PERFORMANCE_60FPS.md).
+La transición a selección ya está observada. Atender la zona horaria y
+recoger la carga de partida; preparar el backend GPU con selección como
+referencia y optimizar las funciones guest que sigan fuera del presupuesto. [Mediciones de 60 FPS](PERFORMANCE_60FPS.md).
