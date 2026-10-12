@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [ main ]
   push:
-    branches: [ main ]
+    branches: [ main, codex/d2vita-runtime-review ]
 
 jobs:
   build-vita:
@@ -25,13 +25,35 @@ jobs:
           command -v vita-mksfoex
           command -v vita-pack-vpk
 
+      - name: Build WinVita ARMv7 runtime
+        working-directory: third_party/winvita
+        run: TARGET=vita bash build.sh
+
       - name: Build
         working-directory: vita
         run: make
 
+      - name: Verify C++ thread activation
+        run: |
+          arm-vita-eabi-nm vita/build/touhou75_vita > vita/build/native-symbols.txt
+          grep -Eq '^[[:xdigit:]]+ T pthread_cancel$' vita/build/native-symbols.txt
+          grep -Eq '^[[:xdigit:]]+ T pthread_once$' vita/build/native-symbols.txt
+          grep -Eq '^[[:xdigit:]]+ T pthread_cond_destroy$' vita/build/native-symbols.txt
+          if grep -Eq '^[[:space:]]+[Uw] pthread_' vita/build/native-symbols.txt; then
+            echo 'Referenced pthread function omitted from static link'
+            exit 1
+          fi
+
+      - name: Show linked ELF segments
+        if: always()
+        run: |
+          if [ -f vita/build/touhou75_vita ]; then
+            arm-vita-eabi-readelf --program-headers --wide vita/build/touhou75_vita
+          fi
+
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-vpk
+          name: Touhou75Vita-iteration96-time-zone-vpk
           path: vita/build/*.vpk
           if-no-files-found: error

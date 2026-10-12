@@ -1,0 +1,182 @@
+# Recursos de PC y objetivo: 60 FPS en Vita
+
+La aceptación es **60 actualizaciones y frames completos por segundo**, con
+presupuesto de aproximadamente **16,7 ms/frame**, respuesta de controles y
+sonido estable en combate. Una captura del menú o una media de microbenchmark
+no acepta el juego de pelea. Todavía no se alcanzó ni se verificó ese objetivo.
+
+## Resultado físico 95 y prioridades nuevas
+
+Selección visible en Practice y Story. La traza disponible termina en
+GetTimeZoneInformation, con 188 Present, 339 no-ops de área cero y sin
+rechazo gráfico/memoria. Combate todavía no se observa.
+
+Para la escena 0065824C, 115 ciclos promedian 135,287 ms (7,39/s): raster
+64,623 ms, preparación de Present/captura 38,874 ms, resto 31,790 ms.
+El objetivo es 16,667 ms: se necesita una reducción aproximada de 8,1 veces
+en esta escena. No se extrapola su coste a combate. El resto mezcla guest,
+bridges, timer y diagnóstico; no representa sólo JIT. El máximo de carga
+8,404 s se contabiliza aparte; ningún ciclo válido cumplió el presupuesto.
+
+La prioridad de compatibilidad es la consulta de zona horaria y carga de
+partida. Para rendimiento: renderer GXM, texturas por versión, Present directo
+y perfilado del trabajo restante. Sólo retirar el raster CPU deja unos
+70,664 ms por ciclo, todavía por encima del presupuesto final. El cálculo
+describe la media actual; no predice un resultado real del backend futuro.
+[Roadmap desde selección](ROADMAP_AFTER_SELECTION95.md).
+
+## Actualización física 94 y prueba 95
+
+La 94 salió del título y cargó 73,81 MiB gráficos sin el rechazo de memoria.
+La parada posterior es DrawPrimitiveUP/quad durante el primer render de
+selección. Los 44 ciclos previos a la carga promedian 149,167 ms (6,70/s);
+la carga añade 8,639 s y ninguno cumple 16,667 ms. El contador 81 de la imagen
+adjunta corresponde a una captura de la 93, no acredita 81 FPS en la 94.
+
+La 95 acepta dos triángulos de área exactamente cero sin escribir ni muestrear,
+con validación previa y conservación de vértices en futuras fronteras. Esto
+busca completar selección; no prueba mejora del FPS sostenido ni combate.
+[Prueba 95](STATUS_ITERATION95.md).
+
+## Actualización física 93 y prueba 94
+
+La 93 registró Cross/Z y falló al crear la última textura de selectchar.dat:
+el límite de 64 MiB rechazó 2 MiB adicionales con 66.386.760 bytes usados.
+La 94 mantiene la memoria acotada a 96 MiB, salta la construcción del logo
+y muestra el título sin fade inicial. Esto elimina trabajo de arranque y
+habilita la asignación rechazada; no demuestra una mejora del FPS sostenido.
+Selección, combate y 60 FPS todavía requieren evidencia física.
+[Prueba 94](STATUS_ITERATION94.md).
+
+## Actualización física 92 y prueba 93
+
+La 92 completó 360 Present en 49,215 s, con 19,421 s de dibujo. En 337 ciclos
+de menú: 121,707 ms/8,216 frames por segundo; dibujo 54,122 ms, Present/captura
+35,147 ms y resto 32,438 ms. 0/337 cumplieron 16,667 ms. Cambian selección/input
+entre corridas; el menor raster no demuestra un FPS total mayor.
+
+El usuario informa negro al confirmar Cross. El log recibido no registra Z ni
+salida del título, y termina por el límite normal. La 93 registra esa transición,
+conserva taps breves, amplía la prueba a 1800 Present/300 s y reduce divisiones
+del preview. El objetivo de 60 FPS y el combate físico siguen pendientes.
+[Prueba 93](STATUS_ITERATION93.md) · [Recursos y ruta jugable](PLAYABLE_PATH.md).
+
+## Requisitos originales publicados para PC
+
+| Recurso | Mínimo | Recomendado |
+|---|---|---|
+| CPU Pentium o compatible | 800 MHz | 1,2 GHz |
+| RAM | 256 MB | 512 MB |
+| Video DirectX 8 | 32 MB VRAM | 128 MB VRAM |
+| Sistema | Windows XP/2000 | Los mismos |
+| Instalación | Aproximadamente 1,1 GB | — |
+
+El fabricante también destaca la importancia de la tarjeta gráfica.
+[Requisitos oficiales de TH075](https://tasofro.net/touhou/index.html).
+La interpretación para el port es que necesitamos trasladar las operaciones
+D3D8 a GPU y reducir el coste de traducir x86 a ARM. GHz de Pentium, Cortex-A9
+y PC actual no son una equivalencia directa de velocidad.
+
+El equipo usado para las pruebas host tiene Core i5-1135G7, cuatro cores/ocho
+hilos e Iris Xe, según consulta local de Windows. Nuestros microbenchmarks usan
+CPU; no prueban DirectX ni simulan el rendimiento de la Vita a 500 MHz.
+El EXE/DAT original está disponible localmente, pero estas pruebas no ejecutan
+el juego completo en PC ni sustituyen una medición física en la consola.
+
+## Recursos útiles revisados
+
+- [TH075 de N0zoM1z0](https://github.com/N0zoM1z0/th075) identifica el mismo
+  EXE japonés 1.11 y publica reconstrucción/comparación por funciones. El
+  estado consultado declara 60 funciones exactas entre 4351 candidatos;
+  no es todavía un motor completo recompilable para ARM.
+- La copia local revisada identifica DrawTexturedQuad en 004029F0 (857 bytes)
+  y DrawProjectedTriangleStrip en 00403200 (507 bytes), ambas exactas. Su
+  fuente muestra queries GetSurfaceLevel/GetDesc/Release, UV/offsets, color y
+  DrawPrimitiveUP. Esto ayuda a priorizar futuras sustituciones de wrappers
+  y a validar el backend, conservando ABI, FPU, fingerprints y ownership.
+  No se ha aplicado una sustitución x86→ARM de estas funciones en la 92.
+- [apitrace](https://github.com/apitrace/apitrace) registra/reproduce llamadas
+  gráficas y permite inspeccionar estados. El entorno ya contiene su build
+  Win32 y wrapper D3D8. Una futura traza PC del mismo EXE permite comparar
+  orden de draws, texturas, alpha/filtros y Present con el port.
+- [Ghidra](https://github.com/NationalSecurityAgency/ghidra) ofrece análisis y
+  decompilación del EXE. Sus resultados requieren reconciliar ABI, globals,
+  llamadas y efectos; no producen automáticamente un port ARM completo.
+- [VitaSDK GXM](https://docs.vitasdk.org/group__SceGxmUser.html) y
+  [libvita2d](https://github.com/xerpi/libvita2d/blob/master/libvita2d/source/vita2d.c)
+  son las referencias para contexto GPU, targets y presentación. Deben
+  adaptarse al perfil D3D8 observado, alpha de RT, filtros y sincronización.
+- [Box86](https://github.com/ptitSeb/box86/blob/master/docs/USAGE.md) documenta
+  knobs de JIT. El runtime vendorizado ya compila ARMv7/NEON -O2 y usa
+  BIGBLOCK=2, STRONGMEM=0, FASTNAN=1, FASTROUND=1 y X87DOUBLE=0. No se debe
+  presentar como mejora activar algo ya activo, ni variar precisión sin
+  comparación semántica. CALLRET/forward y funciones nativas requieren A/B
+  con el runtime vendorizado y comprobación física de código/contextos.
+
+## Qué falta, según la física 91
+
+Se separan ciclos con exactamente un Present, y menú por vtable 00658308.
+La inicialización, ciclos sin Present y ciclos incompletos no se usan para
+inventar FPS. En menú hubo 337 ciclos válidos:
+
+| Alcance | Media |
+|---|---:|
+| Ciclo timer + main | 114,57 ms (8,73 frames/s) |
+| Dibujo CPU dentro del ciclo | 65,34 ms |
+| Present/conversión/espera de scanout | 16,49 ms |
+| Resto: guest + otras APIs + timer/logs | 32,74 ms |
+| p95 / p99 del ciclo | 165,64 / 219,77 ms |
+| Ciclos dentro de 16,667 ms | 0 de 337 |
+
+No sumar el ciclo a sus componentes. Present incluye espera de refresco;
+un backend GPU asíncrono debe permitir solapar preparación/dibujo sin añadir
+una espera completa a un frame ya tardío. La GPU puede reducir el raster,
+pero el resto observado supera por sí solo un presupuesto de 60 FPS.
+No se infiere que toda esa diferencia sea tiempo de JIT.
+
+## Iteraciones locales hechas y próximo orden
+
+1. Referencia física 91 y replay con su header exacto c3ac4fa.
+2. Candidato 92: alpha temprano, mezcla empaquetada y probes omitidos.
+   Salidas idénticas; 384 geometrías, formatos y estados, oracle escalar,
+   casos COM/readback y ASan/UBSan. Microbenchmarks host en tres perfiles.
+3. Candidato final 92: telemetría del presupuesto, seis casos de límites y
+   cuantiles; analizador Python con cinco pruebas. Nuevo VPK nativo y auditoría
+   completa del paquete. La telemetría no cambia el ritmo del juego.
+4. Siguiente: comparar 92 física, ubicar el coste real de guest/otras APIs,
+   y portar quads/texturas a GXM con fallback CPU y captures comparativas.
+5. Después: uploads por cambio, cache/ownership y batching donde el orden y
+   estados lo permitan; sustituciones nativas de funciones calientes solo
+   con fingerprints y replay de ABI/FPU/side effects del EXE identificado.
+6. Verificar selección, combate y todos sus perfiles realmente solicitados.
+   Audio en su worker nativo ya probado; lógica x86 secuencial conserva orden.
+
+El pipeline final no se acepta por un 60 impreso: comprobar tiempo por frame,
+velocidad de juego, menú/combate, input, sonido y estabilidad. El pool raw que
+falló en 87–89 sigue desactivado; no es una prueba de que los cores sean inútiles.
+
+## Analizador reproducible
+
+Desde el repositorio, con Python:
+
+```sh
+python tools/analyze_frame_budget.py RUTA/iteration92.log --output budget92.json
+python tests/test_frame_budget_analysis.py
+```
+
+El VPK 92 también escribe startup_60fps_budget, con frames/within/missed,
+p50/p95/p99 y exclusiones explícitas. Para alcanzar la meta se necesitará
+medir un combate sostenido y reducir las colas/tardanzas; la corrida actual
+está acotada a 360 Present y no constituye una validación de combate.
+
+## Prueba final preparada para Vita
+
+Instalar **Iteration 92 Alpha Fast Path / 01.96** del VPK local, mantener los
+mismos plugins/clocks de la 91, completar el menú y mover selección. Conservar
+la captura/FPS y los cuatro logs. Revisar preflight, 360/360 Present,
+startup_d3d8_alpha_summary y startup_60fps_budget. Comparar con 91 antes de
+mezclar otros cambios. Si se entra a Practice/selección y surge una nueva
+API o geometría, conservar esa frontera y el core si hay excepción.
+
+Los 60 FPS físicos de la 92 y el combate están **pendientes**. Este es el
+paquete final de la tanda local, preparado para la medición en consola.

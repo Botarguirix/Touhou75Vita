@@ -1,0 +1,26 @@
+# Extract of user-supplied hardware logs, reviewed 2026-09-30.
+# This is not a complete copy of either log.
+build_id=iteration08-winvita-iat-bridge-r2
+target_cpu=ARMv7
+game_entrypoint=not_attempted
+game_code_executed=no
+game_sha256_verified_on_vita=no
+game_imports_total=157
+import_bridge_unresolved=154
+import_bridge_binding=SetLastError iat=0x006571B8 target=0x00B00020
+import_bridge_binding=GetLastError iat=0x00657080 target=0x00B00000
+import_bridge_binding=GetTickCount iat=0x006571A8 target=0x00B00010
+import_shim=SetLastError arg0=0x00000775
+import_shim=GetLastError return=0x00000775
+import_smoke_lasterror_eax=0x00000775
+import_smoke_lasterror_esp=0x009FF000
+import_smoke_lasterror_eip=0x00BFFFF0
+import_smoke_lasterror_result=passed
+import_smoke_tickcount_eax=0x00001751
+import_smoke_tickcount_esp=0x009FF000
+import_smoke_tickcount_eip=0x00BFFFF0
+import_smoke_tickcount_result=passed
+import_smoke_tickcount_range=passed
+import_smoke_calls=set:1 get:1 tick:1
+import_smoke_result=passed
+result=pe_mapped_dynarec_and_iat_smoke_passed

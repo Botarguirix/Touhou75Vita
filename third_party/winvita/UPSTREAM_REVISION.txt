@@ -1,0 +1,8 @@
+Upstream: https://github.com/Franckrst/WinVita
+Revision: 8065b469da1b65b1f968024b881ef187e7f7fef7
+Retrieved: 2026-09-30
+
+The upstream tree is vendored under third_party/winvita. Preserve its
+LICENSE and THIRD-PARTY-NOTICES.md when redistributing this repository.
+Touhou-specific startup, diagnostics, and future Win32 shims belong in this
+repository, not in the generic runtime.

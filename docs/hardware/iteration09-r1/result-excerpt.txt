@@ -1,0 +1,21 @@
+# Extract from the two logs supplied by the user; not a full log copy.
+build_id=iteration09-winvita-heap-file-screen-r1
+game_code_executed=no
+sha256_selfcheck=passed
+game_actual_sha256=BD441E99075436E8DCAD26F86FFCF5E6AAC4F58B0ED3EE7442E4CB39D8E22C98
+game_sha256_result=passed
+game_sha256_verified_on_vita=yes
+import_bridge_unresolved=147
+import_smoke_calls=set:1 get:1 tick:1
+import_smoke_result=passed
+heap_zero_result=passed
+heap_live_bytes=0
+heap_smoke_result=passed
+file_header_compare=passed
+service_calls=10
+file_smoke_result=passed
+result=identity_cpu_iat_heap_file_passed
+screen_present_rc=0x80290006
+screen_result=failed
+# User observed only a black screen. The runtime log records successful
+# arena and first JIT segment allocation, without a reported CPU fault.

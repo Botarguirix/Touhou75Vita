@@ -1,0 +1,33 @@
+# Extract from user-supplied iteration11.log and iteration11-watchdog.log.
+# Photo confirms all eight preflight checks passed and the app displayed FAIL.
+build_id=iteration11-original-entrypoint-first-import-r1
+game_entrypoint=not_attempted
+game_code_executed=no
+game_sha256_result=passed
+dynarec_smoke_result=passed
+import_smoke_result=passed
+heap_smoke_result=passed
+file_smoke_result=passed
+teb_fs_smoke_result=passed
+tls_smoke_result=passed
+process_smoke_result=passed
+preflight_result=passed
+startup_pe_tls_rva=0x00000000
+startup_pe_tls_size=0
+startup_iat_intercept_count=157
+startup_guest_image=restored_from_verified_pe
+startup_text_patch=none
+startup_run_budget=4096
+startup_watchdog_create_rc=0x80028023
+startup_result=watchdog_unavailable
+result=failed
+screen_result=presented
+screen_active_matches=yes
+screen_exit=cross
+screen_detach_rc=0x00000000
+
+# Watchdog log; no worker thread was created.
+watchdog_scope=original_entrypoint_only
+watchdog_timeout_us=5000000
+watchdog_result=prepared
+watchdog_result=create_failed

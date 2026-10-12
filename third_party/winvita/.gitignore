@@ -1,0 +1,7 @@
+/build/
+/build-desktop/
+/build-arm/
+/build-vita/
+__pycache__/
+/site/
+/build-selftest/
