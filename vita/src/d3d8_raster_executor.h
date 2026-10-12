@@ -57,6 +57,7 @@ inline Stats combine_rows(const std::array<Stats,3>& parts) {
         combined.alpha_shortcuts+=p.alpha_shortcuts;
         combined.probes_valid=combined.probes_valid && p.probes_valid;
         combined.triangle_strip=combined.triangle_strip || p.triangle_strip;
+        combined.degenerate_noop=combined.degenerate_noop || p.degenerate_noop;
         if(p.reject!=Reject::None)combined.reject=p.reject;
     }
     return combined;

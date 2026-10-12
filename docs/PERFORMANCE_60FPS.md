@@ -5,6 +5,19 @@ presupuesto de aproximadamente **16,7 ms/frame**, respuesta de controles y
 sonido estable en combate. Una captura del menú o una media de microbenchmark
 no acepta el juego de pelea. Todavía no se alcanzó ni se verificó ese objetivo.
 
+## Actualización física 94 y prueba 95
+
+La 94 salió del título y cargó 73,81 MiB gráficos sin el rechazo de memoria.
+La parada posterior es DrawPrimitiveUP/quad durante el primer render de
+selección. Los 44 ciclos previos a la carga promedian 149,167 ms (6,70/s);
+la carga añade 8,639 s y ninguno cumple 16,667 ms. El contador 81 de la imagen
+adjunta corresponde a una captura de la 93, no acredita 81 FPS en la 94.
+
+La 95 acepta dos triángulos de área exactamente cero sin escribir ni muestrear,
+con validación previa y conservación de vértices en futuras fronteras. Esto
+busca completar selección; no prueba mejora del FPS sostenido ni combate.
+[Prueba 95](STATUS_ITERATION95.md).
+
 ## Actualización física 93 y prueba 94
 
 La 93 registró Cross/Z y falló al crear la última textura de selectchar.dat:

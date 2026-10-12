@@ -270,6 +270,23 @@ int main(int argc,char** argv) {
         assert(trace.find("startup_d3d8_vertex_bits=0")!=std::string::npos);
         std::fseek(f.log,0,SEEK_END);
         puts("PASS shipping skewed triangle strip COM ABI and raw vertex-bit diagnostics");
+        // A zero-scale selection animation is a successful DrawPrimitiveUP
+        // with no fragments. The COM ABI must advance; malformed geometry
+        // still stops and must record its original raw words in compact mode.
+        for(auto& v:q){v.x=160;v.y=186;}
+        assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
+        assert(f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28})==0);
+        q[3].rhw=.5f;assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
+        th075::compact_diagnostics=true;
+        f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);
+        th075::compact_diagnostics=false;
+        std::fflush(f.log);std::rewind(f.log);trace.clear();
+        while(std::fgets(record,sizeof(record),f.log))trace+=record;
+        assert(trace.find("startup_d3d8_degenerate_noop=")!=std::string::npos);
+        assert(trace.find("rhw:3F000000")!=std::string::npos);
+        std::fseek(f.log,0,SEEK_END);
+        puts("PASS zero-area draw advances COM ABI and compact failure retains raw vertex words");
+        q[3].rhw=1;assert(f.cpu.write(Fixture::out+0x200,q,sizeof(q)));
         // The actual COM method must reject unknown/mixed filters without ABI changes.
         assert(f.dev(63,{0,16,3})==0);
         f.call(D3D8Storage::device_trap,72,{D3D8Storage::device,5,2,Fixture::out+0x200,28},StartupServiceResult::Unsupported);

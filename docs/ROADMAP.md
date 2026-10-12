@@ -1,3 +1,24 @@
+# Roadmap actual — iteración 95
+
+Física 94 confirmó la salida del título y cargó recursos de selección con
+73,81 MiB gráficos. La frontera pasó a DrawPrimitiveUP/quad, sin error de
+memoria. La 95 soporta dos triángulos de área exactamente cero sin fragmentos
+y conserva los vértices originales al detenerse bajo log compacto. La escala
+inicial cero del EXE es una causa probable, todavía sin replay físico exacto.
+
+1. Verificar la presentación completa de selección física 95 y capturar la
+   siguiente frontera real; conservar 320×240 y memoria acotada.
+2. Llegar a combate y validar controles, HUD, sonido y estabilidad.
+3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
+4. Reducir guest/otras APIs/scheduler con medidas por escena/carga.
+5. Verificar 60 actualizaciones/frames por segundo y recuperar calidad.
+
+158 grupos C++ y 11 pruebas Python; build/paquete 95 comprobados.
+Selección visible, combate y 60 FPS siguen pendientes.
+[Reporte 95](STATUS_ITERATION95.md) · [Recursos y fases](PLAYABLE_PATH.md).
+
+## Historial de la 94
+
 # Roadmap actual — iteración 94
 
 Física 93 confirmó Cross/Z y terminó en el error original de creación de

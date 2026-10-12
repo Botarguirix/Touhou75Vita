@@ -51,6 +51,7 @@ public:
         th075::diagnostic_log(log_,"startup_d3d8_storage_summary=used:%u peak:%u maximum:%u owned:%u aliases:%u handles_allocated:%u handle_capacity:%u\n",
             used_,peak_,budget,owned,aliases,count_,capacity);
         th075::diagnostic_log(log_,"startup_d3d8_alpha_summary=skipped:%llu covered:%u bound:max_neighbor_alpha_modulate\n",(unsigned long long)alpha_shortcuts_,draw_pixels_);
+        th075::diagnostic_log(log_,"startup_d3d8_geometry_summary=zero_area_noops:%u scope:both_strip_triangles_exact_zero\n",degenerate_noops_);
         report_native_memory(log_,"startup_stop",used_,budget);
     }
     static bool range(uint32_t t,uint32_t b,unsigned n) {return t>=b && t<b+n*16 && (t-b)%16==0;}
@@ -540,13 +541,18 @@ private:
         if(fvf_==0x144 && w[5]==28 && count && w[4]>=0x10000 && uint64_t(w[4])+uint64_t(count)*28<=0x02000000){
             std::array<uint32_t,48*7> vertices{};
             if(!cpu_.read(w[4],vertices.data(),count*28))return failure();
-            if(!th075::compact_diagnostics){
+            const auto dump_vertices=[&]{
+            // Always retain the original guest words at an actual boundary.
+            // fprintf bypasses success-only compact suppression, with no
+            // global logging-policy changes or extra per-frame CPU reads.
+            std::fprintf(log_,"startup_d3d8_boundary_request=return:0x%08X type:%u primitives:%u vertices:0x%08X stride:%u fvf:0x%08X texture:0x%08X target:0x%08X scene:%s\n",w[0],w[2],w[3],w[4],w[5],fvf_,bound_texture_,target_,scene_?"yes":"no");
             uint32_t hash=2166136261u;const auto* bytes=reinterpret_cast<const uint8_t*>(vertices.data());for(unsigned i=0;i<count*28;++i)hash=(hash^bytes[i])*16777619u;
-            th075::diagnostic_log(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
+            std::fprintf(log_,"startup_d3d8_draw_vertices=count:%u bytes:%u fnv1a:0x%08X layout:XYZ_RHW_ARGB_UV\n",count,count*28,hash);
             for(unsigned i=0;i<std::min(count,8u);++i){const auto* v=vertices.data()+i*7;float f[7]{};std::memcpy(f,v,28);
-                th075::diagnostic_log(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));
-                th075::diagnostic_log(log_,"startup_d3d8_vertex_bits=%u x:%08X y:%08X z:%08X rhw:%08X color:%08X u:%08X v:%08X\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6]);}
-            }
+                std::fprintf(log_,"startup_d3d8_vertex=%u x:%g y:%g z:%g rhw:%g color:0x%08X u:%g v:%g\n",i,double(f[0]),double(f[1]),double(f[2]),double(f[3]),v[4],double(f[5]),double(f[6]));
+                std::fprintf(log_,"startup_d3d8_vertex_bits=%u x:%08X y:%08X z:%08X rhw:%08X color:%08X u:%08X v:%08X\n",i,v[0],v[1],v[2],v[3],v[4],v[5],v[6]);}
+            };
+            if(!th075::compact_diagnostics)dump_vertices();
             const bool profile=scene_ && !recording_on_ && w[2]==5 && w[3]==2 &&
                 render_[7]==0 && render_[8]==3 && render_[9]==2 && render_[22]==1 &&
                 render_[26]==0 && render_[28]==0 && render_[29]==0 && render_[137]==0 && render_[168]==15 && render_[171]==1 &&
@@ -575,6 +581,10 @@ private:
                     d3d8_quad::rasterize(quad,image,output,view,settings,stats);
                 if(result==d3d8_quad::Result::Rendered){
                     ++draw_calls_;draw_pixels_+=stats.covered;
+                    if(stats.degenerate_noop){
+                        ++degenerate_noops_;
+                        th075::diagnostic_log(log_,"startup_d3d8_degenerate_noop=call:%u scope:both_strip_triangles_exact_zero fragments:0 output_write:none\n",draw_calls_);
+                    }
                     th075::diagnostic_log(log_,"startup_d3d8_draw_elapsed_us=%llu call:%u scope:%s\n",(unsigned long long)(sceKernelGetProcessTimeWide()-started),draw_calls_,stats.hashes_valid?"raster_and_pixel_hashes":"raster_executor_no_pixel_hashes");
                     th075::diagnostic_log(log_,"startup_d3d8_draw=executed renderer:%s_quad call:%u covered:%u alpha_rejected:%u written:%u changed:%u alpha_shortcuts:%u\n",settings.filter==2?"linear":"point",draw_calls_,stats.covered,stats.alpha_rejected,stats.written,stats.changed,stats.alpha_shortcuts);
                     alpha_shortcuts_+=stats.alpha_shortcuts;
@@ -591,13 +601,14 @@ private:
                 }
                 th075::diagnostic_log(log_,"startup_d3d8_draw_rejected=reason:%s output_write:none\n",d3d8_quad::reject_name(stats.reject));
             }else th075::diagnostic_log(log_,"startup_d3d8_draw_rejected=state_or_resource_profile output_write:none\n");
+            if(th075::compact_diagnostics)dump_vertices();
         }
         if(raster_executor_)dump_states(); // Keep complete evidence at an actual boundary.
         th075::diagnostic_log(log_,"startup_d3d8_draw_boundary=executed:no\n");
         return unsupported();
     }
     d2rt::Cpu& cpu_;FILE* log_;uint32_t& root_refs_;
-    ExePresenter presenter_;uint32_t present_calls_=0;
+    ExePresenter presenter_;uint32_t present_calls_=0,degenerate_noops_=0;
     d3d8_quad::RasterExecutor raster_executor_=nullptr;void* raster_context_=nullptr;
     struct StateBlock {
         std::array<uint32_t,256> render{};std::array<uint32_t,32> stage{};

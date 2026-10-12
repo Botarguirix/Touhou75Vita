@@ -63,6 +63,7 @@ struct Stats {
     Probe first{}, last{};
     uint32_t linear_exact=0,linear_constant=0,linear_reference=0;
     bool triangle_strip=false;
+    bool degenerate_noop=false;
     bool hashes_valid=true;
     bool probes_valid=true;
     uint32_t alpha_shortcuts=0;
@@ -306,8 +307,18 @@ inline Triangle triangle(const Vertex (&v)[4],unsigned a,unsigned b,unsigned c) 
 inline Result triangles(const Vertex (&v)[4],const Image& source,
     const Target& target,const Viewport& viewport,const Settings& settings,
     unsigned bpp,Stats& stats,bool validate_only=false) {
-    // Strip order 0,1,2,3 has boundary polygon 0,1,3,2. Limit support to
-    // strictly convex geometry: folded/concave/degenerate strips never write.
+    // Direct3D accepts zero-area triangles without generating fragments.
+    // Both strip triangles must have exactly zero area; no tolerance or
+    // snapping can erase a small valid triangle. Vertex/resource validation
+    // has already run. Partly degenerate, concave and folded strips stay bounded.
+    const double first_area=edge(v,0,1).at(v[2].x,v[2].y),
+        second_area=edge(v,2,1).at(v[3].x,v[3].y);
+    if(first_area==0 && second_area==0) {
+        stats.triangle_strip=true;stats.degenerate_noop=true;
+        return Result::Rendered;
+    }
+    // Strip order 0,1,2,3 has boundary polygon 0,1,3,2. Other accepted
+    // geometry must be strictly convex; no destination writes before validation.
     constexpr unsigned order[]={0,1,3,2};double winding=0;
     for(unsigned i=0;i<4;++i) {
         const double turn=edge(v,order[i],order[(i+1)%4]).at(
@@ -351,7 +362,8 @@ inline Result triangles(const Vertex (&v)[4],const Image& source,
 } // namespace detail
 
 // Validates every failure condition before the first destination write.
-// Accepted geometry: a strictly convex four-vertex strip, constant Z/diffuse,
+// Accepted geometry: strictly convex strips or two exactly zero-area triangles,
+// constant Z/diffuse,
 // RHW=1. Exact TL/TR/BL/BR rectangles with separable UVs retain the axis tables;
 // other accepted strips use two triangles and affine UVs, with no snapping.
 // The caller guarantees depth disabled, no shader/fog/lighting, solid fill,

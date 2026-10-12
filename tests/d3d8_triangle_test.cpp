@@ -149,7 +149,7 @@ int main() {
     quad(q);q[3]=q[0];reject();quad(q);q[3].x=1;q[3].y=3;reject();
     quad(q);std::swap(q[2],q[3]);reject();quad(q);q[0].rhw=.5f;reject();
     quad(q);q[0].diffuse=0;reject();quad(q);q[3].u=std::numeric_limits<float>::infinity();reject();
-    puts("PASS concave folded degenerate perspective varying diffuse and nonfinite strips reject before writing");
+    puts("PASS concave folded partly degenerate perspective varying diffuse and nonfinite strips reject before writing");
 
     quad(q);for(auto& vertex:q){vertex.x+=1000;vertex.y+=1000;}
     assert(rasterize(q,source,target,sub,linear,stats)==Result::Rendered && stats.covered==0 && padded==unchanged);
