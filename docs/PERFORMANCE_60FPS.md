@@ -5,6 +5,16 @@ presupuesto de aproximadamente **16,7 ms/frame**, respuesta de controles y
 sonido estable en combate. Una captura del menú o una media de microbenchmark
 no acepta el juego de pelea. Todavía no se alcanzó ni se verificó ese objetivo.
 
+## Actualización física 93 y prueba 94
+
+La 93 registró Cross/Z y falló al crear la última textura de selectchar.dat:
+el límite de 64 MiB rechazó 2 MiB adicionales con 66.386.760 bytes usados.
+La 94 mantiene la memoria acotada a 96 MiB, salta la construcción del logo
+y muestra el título sin fade inicial. Esto elimina trabajo de arranque y
+habilita la asignación rechazada; no demuestra una mejora del FPS sostenido.
+Selección, combate y 60 FPS todavía requieren evidencia física.
+[Prueba 94](STATUS_ITERATION94.md).
+
 ## Actualización física 92 y prueba 93
 
 La 92 completó 360 Present en 49,215 s, con 19,421 s de dibujo. En 337 ciclos

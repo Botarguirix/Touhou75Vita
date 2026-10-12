@@ -35,7 +35,7 @@ constexpr uint64_t kRunBudget = 65536, kTimeoutUs = startup_limits::watchdog_tim
 // The VitaSDK example and the pinned WinVita native threads use this class.
 // 0x10000040 used by r1 was rejected on hardware with ILLEGAL_PRIORITY.
 constexpr int kWatchdogPriority = 0x10000100;
-const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration93-watchdog.log";
+const char* const kWatchdogPath = "ux0:data/TH075Vita/iteration94-watchdog.log";
 
 bool stack_range(uint32_t address, uint32_t size) {
     return address >= kStack && uint64_t(address) + size <= kStackEnd;
@@ -101,7 +101,7 @@ public:
             return false;
         }
         setvbuf(report_, nullptr, _IONBF, 0);
-        fprintf(report_, "watchdog_revision=iteration93\n");
+        fprintf(report_, "watchdog_revision=iteration94\n");
         fprintf(report_, "watchdog_scope=original_entrypoint_only\n");
         fprintf(report_, "watchdog_timeout_us=%llu\n", (unsigned long long)kTimeoutUs);
         fprintf(report_, "watchdog_result=prepared\n");
@@ -312,8 +312,8 @@ bool run_startup_probe(d2rt::Cpu& cpu, const d2rt::PeImage& image,
         th075::diagnostic_log(log,"startup_intro_patch=failed result:%u execution:refused\n",unsigned(menu_preset));return false;
     }
     for(const auto& patch:exe_boot::menu_patches)cpu.discard_code(patch.address,patch.size);
-    th075::diagnostic_log(log,"startup_text_patch=user_requested_menu_boot sites:4 modified_bytes:10 scope:mapped_verified_exe disk:unchanged\n");
-    th075::diagnostic_log(log,"startup_intro_patch=applied logo_updates:1 transition:0x2202 idle_demo:disabled menu_input:native\n");
+    th075::diagnostic_log(log,"startup_text_patch=user_requested_menu_boot sites:%u modified_bytes:%u scope:mapped_verified_exe disk:unchanged\n",unsigned(exe_boot::menu_patches.size()),exe_boot::modified_bytes());
+    th075::diagnostic_log(log,"startup_intro_patch=applied initial_owner:title original_constructor:0x0043A020 state:0x2002 logo_updates:0 opening:skipped title_fade:disabled idle_demo:disabled menu_input:native\n");
     bool import_hit = false, original_call_valid = false;
     bool expected_boundary = false, service_failed = false;
     bool game_entry_chain_verified = false;

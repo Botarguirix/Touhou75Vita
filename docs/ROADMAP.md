@@ -1,3 +1,23 @@
+# Roadmap actual — iteración 94
+
+Física 93 confirmó Cross/Z y terminó en el error original de creación de
+textura: 66.386.760 bytes usados frente a 64 MiB, con una última imagen de
+selección de 2 MiB pendiente. La 94 permite 96 MiB dentro del heap existente,
+entra directamente al título sin logo/fade inicial y usa arte original DAT.
+
+1. Verificar menú directo y selección física 94; resolver la siguiente
+   frontera real de API, geometría o memoria con 320×240 provisional.
+2. Llegar a combate básico y validar controles, HUD, sonido y estabilidad.
+3. Integrar quads/texturas GXM con upload por cambio y coherencia/readback.
+4. Reducir guest/otras APIs/scheduler a partir de medidas por escena.
+5. Verificar 60 actualizaciones/frames por segundo y después recuperar calidad.
+
+151 grupos C++ y 11 pruebas Python locales; build/paquete 94 comprobados.
+Selección física, combate y 60 FPS siguen pendientes.
+[Recursos y fases](PLAYABLE_PATH.md) · [Reporte 94](STATUS_ITERATION94.md).
+
+## Historial de la 93
+
 # Roadmap actual — iteración 93
 
 Física 92 completó 360 Present y terminó por límite de prueba. Raster: 19,42 s;

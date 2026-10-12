@@ -317,4 +317,39 @@ int main(int argc,char** argv) {
             printf("PASS resource-size allocation projection: %u additional images; no EXE/draw/upload executed\n",projected);
         }
     }
+    {
+        Fixture f(true);
+        // Reproduce the exact byte count at the physical iteration93 denial,
+        // without needing to execute the copyrighted EXE or upload its pixels.
+        constexpr uint32_t physical_used=66386760;
+        uint32_t remaining=physical_used-(D3D8Storage::budget-f.dev(4,{}));
+        std::vector<uint32_t> retained;
+        while(remaining) {
+            assert(remaining%4==0);
+            const auto pixels=remaining/4;
+            unsigned chunk=1;
+            while(chunk<=pixels/2 && chunk<1024u*1024)chunk*=2;
+            const auto width=std::min(chunk,1024u);
+            const auto height=chunk/width;
+            retained.push_back(f.texture(width,height));remaining-=width*height*4;
+        }
+        assert(D3D8Storage::budget-f.dev(4,{})==physical_used);
+        const auto last_character=f.texture(512,1024);
+        assert(D3D8Storage::budget-f.dev(4,{})==68483912);
+        assert(f.release(last_character)==0);
+        for(const auto h:retained)assert(f.release(h)==0);
+        assert(f.dev(4,{})==f.initial_available);
+        puts("PASS physical 93 byte-count regression admits last 2 MiB character texture and reclaims storage");
+    }
+    {
+        Fixture f(true);std::vector<uint32_t> retained;
+        assert(D3D8Storage::budget==96u*1024*1024);
+        while(f.dev(4,{})>=4u*1024*1024)retained.push_back(f.texture(1024,1024));
+        const auto available=f.dev(4,{});
+        f.texture(1024,1024,0,0x8876017C);
+        assert(f.dev(4,{})==available);
+        for(const auto h:retained)assert(f.release(h)==0);
+        assert(f.dev(4,{})==f.initial_available);
+        puts("PASS 96 MiB cap still rejects exhaustion with real HRESULT and zero COM output");
+    }
 }

@@ -26,7 +26,11 @@ public:
         surface_trap=0x00BFA000, device=0x00ABA000, device_table=device+0x100,
         texture_table=0x00ABB000, surface_table=0x00ABB100,
         handles=0x00ABC000, staging=0x01400000, staging_size=0x00400000,
-        budget=64u*1024u*1024u;
+        // Physical iteration93 reaches 66,386,760 bytes before the last 2 MiB
+        // selectchar DAT image. 96 MiB fits the existing 128 MiB native heap
+        // with room for the measured 14.5 MiB of other native allocations.
+        // Keep the cap and actual allocator failure paths; no guest fake success.
+        budget=96u*1024u*1024u;
     static constexpr unsigned capacity=512;
     // Slots counted from IUnknown in the primary IDirect3DDevice8 declaration.
     enum DeviceSlot : unsigned {

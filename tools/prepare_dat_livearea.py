@@ -13,6 +13,24 @@ from extract_th075 import images
 from prepare_livearea import encode
 
 
+def centered_sprite(image, size, padding=8):
+    """Center visible alpha bounds, rather than the transparent DAT canvas."""
+    bounds = image.getchannel('A').getbbox()
+    if not bounds:
+        raise ValueError('empty character alpha')
+    sprite = image.crop(bounds)
+    scale = min((size[0] - 2 * padding) / sprite.width,
+                (size[1] - 2 * padding) / sprite.height)
+    sprite = sprite.resize((max(1, round(sprite.width * scale)),
+                            max(1, round(sprite.height * scale))), Image.Resampling.LANCZOS)
+    canvas = Image.new('RGBA', size, (13, 19, 32, 255))
+    position = ((size[0] - sprite.width) // 2, (size[1] - sprite.height) // 2)
+    canvas.alpha_composite(sprite, position)
+    return canvas, dict(source_bounds=bounds, scaled_size=sprite.size, position=position,
+                        left=position[0], right=size[0]-position[0]-sprite.width,
+                        top=position[1], bottom=size[1]-position[1]-sprite.height)
+
+
 def make_assets(archive, output, frame, iteration, version, font_path):
     entry = next(e for e in inventory(archive)['entries']
                  if e['name'].replace('\\', '/').lower() == 'data/system/selectchar.dat')
@@ -36,22 +54,16 @@ def make_assets(archive, output, frame, iteration, version, font_path):
         draw = ImageDraw.Draw(canvas)
         x = int(size[0] * .61)
         font = ImageFont.truetype(str(font_path), int(size[1] * .047))
-        small = ImageFont.truetype(str(font_path), int(size[1] * .031))
         for y, label in [(size[1] * .16, 'TOUHOU 7.5'), (size[1] * .24, 'VITA')]:
             draw.text((x, int(y)), label, font=font, fill=(240, 244, 251, 255))
-        draw.text((x, int(size[1] * .78)), f'ITERATION {iteration}', font=small, fill=(117, 201, 233, 255))
-        draw.text((x, int(size[1] * .85)), f'VERSION {version}', font=small, fill=(114, 220, 159, 255))
         return canvas
 
     for size, destination in [((840, 500), contents / 'bg0.png'), ((960, 544), output / 'pic0.png')]:
         encode(background(size), size, destination)
     # Each crop comes from the original portrait, never from a previous PNG.
-    icon = Image.new('RGBA', (256, 256), (13, 19, 32, 255))
-    icon.alpha_composite(portrait.crop((112, 0, 368, 256)))
+    icon, icon_center = centered_sprite(portrait.crop((100, 0, 360, 280)), (256, 256), 12)
     encode(icon, (128, 128), output / 'icon0.png')
-    gate = Image.new('RGBA', (280, 158), (13, 19, 32, 255))
-    gate.alpha_composite(portrait.resize((158, 158), Image.Resampling.LANCZOS))
-    ImageDraw.Draw(gate).text((175, 54), str(iteration), font=ImageFont.truetype(str(font_path), 37), fill='white')
+    gate, gate_center = centered_sprite(portrait, (280, 158), 6)
     encode(gate, gate.size, contents / 'startup.png')
     (contents / 'template.xml').write_text(f'''<?xml version="1.0" encoding="utf-8"?>
 <livearea style="psmobile" format-ver="01.00" content-rev="{iteration}">
@@ -63,6 +75,7 @@ def make_assets(archive, output, frame, iteration, version, font_path):
                   frame=frame, pixel_sha256=hashlib.sha256(portrait.tobytes()).hexdigest(),
                   metadata=info, iteration=iteration, version=version,
                   source='original DAT frame freshly decoded; no generative edits',
+                  centering=dict(icon=icon_center, startup=gate_center),
                   outputs={p.relative_to(output).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                            for p in sorted(output.rglob('*.png'))})
     (output / 'provenance.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
