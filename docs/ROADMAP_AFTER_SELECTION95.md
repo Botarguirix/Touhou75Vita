@@ -25,7 +25,7 @@ iteraciones restantes.
 
 | Paso | Trabajo | Se cierra cuando… |
 |---|---|---|
-| 1. Zona horaria — propuesta para la 96 | Implementar GetTimeZoneInformation con estructura x86, RTC de Vita, retorno y epílogo correctos | La consulta devuelve datos comprobados y ambas rutas avanzan más allá de esa llamada |
+| 1. Zona horaria — implementada en la 96 | Implementar GetTimeZoneInformation con estructura x86, RTC de Vita, retorno y epílogo correctos | La consulta devuelve datos comprobados y ambas rutas avanzan más allá de esa llamada |
 | 2. Selección → carga | Registrar la confirmación de personaje/escenario y la siguiente escena; completar las APIs realmente solicitadas | Practice y Story llegan a cargar la partida con trazas separadas y reproducibles |
 | 3. Primer combate visible | Completar recursos, estados, geometría y mezcla observados en arena, luchadores y HUD | Aparecen escenario, dos personajes y HUD, con varios frames sucesivos válidos |
 | 4. Combate controlable | Validar movimiento, salto, ataques, guardia, dash, pausa y regreso a selección | Se puede jugar un segmento de Practice y comenzar una pelea de Story con las acciones registradas |
@@ -63,8 +63,9 @@ Comprobaciones previstas antes de empaquetar: bias positivo/negativo/cero,
 offsets/terminadores UTF-16, puntero inválido y límites del buffer, readback,
 fallos RTC, retorno coherente, preservación de registros y limpieza stdcall
 de 8 bytes. Después: build Vita, ELF/SELF/SFO/imports/PNG y prueba física en
-Practice y Story. El identificador propuesto es iteración 96, versión 02.00;
-no se ha generado ese VPK con este roadmap.
+Practice y Story. La iteración 96/version 02.00 ya está implementada y compilada, con 168
+grupos C++ y 11 pruebas Python locales. Su continuación física está pendiente.
+[Reporte del paquete 96](STATUS_ITERATION96.md).
 
 Resolver esta API permitirá observar la siguiente frontera. La carga de
 combate puede requerir más servicios, recursos o perfiles gráficos: no está

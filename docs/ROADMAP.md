@@ -3,7 +3,7 @@
 La selección ya se presenta en **Practice y Story**. Las dos capturas terminan
 en GetTimeZoneInformation. La traza disponible registra 188 Present, 339 draws
 de área cero aceptados y 73,81 MiB gráficos, sin rechazo de memoria/geometría.
-El siguiente paso es atender la consulta de zona horaria y continuar la carga.
+La 96 implementa la consulta de zona horaria; su continuación física está pendiente.
 
 Estamos más cerca del primer combate. Selección mide 135,287 ms por ciclo
 (7,39/s); el objetivo de 60 FPS exige unos 16,667 ms, además de lógica e input
@@ -11,7 +11,7 @@ correctos. Combate y rendimiento final todavía requieren evidencia física.
 
 | Orden | Hito | Resultado exigido |
 |---|---|---|
-| 1 | GetTimeZoneInformation, propuesta 96 | Contrato x86/RTC probado y confirmación de personaje supera esa API |
+| 1 | GetTimeZoneInformation, implementado en 96 | Contrato x86/RTC probado y confirmación de personaje supera esa API |
 | 2 | Carga de Practice y Story | Logs separados registran la siguiente escena y sus recursos |
 | 3 | Combate visible | Arena, dos personajes y HUD en varios frames sucesivos |
 | 4 | Combate controlable | Movimiento, salto, ataques, guardia, dash y pausa comprobados |
@@ -29,7 +29,8 @@ correctos. Combate y rendimiento final todavía requieren evidencia física.
 Se conserva el menú directo, 320×240 provisional, raster serial, audio/input
 nativos y arte DAT de Alice. El trabajo GPU puede comenzar con selección
 como referencia mientras se completa combate. No hay una estimación fiable
-de cuántas iteraciones faltan. El VPK 96 aún no se ha generado.
+de cuántas iteraciones faltan. El VPK 96/version 02.00 está compilado y comprobado localmente; falta la prueba física.
+[Reporte 96](STATUS_ITERATION96.md).
 
 ## Historial
 

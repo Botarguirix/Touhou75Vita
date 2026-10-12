@@ -54,6 +54,6 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: Touhou75Vita-iteration95-selection-geometry-vpk
+          name: Touhou75Vita-iteration96-time-zone-vpk
           path: vita/build/*.vpk
           if-no-files-found: error

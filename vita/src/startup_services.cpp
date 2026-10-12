@@ -3,6 +3,7 @@
 #include "worker_probe.h"
 #include "cp932_data.h"
 #include "pe_resources.h"
+#include "startup_time_zone.h"
 #include "runtime/cpu.h"
 #include "runtime/pe_image.h"
 #include "runtime/guest_thread_ctx.h"
@@ -95,10 +96,11 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     const bool thread_id = import.name == "GetCurrentThreadId";
     const bool process_id = import.name == "GetCurrentProcessId";
     const bool file_time = import.name == "GetSystemTimeAsFileTime";
+    const bool time_zone = import.name == "GetTimeZoneInformation";
     const bool tick_count = import.name == "GetTickCount";
     const bool performance_counter = import.name == "QueryPerformanceCounter";
     const bool performance_frequency = import.name == "QueryPerformanceFrequency";
-    const bool clock = file_time || tick_count || performance_counter || performance_frequency;
+    const bool clock = file_time || time_zone || tick_count || performance_counter || performance_frequency;
     const bool startup_info = import.name == "GetStartupInfoA";
     const bool command_line = import.name == "GetCommandLineA";
     const bool module_filename = import.name == "GetModuleFileNameA";
@@ -153,7 +155,7 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
     uint32_t expected_eax = 0;
     const uint32_t parameter_count = window_create ? 12u : wide_to_bytes ? 8u : file_open ? 7u : (bytes_to_wide || case_map) ? 6u : (file_read || file_write || rect_set || message_peek) ? 5u : (file_seek || window_default || string_type || heap_realloc || event_create) ? 4u :
         ((com_uninit || tls_alloc || get_error || thread_id || process_id || tick_count || timer_time || command_line || environment_get || code_page_query) ? 0u :
-        ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
+        ((file_attributes || com_init || window_update || class_register || stock || cwd_set || metrics || version || module || tls_get || tls_free || set_error || priority_get || event_set || event_reset || event_close || timer_begin || timer_end || file_time || time_zone || performance_counter || performance_frequency || startup_info || std_handle || file_type || handle_count || environment_free || critical_plain || critical_op || processor_feature || exception_filter) ? 1u :
         ((file_size || window_show || icon_load || cursor_load || cwd_get || proc_address || critical_init || tls_set || code_page_info || event_wait || priority_set) ? 2u : 3u)));
     const uint32_t cleanup = 4u * (1u + parameter_count);
     if (!in_stack(esp, cleanup) || !cpu_.read(esp, &ret, 4) ||
@@ -1187,6 +1189,30 @@ StartupServiceResult StartupServices::call(const d2rt::ImportRef& import) {
         ++tls_calls_;
         cpu_.trap_epilogue(expected_eax, cleanup, ret);
         th075::diagnostic_log(log_, "startup_serviced_import=KERNEL32.dll!%s\n", import.name.c_str());
+    } else if (time_zone) {
+        if(cleanup!=8)return StartupServiceResult::ContractFailure;
+        const auto prior_error=wx86_get_lasterr(cpu_);
+        const auto reply=startup_time_zone::invoke(cpu_,arg,ret,[] {
+            startup_time_zone::Snapshot s;
+            SceRtcTick utc{},local{};
+            s.rc=sceRtcGetCurrentTick(&utc);
+            if(s.rc>=0)s.rc=sceRtcConvertUtcToLocalTime(&utc,&local);
+            s.utc=utc.tick;s.local=local.tick;s.resolution=sceRtcGetTickResolution();
+            return s;
+        },[&](uint32_t error) {
+            wx86_set_lasterr(cpu_,error);return wx86_get_lasterr(cpu_)==error;
+        });
+        th075::diagnostic_log(log_,"startup_timezone=rtc_rc:0x%08X status:%u output:0x%08X bytes:172 bias_minutes:%d return:0x%08X policy:vita_current_offset_fixed_no_dst\n",
+            unsigned(reply.rtc_rc),unsigned(reply.status),arg,int(reply.bias),reply.value);
+        if(reply.status==startup_time_zone::Status::OutputFault ||
+           (reply.status==startup_time_zone::Status::Success && wx86_get_lasterr(cpu_)!=prior_error)) {
+            th075::diagnostic_log(log_,"startup_service_error=timezone_output_or_lasterror_contract\n");
+            return StartupServiceResult::ContractFailure;
+        }
+        expected_eax=reply.value;++clock_calls_;
+        th075::diagnostic_log(log_,"startup_timezone_output=%s scope:172_byte_readback_and_stdcall\n",
+            reply.status==startup_time_zone::Status::Success?"passed":"preserved_on_rtc_failure");
+        th075::diagnostic_log(log_,"startup_serviced_import=KERNEL32.dll!GetTimeZoneInformation\n");
     } else if (clock) {
         uint64_t value = 0;
         if (file_time) {

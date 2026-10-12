@@ -5,7 +5,7 @@
 | Fase | Estado observado | Próximo cambio |
 |---|---|---|
 | Menú → selección | Selección visible y controles en Practice/Story | Conservar regresiones e identidad de la 95 |
-| Selección → partida | Ambas capturas paran en GetTimeZoneInformation | Implementar contrato x86/RTC; recoger las nuevas solicitudes de carga |
+| Selección → partida | Ambas capturas paran en GetTimeZoneInformation | Contrato x86/RTC implementado en 96; comprobar su continuación y recoger carga |
 | Combate básico | Pendiente de presentación, HUD y control | Resolver sólo recursos, geometría, mezcla y APIs observadas |
 | 60 FPS | Selección medida en 7,39 ciclos/s | GXM, upload por cambio, Present directo y hot paths guest medidos |
 | Calidad | 320×240 provisional | Recuperar resolución después de estabilidad y margen de tiempo/memoria |
